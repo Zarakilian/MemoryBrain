@@ -1,0 +1,23 @@
+version: "3.9"
+services:
+  brain:
+    build: ./brain
+    ports:
+      - "${BRAIN_PORT:-7741}:7741"
+    volumes:
+      - ./data:/app/data
+    env_file: .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
