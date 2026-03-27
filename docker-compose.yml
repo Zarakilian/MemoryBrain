@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.3.6
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped
