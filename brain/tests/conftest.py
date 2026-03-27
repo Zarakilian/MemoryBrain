@@ -1,7 +1,7 @@
 # tests/conftest.py
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from app.storage import init_db
 
 
@@ -16,11 +16,13 @@ def tmp_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def mock_ollama():
-    """Mock all ollama calls so tests don't need a running Ollama instance."""
-    mock_client = MagicMock()
+    """Mock async ollama client so tests don't need a running Ollama instance."""
+    mock_client = AsyncMock()
     mock_client.embeddings.return_value = {"embedding": [0.1] * 768}
-    mock_client.generate.side_effect = lambda model, prompt, **kwargs: {
-        "response": "3" if "Rate the importance" in prompt else "Short two sentence summary."
-    }
+    mock_client.generate.side_effect = AsyncMock(
+        side_effect=lambda model, prompt, **kwargs: {
+            "response": "3" if "Rate the importance" in prompt else "Short two sentence summary."
+        }
+    )
     with patch("app.summarise._client", mock_client):
         yield mock_client
