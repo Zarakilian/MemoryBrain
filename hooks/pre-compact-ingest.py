@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""
+MemoryBrain pre-compact hook.
+Called by Claude Code before context compaction.
+POSTs the most recent handover content to the brain as a session memory.
+"""
+import json
+import os
+import sys
+import urllib.request
+import urllib.error
+from pathlib import Path
+from datetime import datetime, timezone
+
+BRAIN_URL = os.getenv("MEMORYBRAIN_URL", "http://localhost:7741")
+CWD = Path(os.getenv("CLAUDE_CWD", os.getcwd()))
+
+
+def detect_project(cwd: Path) -> str:
+    brain_file = cwd / ".brainproject"
+    if brain_file.exists():
+        return brain_file.read_text().strip()
+    # Heuristic: last meaningful path segment
+    parts = [p for p in cwd.parts if p not in ("", "/", "mnt", "c", "git")]
+    return parts[-1].lower() if parts else "unknown"
+
+
+def post_session(content: str, project: str):
+    payload = json.dumps({
+        "content": content,
+        "project": project,
+        "source": f"pre-compact:{datetime.now(timezone.utc).isoformat()}",
+    }).encode()
+    req = urllib.request.Request(
+        f"{BRAIN_URL}/ingest/session",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            print(f"[memorybrain] Session ingested — id={result.get('id', '?')}", file=sys.stderr)
+    except urllib.error.URLError:
+        print("[memorybrain] Brain not running — session not ingested", file=sys.stderr)
+
+
+def main():
+    # Try reading handover from stdin first
+    content = ""
+    if not sys.stdin.isatty():
+        content = sys.stdin.read().strip()
+
+    # Fall back to most recent handover file in CWD
+    if not content:
+        handover_files = sorted(CWD.glob("HANDOVER-*.md"), reverse=True)
+        if handover_files:
+            content = handover_files[0].read_text()
+
+    if not content:
+        print("[memorybrain] No content to ingest", file=sys.stderr)
+        return
+
+    project = detect_project(CWD)
+    post_session(content, project)
+
+
+if __name__ == "__main__":
+    main()
