@@ -2,6 +2,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import patch, AsyncMock, MagicMock
+import chromadb
 from app.storage import init_db
 
 
@@ -26,3 +27,10 @@ def mock_ollama():
     )
     with patch("app.summarise._client", mock_client):
         yield mock_client
+
+
+@pytest.fixture
+def tmp_chroma():
+    """In-memory ChromaDB client for tests — no disk writes."""
+    client = chromadb.EphemeralClient()
+    return client
