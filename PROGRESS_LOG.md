@@ -4,18 +4,81 @@
 
 ---
 
-## Status: Part 1 (Core) — COMPLETE ✅
+## Status: Part 2 (Plugins + CLI) — READY TO IMPLEMENT ⏳
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
 **Latest tag:** `v0.1.0` (2026-03-27)
-**Tests:** 38 passing
-**Docker:** Builds and runs — health + startup-summary verified
+**Tests:** 38 passing (Part 1 complete)
+**Next action:** Execute Part 2 implementation plan — subagent-driven, 10 tasks
 
 ---
 
-## What was built (Part 1)
+## IMMEDIATE NEXT STEP
 
-### The core brain service
+```
+Execute the Part 2 implementation plan using superpowers:subagent-driven-development
+Plan: docs/superpowers/plans/2026-03-27-memorybrain-part2.md
+Working dir: /mnt/c/git/_git/MemoryBrain/
+Run tests from: brain/ with PYTHONPATH=.
+```
+
+Part 2 plan is fully written with actual code in every step. No brainstorming or planning needed — go straight to execution.
+
+---
+
+## Part 2 — What needs to be built (10 tasks)
+
+| Task | Component | Status |
+|---|---|---|
+| 1 | Storage additions — plugin_state table, get_memory_by_source, get/set_last_run | ⬜ |
+| 2 | Plugin loader — discover_plugins(), ACTIVE/INACTIVE_PLUGINS globals | ⬜ |
+| 3 | Scheduler — APScheduler, start_scheduler(), run_plugin() | ⬜ |
+| 4 | Wire into main.py — lifespan starts scheduler, GET /status endpoint | ⬜ |
+| 5 | Update list_projects MCP tool — plugin status preamble | ⬜ |
+| 6 | Confluence plugin — 6h schedule, deduplication, HTML strip | ⬜ |
+| 7 | PagerDuty plugin — 2h schedule, summary=content, importance=4 | ⬜ |
+| 8 | Stub plugins — clickhouse_stub.py + jira_stub.py | ⬜ |
+| 9 | brain CLI — setup (idempotent), add, import, seed, status + alias | ⬜ |
+| 10 | Docs + tag v0.2.0 — HOW_IT_WORKS + PROGRESS_LOG + push | ⬜ |
+
+---
+
+## Key design decisions locked in (do not re-discuss)
+
+- **Scheduler:** APScheduler (AsyncIOScheduler) inside FastAPI process
+- **Confluence scope:** Pages where current user is author or last modifier
+- **PagerDuty:** Summary only (title, service, duration) — importance hardcoded to 4, summary=content (no Ollama)
+- **CLI delivery:** Python stdlib, cli/brain.py, installs shell alias
+- **brain setup:** Idempotent — reads ~/.claude.json, pre-fills .env, starts Docker, pulls models, registers MCP, installs hooks, adds alias
+- **Plugin discovery:** File-based, _stub.py suffix auto-skipped
+- **Deduplication:** By source URL (both plugins)
+
+---
+
+## Part 2 key files (being created)
+
+```
+brain/app/ingestion/plugins/__init__.py   — loader
+brain/app/ingestion/plugins/confluence.py
+brain/app/ingestion/plugins/pagerduty.py
+brain/app/ingestion/plugins/clickhouse_stub.py
+brain/app/ingestion/plugins/jira_stub.py
+brain/app/ingestion/scheduler.py
+cli/brain.py
+```
+
+Modified:
+```
+brain/app/storage.py      — plugin_state table + 3 new functions
+brain/app/main.py         — scheduler in lifespan + /status endpoint
+brain/app/mcp/tools.py    — list_projects with plugin status
+brain/requirements.txt    — add apscheduler>=3.10.4
+HOW_IT_WORKS.md           — Part 2 section
+```
+
+---
+
+## Part 1 — What was built (complete ✅)
 
 | File | Purpose |
 |---|---|
@@ -33,44 +96,50 @@
 | `hooks/pre-compact-ingest.py` | Claude Code pre-compact hook |
 | `docker-compose.yml` | brain + ollama services |
 
-### Known issues / debt (non-blocking)
+### Known debt (non-blocking, address later)
 - `datetime.utcnow()` deprecation warnings (Python 3.12+) — models.py, storage.py
-- `score_importance` always overwrites caller-supplied importance (asymmetric with `summary` handling)
+- `score_importance` always overwrites caller-supplied importance
 - No file size limit on `/ingest/file` endpoint
-- Ollama unavailability returns 500 with no friendly message
-
----
-
-## What's next (Part 2 — Plugins + CLI)
-
-Plan to be written: `docs/superpowers/plans/2026-03-27-memorybrain-plugins.md`
-
-| Track | Description | Status |
-|---|---|---|
-| Confluence plugin | Ingest pages modified in last 7 days, every 6h | ⬜ |
-| PagerDuty plugin | Ingest incidents assigned to you/team, every 2h | ⬜ |
-| APScheduler | Wire plugin scheduler into FastAPI lifespan | ⬜ |
-| Plugin loader | Auto-detect from `.env`, health-check, skip if absent | ⬜ |
-| `brain` CLI | `brain add`, `brain import`, `brain setup --auto-detect` | ⬜ |
 
 ---
 
 ## Session log
 
-### 2026-03-27 — Part 1 built (subagent-driven, 10 tasks)
+### 2026-03-27 — Session 2: Part 2 designed + planned (session ended before execution)
 
 **What happened:**
-- Design doc recovered from Claude file history (previous session had never saved it to disk)
-- Design doc saved to `docs/design.md`
+- HOW_IT_WORKS.md created — full architecture + portable setup guide (8 steps)
+- PROGRESS_LOG.md created
+- Part 2 brainstormed (4 questions answered: scheduler location A, Confluence scope A, PagerDuty detail A, CLI delivery C)
+- Part 2 design spec written: `docs/superpowers/specs/2026-03-27-memorybrain-part2-design.md`
+- Part 2 implementation plan written: `docs/superpowers/plans/2026-03-27-memorybrain-part2.md`
+- Session ended before execution — plan is ready to run
+
+### 2026-03-27 — Session 1: Part 1 built (subagent-driven, 10 tasks)
+
+**What happened:**
+- Design doc recovered from Claude file history, saved to `docs/design.md`
 - Implementation plan written: `docs/superpowers/plans/2026-03-27-memorybrain-core.md`
 - All 10 tasks implemented via subagent-driven development with spec + quality review per task
-- One critical bug caught and fixed during execution: `async def` calling sync ollama client — switched to `ollama.AsyncClient` with proper `await`
-- One production bug caught during smoke test: missing `init_db()` call at startup — fixed with FastAPI lifespan hook
+- Critical bug fixed: `async def` calling sync ollama client → switched to `ollama.AsyncClient`
+- Production bug fixed: missing `init_db()` at startup → added FastAPI lifespan hook
 - Pushed to GitHub as v0.1.0
 
-**To install on this machine:**
+---
+
+## Key facts
+
+- Port: `7741` (configurable via `BRAIN_PORT` in `.env`)
+- DB: `./data/brain.db` (SQLite, Docker volume)
+- Vectors: `./data/chroma/` (Docker volume)
+- Ollama models: `nomic-embed-text` (~274MB) + `llama3.2:3b` (~2GB)
+- Project slug: `.brainproject` file → fallback to last CWD segment
+- This repo's slug: `memorybrain`
+- MCP SSE URL: `http://localhost:7741/sse`
+
+**To install Part 1 on a new machine (before Part 2 CLI exists):**
 ```bash
-cd /mnt/c/git/_git/MemoryBrain
+cd /mnt/c/git/_git/MemoryBrain   # or: git clone https://github.com/Zarakilian/MemoryBrain
 cp .env.example .env
 docker compose up -d
 docker compose exec ollama ollama pull nomic-embed-text
@@ -79,15 +148,3 @@ claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse
 cp hooks/session-ingest.sh ~/.claude/hooks/session-start-memory.sh
 cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
 ```
-
----
-
-## Key facts for future sessions
-
-- Port: `7741` (configurable via `BRAIN_PORT` in `.env`)
-- DB: `./data/brain.db` (SQLite, Docker volume)
-- Vectors: `./data/chroma/` (Docker volume)
-- Ollama models needed: `nomic-embed-text` (embeddings, ~274MB) + `llama3.2:3b` (summarisation, ~2GB)
-- Project slug detection: `.brainproject` file in repo root (fallback: last CWD segment)
-- This repo's slug: `memorybrain` (see `.brainproject`)
-- MCP SSE URL: `http://localhost:7741/sse`
