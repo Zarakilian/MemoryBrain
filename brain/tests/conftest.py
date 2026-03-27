@@ -1,6 +1,7 @@
 # tests/conftest.py
 import pytest
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 from app.storage import init_db
 
 
@@ -11,3 +12,15 @@ def tmp_db(tmp_path, monkeypatch):
     monkeypatch.setattr("app.storage.DB_PATH", db_path)
     init_db(db_path)
     return db_path
+
+
+@pytest.fixture
+def mock_ollama():
+    """Mock all ollama calls so tests don't need a running Ollama instance."""
+    mock_client = MagicMock()
+    mock_client.embeddings.return_value = {"embedding": [0.1] * 768}
+    mock_client.generate.side_effect = lambda model, prompt, **kwargs: {
+        "response": "3" if "Rate the importance" in prompt else "Short two sentence summary."
+    }
+    with patch("app.summarise._client", mock_client):
+        yield mock_client
