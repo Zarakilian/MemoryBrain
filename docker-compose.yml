@@ -3,7 +3,7 @@ services:
   brain:
     build: ./brain
     ports:
-      - "${BRAIN_PORT:-7741}:7741"
+      - "127.0.0.1:${BRAIN_PORT:-7741}:7741"
     volumes:
       - ./data:/app/data
     env_file: .env
@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
 
   ollama:
-    image: ollama/ollama:0.3.6
+    image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
     restart: unless-stopped

@@ -86,6 +86,9 @@ def keyword_search(
     days: Optional[int] = None,
     db_path: Path = DB_PATH,
 ) -> list[dict]:
+    # Quote each token individually — prevents FTS5 syntax injection while preserving multi-word AND matching
+    tokens = query.split()
+    safe_query = " ".join('"' + t.replace('"', '""') + '"' for t in tokens) if tokens else '""'
     with _connect(db_path) as conn:
         sql = """
             SELECT m.id, m.summary, m.type, m.project, m.source, m.importance, m.timestamp
@@ -93,7 +96,7 @@ def keyword_search(
             JOIN memories m ON memories_fts.rowid = m.rowid
             WHERE memories_fts MATCH ?
         """
-        params: list = [query]
+        params: list = [safe_query]
         if project:
             sql += " AND m.project = ?"
             params.append(project)
@@ -106,7 +109,10 @@ def keyword_search(
             params.append(cutoff)
         sql += " ORDER BY rank LIMIT ?"
         params.append(limit)
-        rows = conn.execute(sql, params).fetchall()
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except Exception:
+            return []
     return [dict(row) for row in rows]
 
 

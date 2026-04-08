@@ -1,7 +1,7 @@
 import os
 import ollama
 
-EMBED_MODEL = "nomic-embed-text"
+EMBED_MODEL = "embeddinggemma"
 SUMMARISE_MODEL = "llama3.2:3b"
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 

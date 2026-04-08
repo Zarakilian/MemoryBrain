@@ -1,10 +1,13 @@
-from fastapi import APIRouter, UploadFile, File
+from pathlib import Path
+
+from fastapi import APIRouter, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from typing import Optional
 from ..models import MemoryEntry
 from ..ingest_pipeline import ingest
 
 router = APIRouter()
+
+MAX_UPLOAD_BYTES = 1_048_576  # 1 MB
 
 
 class NoteRequest(BaseModel):
@@ -29,12 +32,16 @@ async def ingest_note(req: NoteRequest):
 
 @router.post("/ingest/file", status_code=201)
 async def ingest_file(project: str, file: UploadFile = File(...)):
-    content = (await file.read()).decode("utf-8", errors="replace")
+    raw = await file.read()
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail=f"File exceeds {MAX_UPLOAD_BYTES // 1024} KB limit")
+    content = raw.decode("utf-8", errors="replace")
+    safe_filename = Path(file.filename or "upload").name  # strip any directory components
     entry = MemoryEntry(
         content=content,
         type="file",
         project=project,
-        source=file.filename or "",
+        source=safe_filename,
     )
     result = await ingest(entry)
-    return {"id": result.id, "filename": file.filename, "summary": result.summary}
+    return {"id": result.id, "filename": safe_filename, "summary": result.summary}
