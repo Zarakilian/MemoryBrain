@@ -1,6 +1,6 @@
 # MemoryBrain — How It Works
 
-> **Status:** Part 1 (Core) complete. Part 2 (Plugins + CLI) in progress.
+> **Status:** Part 1 (Core) ✅ + Part 2 (Plugins + CLI) ✅ complete.
 > **Keep this file up to date** as features are added.
 
 ---
@@ -295,6 +295,51 @@ For any repo you work in, create a `.brainproject` file so sessions are correctl
 echo "monitoring" > /path/to/your/project/.brainproject
 echo "memorybrain" > ~/memorybrain/.brainproject
 ```
+
+---
+
+## Part 2 — Plugins + `brain` CLI
+
+### The `brain` CLI
+
+After running `brain setup`, a `brain` alias is available in your terminal:
+
+```bash
+brain add "just discovered X about Y"       # store a note from anywhere
+brain import ~/Downloads/some-doc.md        # import a file
+brain seed                                  # bulk import MEMORY.md + HANDOVER files from CWD
+brain status                                # check brain health + plugin status
+brain setup --auto-detect                   # re-run setup (safe on any machine)
+```
+
+On a fresh machine, the full setup is one command:
+```bash
+python3 ~/path/to/MemoryBrain/cli/brain.py setup --auto-detect
+```
+
+### Plugins (Confluence + PagerDuty)
+
+Plugins run on a schedule inside the brain container. They auto-activate if credentials
+are present in `.env`, and are silently skipped if not.
+
+| Plugin | Schedule | What it pulls |
+|---|---|---|
+| Confluence | Every 6h | Pages you authored or last modified |
+| PagerDuty | Every 2h | Incidents assigned to you, resolved |
+
+**Credentials in `.env`:**
+```bash
+CONFLUENCE_URL=https://your-confluence.example.com/
+CONFLUENCE_TOKEN=your-personal-access-token
+
+PAGERDUTY_TOKEN=your-pd-api-token
+```
+
+Run `brain setup --auto-detect` to extract these automatically from `~/.claude.json`.
+
+### Embedding model
+
+MemoryBrain uses **EmbeddingGemma** (`embeddinggemma` via Ollama) for semantic search — the #1 ranked sub-500M embedding model on MTEB benchmarks, at ~200MB (smaller than the previous `nomic-embed-text`).
 
 ---
 

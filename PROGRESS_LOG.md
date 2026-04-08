@@ -4,25 +4,18 @@
 
 ---
 
-## Status: Part 2 (Plugins + CLI) — READY TO IMPLEMENT ⏳
+## Status: Part 2 (Plugins + CLI) — COMPLETE ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.1.0` (2026-03-27)
-**Tests:** 38 passing (Part 1 complete)
-**Next action:** Execute Part 2 implementation plan — subagent-driven, 10 tasks
+**Latest tag:** `v0.2.0` (2026-04-08)
+**Tests:** 72 passing (Part 1 + Part 2 complete)
+**Next action:** (Optional) address security improvements from pre-Part2 audit, or begin Part 3 planning
 
 ---
 
 ## IMMEDIATE NEXT STEP
 
-```
-Execute the Part 2 implementation plan using superpowers:subagent-driven-development
-Plan: docs/superpowers/plans/2026-03-27-memorybrain-part2.md
-Working dir: /mnt/c/git/_git/MemoryBrain/
-Run tests from: brain/ with PYTHONPATH=.
-```
-
-Part 2 plan is fully written with actual code in every step. No brainstorming or planning needed — go straight to execution.
+Part 2 is complete. Next: address security improvements from the pre-Part2 audit (see session notes), or begin Part 3 planning.
 
 ---
 
@@ -30,16 +23,16 @@ Part 2 plan is fully written with actual code in every step. No brainstorming or
 
 | Task | Component | Status |
 |---|---|---|
-| 1 | Storage additions — plugin_state table, get_memory_by_source, get/set_last_run | ⬜ |
-| 2 | Plugin loader — discover_plugins(), ACTIVE/INACTIVE_PLUGINS globals | ⬜ |
-| 3 | Scheduler — APScheduler, start_scheduler(), run_plugin() | ⬜ |
-| 4 | Wire into main.py — lifespan starts scheduler, GET /status endpoint | ⬜ |
-| 5 | Update list_projects MCP tool — plugin status preamble | ⬜ |
-| 6 | Confluence plugin — 6h schedule, deduplication, HTML strip | ⬜ |
-| 7 | PagerDuty plugin — 2h schedule, summary=content, importance=4 | ⬜ |
-| 8 | Stub plugins — clickhouse_stub.py + jira_stub.py | ⬜ |
-| 9 | brain CLI — setup (idempotent), add, import, seed, status + alias | ⬜ |
-| 10 | Docs + tag v0.2.0 — HOW_IT_WORKS + PROGRESS_LOG + push | ⬜ |
+| 1 | Storage additions — plugin_state table, get_memory_by_source, get/set_last_run | ✅ |
+| 2 | Plugin loader — discover_plugins(), ACTIVE/INACTIVE_PLUGINS globals | ✅ |
+| 3 | Scheduler — APScheduler, start_scheduler(), run_plugin() | ✅ |
+| 4 | Wire into main.py — lifespan starts scheduler, GET /status endpoint | ✅ |
+| 5 | Update list_projects MCP tool — plugin status preamble | ✅ |
+| 6 | Confluence plugin — 6h schedule, deduplication, HTML strip | ✅ |
+| 7 | PagerDuty plugin — 2h schedule, summary=content, importance=4 | ✅ |
+| 8 | Stub plugins — clickhouse_stub.py + jira_stub.py | ✅ |
+| 9 | brain CLI — setup (idempotent), add, import, seed, status + alias | ✅ |
+| 10 | Docs + tag v0.2.0 — HOW_IT_WORKS + PROGRESS_LOG + push | ✅ |
 
 ---
 
