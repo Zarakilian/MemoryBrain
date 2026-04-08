@@ -20,8 +20,14 @@ if [ -f "${CWD}/.brainproject" ]; then
     PROJECT_SLUG=$(cat "${CWD}/.brainproject" | tr -d '[:space:]')
 fi
 
+# Build auth header if API key is set
+CURL_AUTH_ARGS=()
+if [ -n "${BRAIN_API_KEY:-}" ]; then
+    CURL_AUTH_ARGS=(-H "X-Brain-Key: ${BRAIN_API_KEY}")
+fi
+
 # Check if brain is running
-if ! curl -sf "${BRAIN_URL}/health" > /dev/null 2>&1; then
+if ! curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/health" > /dev/null 2>&1; then
     # Brain not running — fall back to legacy MEMORY.md if present
     if [ -f "${CWD}/memory/MEMORY.md" ]; then
         echo "# Context (from MEMORY.md — MemoryBrain not running)"
@@ -31,7 +37,7 @@ if ! curl -sf "${BRAIN_URL}/health" > /dev/null 2>&1; then
 fi
 
 # Fetch startup summary
-SUMMARY=$(curl -sf "${BRAIN_URL}/startup-summary" | python3 -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null || echo "")
+SUMMARY=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/startup-summary" | python3 -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null || echo "")
 
 if [ -n "$SUMMARY" ]; then
     echo "$SUMMARY"

@@ -39,10 +39,14 @@ def post_session(content: str, project: str):
         "project": project,
         "source": f"pre-compact:{datetime.now(timezone.utc).isoformat()}",
     }).encode()
+    headers = {"Content-Type": "application/json"}
+    api_key = os.getenv("BRAIN_API_KEY")
+    if api_key:
+        headers["X-Brain-Key"] = api_key
     req = urllib.request.Request(
         f"{BRAIN_URL}/ingest/session",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=headers,
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:

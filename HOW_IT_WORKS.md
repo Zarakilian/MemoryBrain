@@ -190,7 +190,12 @@ Open `.env` and fill in credentials for any external services you want to use. E
 BRAIN_PORT=7741          # change if 7741 is in use
 OLLAMA_URL=http://ollama:11434   # leave as-is for Docker Compose setup
 
-# Optional — fill in to enable plugins (Part 2)
+# Authentication (optional but recommended)
+# Set to any random string — enables X-Brain-Key header check on all endpoints
+# Leave blank to run open (fine for single-user localhost-only use)
+BRAIN_API_KEY=
+
+# Optional — fill in to enable plugins
 CONFLUENCE_URL=https://your-confluence.example.com/
 CONFLUENCE_TOKEN=your-personal-access-token
 
@@ -343,6 +348,31 @@ MemoryBrain uses **EmbeddingGemma** (`embeddinggemma` via Ollama) for semantic s
 
 ---
 
+## Security
+
+MemoryBrain runs on loopback (`127.0.0.1`) and is designed for single-user local use. Several protections are in place as of v0.3.0:
+
+| Protection | Details |
+|---|---|
+| **Loopback binding** | Port bound to 127.0.0.1 — not reachable from other machines on your network |
+| **Optional API key** | Set `BRAIN_API_KEY` in `.env` to require `X-Brain-Key` header on all requests |
+| **OLLAMA_URL validation** | Must be `http://` or `https://` — rejects `file://`, `ftp://`, etc. at startup |
+| **Hook URL validation** | Both Claude Code hooks refuse to connect to non-localhost `MEMORYBRAIN_URL` |
+| **Input validation** | Memory type must be in allowed enum; project slug regex-validated; content capped at 100K chars; tags bounded at 20 items |
+| **Content deduplication** | Same content+project hash won't be ingested twice — hooks are idempotent |
+| **Concurrency limit** | Max 3 concurrent ingest pipeline runs (asyncio semaphore) |
+| **Non-root container** | Brain container runs as dedicated `brain` user, not root |
+| **Cross-store rollback** | If ChromaDB write fails after SQLite insert, the SQLite entry is deleted |
+
+If you use `BRAIN_API_KEY`, add the header to any direct API calls:
+```bash
+curl -H "X-Brain-Key: your-key" http://localhost:7741/status
+```
+
+The Claude Code hooks read `BRAIN_API_KEY` from env automatically and pass it as a header — no extra config needed.
+
+---
+
 ## Upgrading
 
 ```bash
@@ -353,16 +383,6 @@ docker compose up -d --build
 ```
 
 Models are preserved in the `ollama_data` volume — no re-download needed.
-
----
-
-## Updating after new features are added
-
-When Part 2 (plugins) is complete, this file will be updated with:
-- Plugin configuration in `.env`
-- `brain setup --auto-detect` command (reads existing MCP config to pre-fill `.env`)
-- `brain add` / `brain import` CLI usage
-- Troubleshooting for plugin-specific issues
 
 ---
 
