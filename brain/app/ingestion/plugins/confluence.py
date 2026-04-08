@@ -121,7 +121,7 @@ async def ingest(since: datetime) -> list[MemoryEntry]:
                 entries.append(entry)
 
             # Pagination
-            if "_links" in data and "next" not in data.get("_links", {}):
+            if "next" not in data.get("_links", {}):
                 break
             if len(results) < 50:
                 break
