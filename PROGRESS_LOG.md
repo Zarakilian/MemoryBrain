@@ -4,28 +4,25 @@
 
 ---
 
-## Status: Part 3 (ClickHouse APM plugin) — IN PROGRESS
+## Status: v0.3.2 — FULLY OPERATIONAL ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.3.1` (2026-04-08)
+**Latest tag:** `v0.3.2` (2026-04-08)
 **Tests:** 129 passing
-**Next action:** Rebuild Docker image (`docker compose up -d --build`), configure CLICKHOUSE_IOM_URL + CLICKHOUSE_TOKEN in .env, then Jira plugin
+**Docker:** Running, healthy, models pulled, end-to-end tested
+**Next action:** Register MCP server in Claude Code + install session hooks → test in a real session
 
 ---
 
 ## IMMEDIATE NEXT STEP
 
-1. **Rebuild Docker image** — required for non-root user + pinned requirements:
-   ```bash
-   cd /mnt/c/git/_git/MemoryBrain
-   docker compose down && docker compose up -d --build
-   ```
-2. **Add to .env** to enable ClickHouse plugin:
-   ```
-   CLICKHOUSE_IOM_URL=https://clickhouse-mcp-iom.aitooling.iom-platform-prod.aks.iom.mgsops.com/query
-   CLICKHOUSE_TOKEN=1f47440a69e231b0bb2b817ea4147bf695bdb47855555b6a15e4296b03a5b16e
-   ```
-3. **Optional next** — Jira plugin (jira_stub.py ready for implementation)
+Register MemoryBrain as an MCP server and install the hooks so Claude Code starts using it:
+
+1. `claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse`
+2. Install hooks (see HOW_IT_WORKS.md Step 6)
+3. Open a new Claude Code session — it should auto-inject startup summary
+4. Try `search_memory`, `add_memory`, `list_projects` via Claude
+5. Optionally enable Confluence/PagerDuty plugins in `.env` + `docker compose restart brain`
 
 ---
 
@@ -147,8 +144,19 @@ Full code audit + security hardening session. Verified all findings from pre-Par
 | **A6** | Cross-store txn | If ChromaDB write fails, SQLite entry is rolled back via `delete_memory()`. 2 new tests. |
 | **L2** | Requirements pin | All deps pinned with `~=` (compatible release) to current installed versions. |
 
-**Total new tests this session:** 50 (38 from first pass + 12 from continuation)
-**Final test count:** 122 passing, 0 warnings
+**Continuation — Docker deployment + models:**
+
+| Item | Details |
+|------|---------|
+| Dockerfile fix | `gosu` entrypoint — chowns `/app/data` at runtime, then execs as `brain` user (UID 999). Static `USER` directive didn't work with mounted volumes. |
+| docker-compose.yml | Mount `/etc/ssl/certs:ro` into Ollama container — fixes TLS cert verification through corporate proxy. |
+| Ollama models | `embeddinggemma` (621MB) + `llama3.2:3b` (2GB) pulled successfully. |
+| End-to-end test | Ingest → summary + importance scored → dedup works → startup summary works. All verified. |
+| Tags | v0.3.2 pushed (includes Docker fixes). |
+
+**Total new tests this session:** 57 (50 security/validation + 7 ClickHouse plugin)
+**Final test count:** 129 passing, 0 warnings
+**Service status:** Running, healthy, fully operational
 
 ### 2026-03-27 — Session 2: Part 2 designed + planned (session ended before execution)
 
