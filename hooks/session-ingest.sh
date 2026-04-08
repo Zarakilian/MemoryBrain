@@ -8,6 +8,12 @@ set -euo pipefail
 BRAIN_URL="${MEMORYBRAIN_URL:-http://localhost:7741}"
 CWD="${1:-$(pwd)}"
 
+# H3: Validate BRAIN_URL is localhost-only (prevent SSRF via env manipulation)
+case "$BRAIN_URL" in
+    http://localhost:*|http://127.0.0.1:*|http://\[::1\]:*) ;;
+    *) echo "[memorybrain] BRAIN_URL must be localhost — refusing to connect to ${BRAIN_URL}" >&2; exit 0 ;;
+esac
+
 # Detect project slug: check for .brainproject file first, then heuristic
 PROJECT_SLUG=""
 if [ -f "${CWD}/.brainproject" ]; then

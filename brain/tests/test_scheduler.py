@@ -2,7 +2,7 @@
 import pytest
 import types
 from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from app.models import MemoryEntry
 
 
@@ -73,7 +73,7 @@ async def test_run_plugin_uses_schedule_hours_as_default_since(tmp_db):
 
     plugin.ingest.assert_called_once()
     called_since = plugin.ingest.call_args[0][0]
-    expected_min = datetime.utcnow() - timedelta(hours=7)
+    expected_min = datetime.now(timezone.utc) - timedelta(hours=7)
     assert called_since > expected_min
 
 

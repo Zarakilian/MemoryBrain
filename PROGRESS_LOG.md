@@ -4,18 +4,18 @@
 
 ---
 
-## Status: Part 2 (Plugins + CLI) — COMPLETE ✅
+## Status: Part 2.5 (Security Hardening) — COMPLETE ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
 **Latest tag:** `v0.2.0` (2026-04-08)
-**Tests:** 72 passing (Part 1 + Part 2 complete)
-**Next action:** (Optional) address security improvements from pre-Part2 audit, or begin Part 3 planning
+**Tests:** 122 passing (72 original + 50 new security/validation tests)
+**Next action:** Tag v0.3.0, rebuild Docker image, push to GitHub, or begin Part 3 planning
 
 ---
 
 ## IMMEDIATE NEXT STEP
 
-Part 2 is complete. Next: address security improvements from the pre-Part2 audit (see session notes), or begin Part 3 planning.
+All security audit items addressed (2026-04-08). **Every finding from the original audit is now closed.** Ready for v0.3.0 tag and push. Note: Docker image needs rebuilding due to Dockerfile USER change and requirements pin.
 
 ---
 
@@ -90,13 +90,46 @@ HOW_IT_WORKS.md           — Part 2 section
 | `docker-compose.yml` | brain + ollama services |
 
 ### Known debt (non-blocking, address later)
-- `datetime.utcnow()` deprecation warnings (Python 3.12+) — models.py, storage.py
-- `score_importance` always overwrites caller-supplied importance
-- No file size limit on `/ingest/file` endpoint
+- ~~`datetime.utcnow()` deprecation warnings~~ → FIXED 2026-04-08
+- ~~`score_importance` always overwrites caller-supplied importance~~ → FIXED 2026-04-08
+- No file size limit on `/ingest/file` endpoint — already had 1MB cap since Part 1
 
 ---
 
 ## Session log
+
+### 2026-04-08 — Session 4: Security Hardening (Opus 4.6 deep-dive)
+
+**What happened:**
+Full code audit + security hardening session. Verified all findings from pre-Part2 audit, discovered 6 new findings (N1-N6), implemented 7 fixes:
+
+| Fix | Finding | What changed |
+|-----|---------|--------------|
+| **H4** | Content deduplication | SHA-256 hash of content\|project stored in `content_hash` column. `/ingest/note` and `/ingest/session` return 200 + `duplicate:true` on match. 8 new tests. |
+| **H1** | MCP arg validation | `call_tool` now validates required/optional keys per tool, strips unknown keys, clamps `limit` to 1-100 and `days` to 1-365. 7 new tests. |
+| **A1** | API key auth | New `auth.py` middleware. `BRAIN_API_KEY` env var — if set, requires `X-Brain-Key` header. `/health` + SSE always public. 5 new tests. |
+| **N1** | Importance overwrite | `ingest_pipeline.py` now only calls `score_importance()` when `importance == 3` (default). PagerDuty's hardcoded 4 is preserved. 2 new tests. |
+| **M1-M5** | Input validation | New `validate_entry()` in models.py: type enum, importance 1-5 clamp, project slug regex, tags bounds (20 items / 100 chars), content length 100K cap. Called at pipeline entry. 13 new tests. |
+| **M7** | FTS5 triggers | Added `memories_ad` (AFTER DELETE) and `memories_au` (AFTER UPDATE) triggers. FTS5 index now stays in sync with all mutations. 3 new tests. |
+| **L3** | datetime deprecation | All `datetime.utcnow()` replaced with `datetime.now(timezone.utc)`. New `utcnow()` helper in models.py. Zero deprecation warnings. |
+
+**Files created:** `auth.py`, 5 test files
+**Files modified:** `main.py`, `models.py`, `storage.py`, `ingest_pipeline.py`, `mcp/tools.py`, `ingestion/manual.py`, `ingestion/session.py`, `ingestion/scheduler.py`, `ingestion/plugins/confluence.py`, `.env.example`, `test_ingestion_endpoints.py`, `test_scheduler.py`
+
+**Continuation (same session):** Addressed all remaining open items:
+
+| Fix | Finding | What changed |
+|-----|---------|--------------|
+| **H2** | OLLAMA_URL SSRF | New `validate_ollama_url()` in summarise.py — rejects non-http(s) schemes at module load. 8 new tests. |
+| **H3** | BRAIN_URL SSRF | Both hooks (session-ingest.sh, pre-compact-ingest.py) now validate BRAIN_URL is localhost-only before connecting. |
+| **L6** | Rate limiting | `asyncio.Semaphore(3)` wraps all ingest calls — max 3 concurrent pipeline runs. 2 new tests. |
+| **L8** | Docker root | Dockerfile now creates `brain` user/group, `chown`s /app, runs as USER brain. |
+| **A5** | Dead chroma_id | Removed from MemoryEntry dataclass and storage read/write. Column left in schema for backward compat. |
+| **A6** | Cross-store txn | If ChromaDB write fails, SQLite entry is rolled back via `delete_memory()`. 2 new tests. |
+| **L2** | Requirements pin | All deps pinned with `~=` (compatible release) to current installed versions. |
+
+**Total new tests this session:** 50 (38 from first pass + 12 from continuation)
+**Final test count:** 122 passing, 0 warnings
 
 ### 2026-03-27 — Session 2: Part 2 designed + planned (session ended before execution)
 
@@ -125,7 +158,7 @@ HOW_IT_WORKS.md           — Part 2 section
 - Port: `7741` (configurable via `BRAIN_PORT` in `.env`)
 - DB: `./data/brain.db` (SQLite, Docker volume)
 - Vectors: `./data/chroma/` (Docker volume)
-- Ollama models: `nomic-embed-text` (~274MB) + `llama3.2:3b` (~2GB)
+- Ollama models: `embeddinggemma` (~200MB, #1 MTEB sub-500M) + `llama3.2:3b` (~2GB)
 - Project slug: `.brainproject` file → fallback to last CWD segment
 - This repo's slug: `memorybrain`
 - MCP SSE URL: `http://localhost:7741/sse`

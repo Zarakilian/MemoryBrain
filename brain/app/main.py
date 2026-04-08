@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from mcp.server.sse import SseServerTransport
 from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
@@ -8,6 +9,7 @@ from .ingestion.manual import router as manual_router
 from .ingestion.plugins import discover_plugins, ACTIVE_PLUGINS, INACTIVE_PLUGINS
 from .ingestion.scheduler import start_scheduler
 from .storage import init_db, list_projects, DB_PATH
+from .auth import require_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="MemoryBrain", version="0.2.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    try:
+        await require_api_key(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
 
 app.include_router(session_router)
 app.include_router(manual_router)

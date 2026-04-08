@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from ..storage import get_last_run, set_last_run, DB_PATH
@@ -14,7 +14,7 @@ async def run_plugin(plugin) -> None:
     last_run = get_last_run(name, db_path=DB_PATH)
 
     if last_run is None:
-        since = datetime.utcnow() - timedelta(hours=plugin.SCHEDULE_HOURS)
+        since = datetime.now(timezone.utc) - timedelta(hours=plugin.SCHEDULE_HOURS)
         logger.info(f"Plugin '{name}': first run, pulling last {plugin.SCHEDULE_HOURS}h")
     else:
         since = last_run
@@ -25,7 +25,7 @@ async def run_plugin(plugin) -> None:
         logger.info(f"Plugin '{name}': got {len(entries)} entries")
         for entry in entries:
             await ingest_pipeline_ingest(entry)
-        set_last_run(name, datetime.utcnow(), db_path=DB_PATH)
+        set_last_run(name, datetime.now(timezone.utc), db_path=DB_PATH)
     except Exception as e:
         logger.error(f"Plugin '{name}' run failed: {e}")
         # Do not update last_run on failure — retry from same point next cycle

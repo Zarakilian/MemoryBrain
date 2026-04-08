@@ -15,6 +15,14 @@ from datetime import datetime, timezone
 BRAIN_URL = os.getenv("MEMORYBRAIN_URL", "http://localhost:7741")
 CWD = Path(os.getenv("CLAUDE_CWD", os.getcwd()))
 
+# H3: Validate BRAIN_URL is localhost-only (prevent SSRF via env manipulation)
+_ALLOWED_HOSTS = {"localhost", "127.0.0.1", "[::1]"}
+from urllib.parse import urlparse as _urlparse
+_parsed = _urlparse(BRAIN_URL)
+if _parsed.hostname not in _ALLOWED_HOSTS:
+    print(f"[memorybrain] BRAIN_URL must be localhost — refusing to connect to {BRAIN_URL}", file=sys.stderr)
+    sys.exit(0)
+
 
 def detect_project(cwd: Path) -> str:
     brain_file = cwd / ".brainproject"

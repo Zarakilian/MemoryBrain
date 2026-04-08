@@ -159,8 +159,49 @@ async def list_tools() -> list[types.Tool]:
     ]
 
 
+def _validate_and_extract(arguments: dict, required: list[str], optional: list[str]) -> dict:
+    """Extract only known keys; raise ValueError if required keys missing."""
+    missing = [k for k in required if k not in arguments]
+    if missing:
+        raise ValueError(f"Missing required argument(s): {', '.join(missing)}")
+    allowed = set(required) | set(optional)
+    return {k: arguments[k] for k in arguments if k in allowed}
+
+
+def _clamp_int(value, lo: int, hi: int, default: int) -> int:
+    try:
+        return max(lo, min(int(value), hi))
+    except (TypeError, ValueError):
+        return default
+
+
+_TOOL_ARGS = {
+    "search_memory": (["query"], ["limit", "project", "type_filter", "days"]),
+    "get_memory": (["memory_id"], []),
+    "add_memory": (["content", "type", "project"], ["tags", "source"]),
+    "get_recent_context": ([], ["project", "days"]),
+    "list_projects": ([], []),
+    "get_startup_summary": ([], []),
+}
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
+    if name not in _TOOL_ARGS:
+        return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
+
+    required, optional = _TOOL_ARGS[name]
+    try:
+        clean = _validate_and_extract(arguments, required, optional)
+    except ValueError as e:
+        return [types.TextContent(type="text", text=json.dumps({"error": str(e)}))]
+
+    # Clamp numeric fields
+    if "limit" in clean:
+        clean["limit"] = _clamp_int(clean["limit"], 1, 100, 10)
+    if "days" in clean:
+        clean["days"] = _clamp_int(clean["days"], 1, 365, 7)
+
     handlers = {
         "search_memory": lambda a: handle_search_memory(**a),
         "get_memory": lambda a: handle_get_memory(**a),
@@ -169,7 +210,5 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         "list_projects": lambda _: handle_list_projects(),
         "get_startup_summary": lambda _: handle_get_startup_summary(),
     }
-    if name not in handlers:
-        return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
-    result = await handlers[name](arguments)
+    result = await handlers[name](clean)
     return [types.TextContent(type="text", text=result)]

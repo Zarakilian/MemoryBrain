@@ -1,9 +1,22 @@
 import os
+from urllib.parse import urlparse
 import ollama
 
 EMBED_MODEL = "embeddinggemma"
 SUMMARISE_MODEL = "llama3.2:3b"
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+
+
+def validate_ollama_url(url: str) -> str:
+    """Validate OLLAMA_URL: must be http or https scheme. Raises ValueError otherwise."""
+    if not url or not url.strip():
+        raise ValueError("OLLAMA_URL must not be empty")
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"OLLAMA_URL scheme must be http or https, got '{parsed.scheme}'")
+    return url
+
+
+OLLAMA_URL = validate_ollama_url(os.getenv("OLLAMA_URL", "http://localhost:11434"))
 
 _client = ollama.AsyncClient(host=OLLAMA_URL)
 

@@ -104,8 +104,16 @@ async def ingest(since: datetime) -> list[MemoryEntry]:
                     try:
                         page_dt = datetime.fromisoformat(
                             last_modified_str.replace("Z", "+00:00")
-                        ).replace(tzinfo=None)
-                        if existing.timestamp >= page_dt:
+                        )
+                        # Ensure both sides are comparable (strip or add tz as needed)
+                        ts = existing.timestamp
+                        if ts.tzinfo is None:
+                            from datetime import timezone as tz
+                            ts = ts.replace(tzinfo=tz.utc)
+                        if page_dt.tzinfo is None:
+                            from datetime import timezone as tz
+                            page_dt = page_dt.replace(tzinfo=tz.utc)
+                        if ts >= page_dt:
                             logger.debug(f"Skipping unchanged page: {title}")
                             continue
                     except ValueError:

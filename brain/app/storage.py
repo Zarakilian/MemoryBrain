@@ -1,10 +1,16 @@
+import hashlib
 import json
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
 from .models import MemoryEntry, Project
+
+
+def content_hash(content: str, project: str) -> str:
+    """SHA-256 hash of content|project — used for deduplication."""
+    return hashlib.sha256(f"{content}|{project}".encode()).hexdigest()
 
 DB_PATH = Path("/app/data/brain.db")
 
@@ -23,9 +29,12 @@ def init_db(db_path: Path = DB_PATH):
                 source TEXT DEFAULT '',
                 importance INTEGER DEFAULT 3,
                 timestamp TEXT NOT NULL,
-                chroma_id TEXT DEFAULT ''
+                chroma_id TEXT DEFAULT '',
+                content_hash TEXT DEFAULT ''
             )
         """)
+        # Index for fast dedup lookups
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON memories(content_hash)")
         conn.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                 content, summary, tags,
@@ -35,6 +44,20 @@ def init_db(db_path: Path = DB_PATH):
         """)
         conn.execute("""
             CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+                INSERT INTO memories_fts(rowid, content, summary, tags)
+                VALUES (new.rowid, new.content, new.summary, new.tags);
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content, summary, tags)
+                VALUES ('delete', old.rowid, old.content, old.summary, old.tags);
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+                INSERT INTO memories_fts(memories_fts, rowid, content, summary, tags)
+                VALUES ('delete', old.rowid, old.content, old.summary, old.tags);
                 INSERT INTO memories_fts(rowid, content, summary, tags)
                 VALUES (new.rowid, new.content, new.summary, new.tags);
             END
@@ -63,14 +86,15 @@ def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
 
 
 def add_memory(entry: MemoryEntry, db_path: Path = DB_PATH):
+    h = content_hash(entry.content, entry.project)
     with _connect(db_path) as conn:
         conn.execute(
-            """INSERT INTO memories (id, content, summary, type, project, tags, source, importance, timestamp, chroma_id)
+            """INSERT INTO memories (id, content, summary, type, project, tags, source, importance, timestamp, content_hash)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry.id, entry.content, entry.summary, entry.type, entry.project,
                 json.dumps(entry.tags), entry.source, entry.importance,
-                entry.timestamp.isoformat(), entry.chroma_id,
+                entry.timestamp.isoformat(), h,
             ),
         )
         conn.commit()
@@ -110,7 +134,7 @@ def keyword_search(
             sql += " AND m.type = ?"
             params.append(type_filter)
         if days:
-            cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
             sql += " AND m.timestamp >= ?"
             params.append(cutoff)
         sql += " ORDER BY rank LIMIT ?"
@@ -128,7 +152,7 @@ def get_recent(
     limit: int = 20,
     db_path: Path = DB_PATH,
 ) -> list[dict]:
-    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with _connect(db_path) as conn:
         sql = "SELECT id, summary, type, project, source, importance, timestamp FROM memories WHERE timestamp >= ?"
         params: list = [cutoff]
@@ -186,8 +210,26 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         tags=json.loads(row["tags"]),
         source=row["source"], importance=row["importance"],
         timestamp=datetime.fromisoformat(row["timestamp"]),
-        chroma_id=row["chroma_id"],
     )
+
+
+def delete_memory(memory_id: str, db_path: Path = DB_PATH):
+    """Delete a memory by ID. Used for rollback when ChromaDB write fails."""
+    with _connect(db_path) as conn:
+        conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        conn.commit()
+
+
+def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PATH) -> Optional[MemoryEntry]:
+    """Return existing memory with same content+project hash, or None."""
+    h = content_hash(content, project)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT * FROM memories WHERE content_hash = ? LIMIT 1", (h,)
+        ).fetchone()
+    if row is None:
+        return None
+    return _row_to_entry(row)
 
 
 def get_memory_by_source(source: str, db_path: Path = DB_PATH) -> Optional[MemoryEntry]:

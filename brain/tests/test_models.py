@@ -9,7 +9,6 @@ def test_memory_entry_defaults():
     assert entry.tags == []
     assert entry.importance == 3
     assert entry.source == ""
-    assert entry.chroma_id == ""
     assert isinstance(entry.timestamp, datetime)
 
 def test_memory_entry_custom_fields():
