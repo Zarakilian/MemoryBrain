@@ -8,6 +8,7 @@ from ..storage import get_memory, get_recent, list_projects as storage_list_proj
 from ..search import hybrid_search
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry
+from ..ingestion.plugins import ACTIVE_PLUGINS, INACTIVE_PLUGINS
 
 server = Server("memorybrain")
 
@@ -56,7 +57,20 @@ async def handle_get_recent_context(project: Optional[str] = None, days: int = 7
 
 async def handle_list_projects() -> str:
     projects = storage_list_projects(db_path=DB_PATH)
-    lines = ["## Projects\n"]
+    lines = []
+
+    # Plugin status header
+    active_names = [p.MEMORY_TYPE for p in ACTIVE_PLUGINS]
+    inactive_names = [p.MEMORY_TYPE for p in INACTIVE_PLUGINS]
+    if active_names or inactive_names:
+        active_str = "  ".join(f"{n} ✅" for n in active_names) if active_names else "none"
+        inactive_str = "  ".join(f"{n} ❌" for n in inactive_names) if inactive_names else ""
+        lines.append(f"Active plugins:   {active_str}")
+        if inactive_str:
+            lines.append(f"Inactive plugins: {inactive_str}")
+        lines.append("")
+
+    lines.append("## Projects\n")
     for p in projects:
         lines.append(f"**{p.slug}** — {p.name}")
         if p.one_liner:

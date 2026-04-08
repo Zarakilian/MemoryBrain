@@ -81,3 +81,30 @@ async def test_get_startup_summary_under_200_tokens(tmp_db):
         result = await handle_get_startup_summary()
     # rough token estimate: 4 chars per token
     assert len(result) / 4 < 200
+
+
+@pytest.mark.asyncio
+async def test_list_projects_includes_plugin_status(tmp_db):
+    import app.ingestion.plugins as plug_mod
+    import types
+
+    fake_active = types.ModuleType("confluence")
+    fake_active.MEMORY_TYPE = "confluence"
+    fake_inactive = types.ModuleType("clickhouse")
+    fake_inactive.MEMORY_TYPE = "clickhouse"
+
+    # Mutate the existing lists (imported by tools.py) rather than reassign
+    plug_mod.ACTIVE_PLUGINS.clear()
+    plug_mod.ACTIVE_PLUGINS.append(fake_active)
+    plug_mod.INACTIVE_PLUGINS.clear()
+    plug_mod.INACTIVE_PLUGINS.append(fake_inactive)
+
+    with patch("app.mcp.tools.DB_PATH", tmp_db):
+        result = await handle_list_projects()
+
+    assert "confluence ✅" in result
+    assert "clickhouse ❌" in result
+
+    # cleanup
+    plug_mod.ACTIVE_PLUGINS.clear()
+    plug_mod.INACTIVE_PLUGINS.clear()
