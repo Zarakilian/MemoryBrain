@@ -2,7 +2,6 @@ import importlib
 import os
 import logging
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,12 +45,16 @@ async def discover_plugins() -> tuple[list, list]:
         # Health check
         try:
             healthy = await plugin.health_check()
-            if not healthy:
-                raise ValueError("health_check returned False")
-            active.append(plugin)
-            logger.info(f"Plugin '{name}' activated ✅")
         except Exception as e:
-            logger.warning(f"Plugin '{name}' skipped — health check failed: {e}")
+            logger.warning(f"Plugin '{name}' skipped — health_check raised: {e}")
+            inactive.append(plugin)
+            continue
+
+        if healthy:
+            active.append(plugin)
+            logger.info(f"Plugin '{name}' activated")
+        else:
+            logger.info(f"Plugin '{name}' skipped — health_check returned False")
             inactive.append(plugin)
 
     ACTIVE_PLUGINS = active

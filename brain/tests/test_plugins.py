@@ -2,8 +2,6 @@
 import pytest
 import types
 from unittest.mock import AsyncMock, patch
-from datetime import datetime
-
 
 def _make_plugin(name: str, required_env: list[str], healthy: bool = True):
     """Helper: create a minimal fake plugin module."""
@@ -67,9 +65,14 @@ async def test_discover_plugins_skips_health_check_exception():
     assert broken in inactive
 
 
-def test_active_inactive_globals_set_after_discover(monkeypatch):
+@pytest.mark.asyncio
+async def test_active_inactive_globals_updated_by_discover():
     import app.ingestion.plugins as plug_module
-    plug_module.ACTIVE_PLUGINS = ["x"]
-    plug_module.INACTIVE_PLUGINS = ["y"]
-    assert plug_module.ACTIVE_PLUGINS == ["x"]
-    assert plug_module.INACTIVE_PLUGINS == ["y"]
+    good = _make_plugin("alpha", required_env=[])
+    bad = _make_plugin("beta", required_env=["BETA_MISSING_TOKEN"])
+
+    with patch("app.ingestion.plugins._scan_plugin_files", return_value=[good, bad]):
+        await plug_module.discover_plugins()
+
+    assert good in plug_module.ACTIVE_PLUGINS
+    assert bad in plug_module.INACTIVE_PLUGINS
