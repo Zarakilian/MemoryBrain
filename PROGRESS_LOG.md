@@ -4,18 +4,28 @@
 
 ---
 
-## Status: Part 2.5 (Security Hardening) — COMPLETE ✅
+## Status: Part 3 (ClickHouse APM plugin) — IN PROGRESS
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.2.0` (2026-04-08)
-**Tests:** 122 passing (72 original + 50 new security/validation tests)
-**Next action:** Tag v0.3.0, rebuild Docker image, push to GitHub, or begin Part 3 planning
+**Latest tag:** `v0.3.1` (2026-04-08)
+**Tests:** 129 passing
+**Next action:** Rebuild Docker image (`docker compose up -d --build`), configure CLICKHOUSE_IOM_URL + CLICKHOUSE_TOKEN in .env, then Jira plugin
 
 ---
 
 ## IMMEDIATE NEXT STEP
 
-All security audit items addressed (2026-04-08). **Every finding from the original audit is now closed.** Ready for v0.3.0 tag and push. Note: Docker image needs rebuilding due to Dockerfile USER change and requirements pin.
+1. **Rebuild Docker image** — required for non-root user + pinned requirements:
+   ```bash
+   cd /mnt/c/git/_git/MemoryBrain
+   docker compose down && docker compose up -d --build
+   ```
+2. **Add to .env** to enable ClickHouse plugin:
+   ```
+   CLICKHOUSE_IOM_URL=https://clickhouse-mcp-iom.aitooling.iom-platform-prod.aks.iom.mgsops.com/query
+   CLICKHOUSE_TOKEN=1f47440a69e231b0bb2b817ea4147bf695bdb47855555b6a15e4296b03a5b16e
+   ```
+3. **Optional next** — Jira plugin (jira_stub.py ready for implementation)
 
 ---
 
@@ -116,7 +126,16 @@ Full code audit + security hardening session. Verified all findings from pre-Par
 **Files created:** `auth.py`, 5 test files
 **Files modified:** `main.py`, `models.py`, `storage.py`, `ingest_pipeline.py`, `mcp/tools.py`, `ingestion/manual.py`, `ingestion/session.py`, `ingestion/scheduler.py`, `ingestion/plugins/confluence.py`, `.env.example`, `test_ingestion_endpoints.py`, `test_scheduler.py`
 
-**Continuation (same session):** Addressed all remaining open items:
+**Continuation — Part 3: ClickHouse APM plugin:**
+
+| Item | Details |
+|------|---------|
+| `clickhouse.py` | Real plugin replacing stub. Queries `apm.otel_traces_local` every 12h for error rate + P95 by (service, operator). Importance 2-5 from error rate. 7 new tests. |
+| `HOW_IT_WORKS.md` | New Security section added. |
+| Hook auth | Both hooks now forward `BRAIN_API_KEY` as `X-Brain-Key` header automatically. |
+| Tags | v0.3.0 (security) + v0.3.1 (ClickHouse plugin) pushed to GitHub. |
+
+**Continuation — all remaining security items:**
 
 | Fix | Finding | What changed |
 |-----|---------|--------------|
