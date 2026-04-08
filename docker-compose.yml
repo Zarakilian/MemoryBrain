@@ -17,6 +17,8 @@ services:
     image: ollama/ollama:latest
     volumes:
       - ollama_data:/root/.ollama
+      # Mount host CA certs so Ollama can verify TLS through corporate proxy
+      - /etc/ssl/certs:/etc/ssl/certs:ro
     restart: unless-stopped
 
 volumes:
