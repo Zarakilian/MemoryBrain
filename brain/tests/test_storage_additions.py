@@ -1,6 +1,6 @@
 # brain/tests/test_storage_additions.py
 import pytest
-from datetime import datetime, timezone
+from datetime import datetime
 from app.models import MemoryEntry
 from app.storage import (
     add_memory, get_memory_by_source,
@@ -32,10 +32,7 @@ def test_set_and_get_last_run(tmp_db):
     dt = datetime(2026, 3, 27, 10, 0, 0)
     set_last_run("confluence", dt, db_path=tmp_db)
     result = get_last_run("confluence", db_path=tmp_db)
-    assert result is not None
-    assert result.year == 2026
-    assert result.month == 3
-    assert result.day == 27
+    assert result == dt
 
 
 def test_get_last_run_returns_none_when_not_set(tmp_db):
