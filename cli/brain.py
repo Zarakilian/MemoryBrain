@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -37,7 +38,7 @@ def detect_project(cwd: Path = None) -> str:
 
 # ── HTTP helpers ─────────────────────────────────────────────────────────────
 
-def _post(path: str, body: dict, status_ok: int = 201) -> dict:
+def _post(path: str, body: dict) -> dict:
     payload = json.dumps(body).encode()
     req = urllib.request.Request(
         f"{BRAIN_URL}{path}",
@@ -192,11 +193,16 @@ def cmd_setup(auto_detect: bool = False):
 
     if env_updates:
         lines = env_path.read_text().splitlines()
-        existing_keys = {l.split("=")[0] for l in lines if "=" in l and not l.startswith("#")}
+        # Skip keys that already have a non-empty value set
+        existing_nonempty = {
+            l.split("=")[0]
+            for l in lines
+            if "=" in l and not l.startswith("#") and l.split("=", 1)[1].strip()
+        }
         with open(env_path, "a") as f:
             for k, v in env_updates.items():
-                if k not in existing_keys:
-                    f.write(f"\n{k}={v}")
+                if k not in existing_nonempty:
+                    f.write(f"\n{k}={v.strip()}")
         print(f"\u2705 .env updated")
     else:
         print(f"\u23ed\ufe0f  .env \u2014 no changes")
@@ -215,7 +221,7 @@ def cmd_setup(auto_detect: bool = False):
     # 5. Pull Ollama models
     models_out = _run(compose_cmd + ["exec", "ollama", "ollama", "list"]).stdout
     for model in ["embeddinggemma", "llama3.2:3b"]:
-        if model not in models_out:
+        if not any(line.startswith(model) for line in models_out.splitlines()):
             print(f"\u23f3 Pulling Ollama model: {model} (this may take a few minutes)...")
             _run(compose_cmd + ["exec", "ollama", "ollama", "pull", model])
             print(f"\u2705 {model} pulled")
@@ -247,7 +253,6 @@ def cmd_setup(auto_detect: bool = False):
             print(f"\u26a0\ufe0f  Hook source not found: {src}")
             continue
         if _file_hash(dst) != _file_hash(src):
-            import shutil
             shutil.copy2(src, dst)
             dst.chmod(0o755)
             hooks_installed = True
