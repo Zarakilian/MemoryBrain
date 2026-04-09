@@ -111,11 +111,9 @@ def cmd_seed(project: str = None):
 def cmd_status():
     _get("/health")
     data = _get("/status")
-    active = "  ".join(f"{p} \u2705" for p in data.get("active_plugins", [])) or "none"
-    inactive = "  ".join(f"{p} \u274c" for p in data.get("inactive_plugins", [])) or ""
     print(f"Brain:    \u2705 running ({BRAIN_URL})")
     print(f"Projects: {data.get('project_count', 0)}")
-    print(f"Plugins:  {active}" + (f"  {inactive}" if inactive else ""))
+    print(f"Version:  {data.get('version', 'unknown')}")
 
 
 def _run(cmd: list, check: bool = False) -> subprocess.CompletedProcess:
@@ -126,13 +124,6 @@ def _file_hash(path: Path) -> str:
     if not path.exists():
         return ""
     return hashlib.md5(path.read_bytes()).hexdigest()
-
-
-def _step(label: str, done: bool, action_done: str = "", action_skip: str = "already done"):
-    if done:
-        print(f"\u2705 {label} \u2014 {action_done}")
-    else:
-        print(f"\u23ed\ufe0f  {label} \u2014 {action_skip}")
 
 
 def cmd_setup(auto_detect: bool = False):
@@ -146,68 +137,16 @@ def cmd_setup(auto_detect: bool = False):
         sys.exit(1)
     print("\u2705 Docker running")
 
-    # 2. Auto-detect credentials from ~/.claude.json
+    # 2. Ensure .env exists
     env_path = MEMORYBRAIN_DIR / ".env"
-    env_updates: dict[str, str] = {}
-
-    if auto_detect:
-        claude_json = Path.home() / ".claude.json"
-        if claude_json.exists():
-            try:
-                config = json.loads(claude_json.read_text())
-                mcp_servers = config.get("mcpServers", {})
-
-                # Confluence from mcp-atlassian
-                if "mcp-atlassian" in mcp_servers:
-                    args = mcp_servers["mcp-atlassian"].get("args", [])
-                    for i, arg in enumerate(args):
-                        if arg == "-e" and i + 1 < len(args):
-                            kv = args[i + 1]
-                            if "=" in kv:
-                                k, v = kv.split("=", 1)
-                                if k == "CONFLUENCE_URL":
-                                    env_updates["CONFLUENCE_URL"] = v
-                                elif k in ("CONFLUENCE_PERSONAL_TOKEN", "CONFLUENCE_TOKEN"):
-                                    env_updates["CONFLUENCE_TOKEN"] = v
-
-                # PagerDuty token
-                for server_name, server_cfg in mcp_servers.items():
-                    if "pagerduty" in server_name.lower():
-                        for arg in server_cfg.get("args", []):
-                            if "PAGERDUTY" in arg and "=" in arg:
-                                k, v = arg.split("=", 1)
-                                env_updates["PAGERDUTY_TOKEN"] = v
-            except Exception as e:
-                print(f"\u26a0\ufe0f  Could not parse ~/.claude.json: {e}")
-
-        detected = list(env_updates.keys())
-        if detected:
-            print(f"\u2705 Auto-detected credentials: {', '.join(detected)}")
-        else:
-            print("\u26a0\ufe0f  No credentials auto-detected from ~/.claude.json")
-
-    # 3. Write/update .env
     if not env_path.exists():
         example = MEMORYBRAIN_DIR / ".env.example"
         env_path.write_text(example.read_text() if example.exists() else "")
-
-    if env_updates:
-        lines = env_path.read_text().splitlines()
-        # Skip keys that already have a non-empty value set
-        existing_nonempty = {
-            l.split("=")[0]
-            for l in lines
-            if "=" in l and not l.startswith("#") and l.split("=", 1)[1].strip()
-        }
-        with open(env_path, "a") as f:
-            for k, v in env_updates.items():
-                if k not in existing_nonempty:
-                    f.write(f"\n{k}={v.strip()}")
-        print(f"\u2705 .env updated")
+        print("\u2705 .env created from .env.example")
     else:
-        print(f"\u23ed\ufe0f  .env \u2014 no changes")
+        print("\u23ed\ufe0f  .env \u2014 already exists")
 
-    # 4. Start Docker containers
+    # 3. Start Docker containers
     compose_cmd = ["docker", "compose", "-f", str(MEMORYBRAIN_DIR / "docker-compose.yml")]
     ps = _run(compose_cmd + ["ps", "--status=running"])
     brain_running = "brain" in ps.stdout
@@ -218,7 +157,7 @@ def cmd_setup(auto_detect: bool = False):
     else:
         print("\u23ed\ufe0f  Docker containers \u2014 already running")
 
-    # 5. Pull Ollama models
+    # 4. Pull Ollama models
     models_out = _run(compose_cmd + ["exec", "ollama", "ollama", "list"]).stdout
     for model in ["embeddinggemma", "llama3.2:3b"]:
         if not any(line.startswith(model) for line in models_out.splitlines()):
@@ -228,7 +167,7 @@ def cmd_setup(auto_detect: bool = False):
         else:
             print(f"\u23ed\ufe0f  {model} \u2014 already present")
 
-    # 6. Register MCP server with Claude Code
+    # 5. Register MCP server with Claude Code
     mcp_list = _run(["claude", "mcp", "list"])
     if "memorybrain" not in mcp_list.stdout:
         _run(["claude", "mcp", "add", "-s", "user", "--transport", "sse",
@@ -237,7 +176,7 @@ def cmd_setup(auto_detect: bool = False):
     else:
         print("\u23ed\ufe0f  MCP server \u2014 already registered")
 
-    # 7. Install hooks
+    # 6. Install hooks
     hooks_dir = Path.home() / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -258,7 +197,7 @@ def cmd_setup(auto_detect: bool = False):
             hooks_installed = True
     print("\u2705 Hooks installed" if hooks_installed else "\u23ed\ufe0f  Hooks \u2014 already up to date")
 
-    # 8. Install Claude Code skills
+    # 7. Install Claude Code skills
     skills_src = MEMORYBRAIN_DIR / "skills"
     skills_dst = Path.home() / ".claude" / "skills"
     skills_installed = False
@@ -275,7 +214,7 @@ def cmd_setup(auto_detect: bool = False):
                         skills_installed = True
     print("\u2705 Skills installed" if skills_installed else "\u23ed\ufe0f  Skills \u2014 already up to date")
 
-    # 9. Install shell alias
+    # 8. Install shell alias
     alias_line = f"alias brain='python3 {MEMORYBRAIN_DIR}/cli/brain.py'"
     alias_added = False
     for rc in [Path.home() / ".bashrc", Path.home() / ".zshrc"]:
@@ -290,54 +229,61 @@ def cmd_setup(auto_detect: bool = False):
     else:
         print("\u23ed\ufe0f  Shell alias \u2014 already present")
 
-    # Check for missing manual config
-    env_text = env_path.read_text() if env_path.exists() else ""
-    warnings = []
-    if not any(f"PAGERDUTY_TOKEN=" in l and l.split("=", 1)[1].strip()
-               for l in env_text.splitlines() if not l.startswith("#")):
-        warnings.append("PAGERDUTY_TOKEN not set \u2014 add to .env to enable PagerDuty plugin")
-
+    # 9. Show detected MCP tools from ~/.claude.json via live endpoint
     print()
-    print(f"Brain is running at {BRAIN_URL}")
-    for w in warnings:
-        print(f"\u26a0\ufe0f  {w}")
+    try:
+        with urllib.request.urlopen(f"{BRAIN_URL}/mcp-tools", timeout=5) as r:
+            mcp_data = json.loads(r.read())
+        tools = mcp_data.get("tools", [])
+        if tools:
+            print("Detected MCP servers in ~/.claude.json:")
+            for t in tools:
+                print(f"  \u2022 {t}")
+            print()
+            print("MemoryBrain will capture memories from whatever you retrieve with these tools.")
+            print("No credentials needed \u2014 MemoryBrain is a passive store.")
+        else:
+            print("No MCP servers found in ~/.claude.json.")
+            print("Add MCP servers to Claude Code and re-run setup to see them here.")
+    except Exception:
+        pass  # Brain not running or /mcp-tools unavailable — silent skip
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(prog="brain", description="MemoryBrain CLI")
+    parser = argparse.ArgumentParser(description="MemoryBrain CLI")
     sub = parser.add_subparsers(dest="command")
 
     # setup
-    p_setup = sub.add_parser("setup", help="Idempotent full setup")
+    p_setup = sub.add_parser("setup", help="Install MemoryBrain and register with Claude Code")
     p_setup.add_argument("--auto-detect", action="store_true",
-                         help="Read ~/.claude.json to pre-fill credentials")
+                         help="Read ~/.claude.json to detect registered MCP tools")
 
     # add
-    p_add = sub.add_parser("add", help="Store a quick note")
+    p_add = sub.add_parser("add", help="Add a memory note")
     p_add.add_argument("content", help="Note text")
-    p_add.add_argument("--project", default=None)
-    p_add.add_argument("--tags", default="")
+    p_add.add_argument("--project", help="Project slug")
+    p_add.add_argument("--tags", help="Comma-separated tags")
 
     # import
-    p_import = sub.add_parser("import", help="Import a file")
-    p_import.add_argument("path", help="Path to file")
-    p_import.add_argument("--project", default=None)
+    p_import = sub.add_parser("import", help="Import a file as a memory")
+    p_import.add_argument("path", help="File path to import")
+    p_import.add_argument("--project", help="Project slug")
 
     # seed
-    p_seed = sub.add_parser("seed", help="Bulk import MEMORY.md + HANDOVER files from CWD")
-    p_seed.add_argument("--project", default=None)
+    p_seed = sub.add_parser("seed", help="Import all MEMORY*.md and HANDOVER-*.md from current directory")
+    p_seed.add_argument("--project", help="Project slug")
 
     # status
-    sub.add_parser("status", help="Show brain status")
+    sub.add_parser("status", help="Show MemoryBrain status")
 
     args = parser.parse_args()
 
     if args.command == "setup":
-        cmd_setup(auto_detect=args.auto_detect)
+        cmd_setup(auto_detect=getattr(args, "auto_detect", False))
     elif args.command == "add":
-        tags = [t.strip() for t in args.tags.split(",") if t.strip()] if args.tags else []
+        tags = [t.strip() for t in args.tags.split(",")] if args.tags else []
         cmd_add(args.content, project=args.project, tags=tags)
     elif args.command == "import":
         cmd_import(args.path, project=args.project)
