@@ -243,6 +243,16 @@ def get_memory_by_source(source: str, db_path: Path = DB_PATH) -> Optional[Memor
     return _row_to_entry(row)
 
 
+def get_next_session_notes(project: str, db_path: Path = DB_PATH) -> str:
+    """Return the most recent next_session note for a project, or empty string."""
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT content FROM memories WHERE project = ? AND tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
+            (project, '%next_session%'),
+        ).fetchone()
+    return row["content"] if row else ""
+
+
 def get_last_run(plugin_name: str, db_path: Path = DB_PATH) -> Optional[datetime]:
     with _connect(db_path) as conn:
         row = conn.execute(

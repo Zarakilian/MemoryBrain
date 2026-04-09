@@ -49,11 +49,11 @@ def post_session(content: str, project: str):
         headers=headers,
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:
             result = json.loads(resp.read())
             print(f"[memorybrain] Session ingested — id={result.get('id', '?')}", file=sys.stderr)
-    except urllib.error.URLError:
-        print("[memorybrain] Brain not running — session not ingested", file=sys.stderr)
+    except (urllib.error.URLError, TimeoutError):
+        print("[memorybrain] Brain not running or timed out — session not ingested", file=sys.stderr)
 
 
 def main():

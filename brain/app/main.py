@@ -8,7 +8,7 @@ from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
 from .ingestion.plugins import discover_plugins, ACTIVE_PLUGINS, INACTIVE_PLUGINS
 from .ingestion.scheduler import start_scheduler
-from .storage import init_db, list_projects, DB_PATH
+from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
 from .auth import require_api_key
 
 logger = logging.getLogger(__name__)
@@ -59,6 +59,14 @@ async def status():
 async def startup_summary():
     summary = await handle_get_startup_summary()
     return {"summary": summary}
+
+
+@app.get("/next-session")
+async def next_session(project: str = ""):
+    if not project:
+        return {"notes": ""}
+    notes = get_next_session_notes(project, db_path=DB_PATH)
+    return {"notes": notes}
 
 
 @app.get("/sse")
