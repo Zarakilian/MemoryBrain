@@ -9,7 +9,7 @@
 
 MemoryBrain is a **passive, tool-agnostic memory store**. It does not pull from external systems. Claude retrieves data using its MCP tools (Confluence, ClickHouse, PagerDuty, etc.) and saves what it finds useful via `add_memory`. On a new machine with different MCP tools, MemoryBrain works identically — the memories reflect actual usage.
 
-At session start, MemoryBrain reads `~/.claude.json` to report which MCP tools are registered. This provides context about what tools Claude has available — but MemoryBrain itself only stores what Claude explicitly saves.
+At session start, the session hook reads `~/.claude.json` directly on the host and injects a list of your registered MCP servers into the session. This provides context about what tools Claude has available — but MemoryBrain itself only stores what Claude explicitly saves.
 
 ---
 
@@ -138,7 +138,7 @@ echo "my-project-name" > .brainproject
 
 ## MCP Tool Awareness
 
-At session start, MemoryBrain reads `~/.claude.json` and injects a list of your registered MCP servers into the session context. Example:
+At session start, the `session-start-memory.sh` hook reads `~/.claude.json` **directly on the host** and injects a list of your registered MCP servers into the session context. Example:
 
 ```
 ## Available MCP Tools
@@ -150,7 +150,7 @@ At session start, MemoryBrain reads `~/.claude.json` and injects a list of your 
 MemoryBrain will store what you retrieve with these tools.
 ```
 
-No credentials required — this is a read of your local Claude config only. If `~/.claude.json` is missing or has no `mcpServers`, this block is silently skipped.
+This happens on the host — not inside Docker. `~/.claude.json` is never mounted into the container (it contains credentials). If `~/.claude.json` is missing or has no `mcpServers`, the block is silently skipped.
 
 ---
 

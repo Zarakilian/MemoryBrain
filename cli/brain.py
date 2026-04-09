@@ -229,12 +229,14 @@ def cmd_setup(auto_detect: bool = False):
     else:
         print("\u23ed\ufe0f  Shell alias \u2014 already present")
 
-    # 9. Show detected MCP tools from ~/.claude.json via live endpoint
+    # 9. Show detected MCP tools from ~/.claude.json (read directly on host)
     print()
     try:
-        with urllib.request.urlopen(f"{BRAIN_URL}/mcp-tools", timeout=5) as r:
-            mcp_data = json.loads(r.read())
-        tools = mcp_data.get("tools", [])
+        claude_json = Path.home() / ".claude.json"
+        with open(claude_json) as f:
+            data = json.load(f)
+        servers = data.get("mcpServers", {})
+        tools = sorted(servers.keys()) if isinstance(servers, dict) else []
         if tools:
             print("Detected MCP servers in ~/.claude.json:")
             for t in tools:
@@ -245,8 +247,10 @@ def cmd_setup(auto_detect: bool = False):
         else:
             print("No MCP servers found in ~/.claude.json.")
             print("Add MCP servers to Claude Code and re-run setup to see them here.")
+    except FileNotFoundError:
+        print("~/.claude.json not found \u2014 add MCP servers to Claude Code and re-run setup.")
     except Exception:
-        pass  # Brain not running or /mcp-tools unavailable — silent skip
+        pass
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────

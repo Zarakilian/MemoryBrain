@@ -7,8 +7,8 @@
 ## Status: v0.4.0 — FULLY OPERATIONAL ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.4.0` (pending push)
-**Tests:** 106 passing
+**Latest tag:** `v0.4.0`
+**Tests:** 104 passing
 **Docker:** Running (named volume), healthy, models pulled
 **MCP registered:** `http://localhost:7741/sse`
 **Hooks installed:** session-start + pre-compact
@@ -25,7 +25,6 @@ None. MemoryBrain is registered and tested. In any Claude session:
 - `search_memory`, `add_memory`, `list_projects`, `get_recent_context` available as MCP tools
 
 **Possible future work:**
-- Push tag v0.4.0 to GitHub: `git push origin master --tags`
 - Add new memory types or search capabilities
 
 ---
@@ -108,6 +107,36 @@ HOW_IT_WORKS.md           — Part 2 section
 ---
 
 ## Session log
+
+### 2026-04-09 — Session 7: Fix MCP discovery architecture (host-side, not Docker)
+
+**Problem found during v0.4.0 testing:**
+The `GET /mcp-tools` endpoint ran inside Docker. `~/.claude.json` is not mounted into the container (it contains credentials), so the endpoint always returned an empty tools list. The session hook and CLI both called this endpoint, meaning MCP tool awareness never worked.
+
+**Root cause:** MCP discovery was incorrectly routed through Docker. The container's `brain` user home is `/app`, not the host's `~`. Mounting `~/.claude.json` into Docker would be a security risk.
+
+**Fix: moved all MCP discovery to host-side execution.**
+
+| Item | Status |
+|---|---|
+| Removed `GET /mcp-tools` Docker endpoint from `main.py` | ✅ |
+| Removed endpoint import from `main.py` (`from .mcp_discovery import read_mcp_tools`) | ✅ |
+| `hooks/session-ingest.sh` — replaced Docker HTTP call with direct `python3` read of `~/.claude.json` on host | ✅ |
+| `cli/brain.py` `cmd_setup()` — replaced HTTP call with direct `Path.home() / ".claude.json"` read | ✅ |
+| `brain/tests/test_mcp_discovery.py` — removed endpoint test; kept 7 unit tests for `read_mcp_tools()` directly | ✅ |
+| `brain/tests/test_auth.py` — repurposed `test_mcp_tools_always_public` → `test_health_always_public` | ✅ |
+| `HOW_IT_WORKS.md` — updated philosophy + MCP Tool Awareness section | ✅ |
+| Hook copied to `~/.claude/hooks/session-start-memory.sh` | ✅ |
+
+**Test count:** 104 (was 106; removed 1 endpoint test from test_mcp_discovery.py, repurposed 1 auth test — net -2)
+
+**Verified working:**
+- `bash ~/.claude/hooks/session-start-memory.sh /mnt/c/git/_git/MemoryBrain` → outputs Brain startup summary + `## Available MCP Tools` (9 servers listed)
+- `brain setup --auto-detect` → correctly lists all 9 MCP servers from `~/.claude.json`
+
+**Security principle:** `~/.claude.json` contains PAT tokens and API keys. It must never be mounted into Docker containers. Host-side reads (session hook + CLI) have legitimate access without any security risk.
+
+---
 
 ### 2026-04-09 — Session 6: Plugin removal + MCP tool awareness (v0.4.0)
 

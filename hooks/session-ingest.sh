@@ -53,17 +53,23 @@ if [ -n "$PROJECT_SLUG" ]; then
     fi
 fi
 
-# Inject available MCP tools (public endpoint — no auth header needed)
-MCP_TOOLS=$(curl -sf "${BRAIN_URL}/mcp-tools" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-tools = data.get('tools', [])
-if tools:
-    print('## Available MCP Tools')
-    for t in tools:
-        print(f'- {t}')
-    print()
-    print('MemoryBrain will store what you retrieve with these tools.')
+# Inject available MCP tools — read ~/.claude.json directly on host (no Docker needed)
+MCP_TOOLS=$(python3 -c "
+import json, os
+path = os.path.expanduser('~/.claude.json')
+try:
+    with open(path) as f:
+        data = json.load(f)
+    servers = data.get('mcpServers', {})
+    tools = sorted(servers.keys()) if isinstance(servers, dict) else []
+    if tools:
+        print('## Available MCP Tools')
+        for t in tools:
+            print(f'- {t}')
+        print()
+        print('MemoryBrain will store what you retrieve with these tools.')
+except Exception:
+    pass
 " 2>/dev/null || echo "")
 
 if [ -n "$MCP_TOOLS" ]; then

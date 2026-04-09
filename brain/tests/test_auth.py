@@ -83,9 +83,9 @@ def test_auth_accepts_correct_key():
         auth._API_KEY = None
 
 
-def test_mcp_tools_always_public():
+def test_health_always_public():
     with patch.dict(os.environ, {"BRAIN_API_KEY": "secret-key"}):
         from app.main import app
         client = TestClient(app)
-        resp = client.get("/mcp-tools")
+        resp = client.get("/health")
     assert resp.status_code == 200

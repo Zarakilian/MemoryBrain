@@ -8,7 +8,6 @@ from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
 from .auth import require_api_key
-from .mcp_discovery import read_mcp_tools
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +47,6 @@ async def status():
         "version": "0.4.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
     }
-
-
-@app.get("/mcp-tools")
-async def mcp_tools():
-    return read_mcp_tools()
 
 
 @app.get("/startup-summary")
