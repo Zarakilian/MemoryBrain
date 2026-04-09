@@ -70,12 +70,6 @@ def init_db(db_path: Path = DB_PATH):
                 one_liner TEXT DEFAULT ''
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS plugin_state (
-                plugin_name TEXT PRIMARY KEY,
-                last_run TEXT NOT NULL
-            )
-        """)
         conn.commit()
 
 
@@ -232,17 +226,6 @@ def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PA
     return _row_to_entry(row)
 
 
-def get_memory_by_source(source: str, db_path: Path = DB_PATH) -> Optional[MemoryEntry]:
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM memories WHERE source = ? ORDER BY timestamp DESC LIMIT 1",
-            (source,),
-        ).fetchone()
-    if row is None:
-        return None
-    return _row_to_entry(row)
-
-
 def get_next_session_notes(project: str, db_path: Path = DB_PATH) -> str:
     """Return the most recent next_session note for a project, or empty string."""
     with _connect(db_path) as conn:
@@ -251,24 +234,3 @@ def get_next_session_notes(project: str, db_path: Path = DB_PATH) -> str:
             (project, '%next_session%'),
         ).fetchone()
     return row["content"] if row else ""
-
-
-def get_last_run(plugin_name: str, db_path: Path = DB_PATH) -> Optional[datetime]:
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT last_run FROM plugin_state WHERE plugin_name = ?",
-            (plugin_name,),
-        ).fetchone()
-    if row is None:
-        return None
-    return datetime.fromisoformat(row["last_run"])
-
-
-def set_last_run(plugin_name: str, dt: datetime, db_path: Path = DB_PATH):
-    with _connect(db_path) as conn:
-        conn.execute(
-            """INSERT INTO plugin_state (plugin_name, last_run) VALUES (?, ?)
-               ON CONFLICT(plugin_name) DO UPDATE SET last_run = excluded.last_run""",
-            (plugin_name, dt.isoformat()),
-        )
-        conn.commit()
