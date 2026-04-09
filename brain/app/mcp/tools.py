@@ -70,9 +70,18 @@ async def handle_get_startup_summary() -> str:
     if not projects:
         return "No projects recorded yet."
     lines = ["# MemoryBrain — Session Context\n"]
-    for p in projects[:10]:  # cap at 10 to stay under token budget
+    lines.append("## Projects")
+    for p in projects[:5]:
         line = f"- **{p.slug}**: {p.one_liner or p.name} (last: {p.last_activity.strftime('%Y-%m-%d')})"
         lines.append(line)
+
+    recent = get_recent(days=7, limit=5, db_path=DB_PATH)
+    if recent:
+        lines.append("\n## Recent Memories (last 7 days)")
+        for r in recent:
+            preview = (r.get("summary") or r.get("content_preview") or "")[:200]
+            lines.append(f"- [{r['project']}] {preview}")
+
     return "\n".join(lines)
 
 

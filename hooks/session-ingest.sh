@@ -145,8 +145,10 @@ NEXT_NOTES=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${NEXT_NOTES_URL}" \
 
 if [ -n "$NEXT_NOTES" ]; then
     echo ""
-    PLAN_LABEL="${PROJECT_SLUG:-recent project}"
-    echo "## Next Session Plan — ${PLAN_LABEL}"
+    echo "## Your Note from Last Session"
+    echo ""
+    echo "At the end of your last session you left this note for yourself:"
+    echo ""
     echo "$NEXT_NOTES"
 fi
 

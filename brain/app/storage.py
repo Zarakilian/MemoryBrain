@@ -230,20 +230,19 @@ def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PA
 def get_next_session_notes(project: str = "", db_path: Path = DB_PATH) -> str:
     """Return the most recent next_session note for a project, or empty string.
 
-    If project is empty, falls back to the most recently active project so that
-    next-session notes are surfaced even when the session starts in a different directory.
+    If project is empty, searches across ALL projects for the most recent
+    next_session-tagged note — ensures notes surface regardless of which project
+    was most recently active.
     """
     with _connect(db_path) as conn:
-        if not project:
-            proj_row = conn.execute(
-                "SELECT slug FROM projects ORDER BY last_activity DESC LIMIT 1"
+        if project:
+            row = conn.execute(
+                "SELECT content FROM memories WHERE project = ? AND tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
+                (project, '%next_session%'),
             ).fetchone()
-            if proj_row:
-                project = proj_row["slug"]
-            else:
-                return ""
-        row = conn.execute(
-            "SELECT content FROM memories WHERE project = ? AND tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
-            (project, '%next_session%'),
-        ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT content FROM memories WHERE tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
+                ('%next_session%',),
+            ).fetchone()
     return row["content"] if row else ""

@@ -84,6 +84,23 @@ async def test_get_startup_summary_under_200_tokens(tmp_db):
 
 
 @pytest.mark.asyncio
+async def test_get_startup_summary_includes_recent_memories(tmp_db):
+    from app.storage import upsert_project, add_memory
+    upsert_project(Project(slug="myproject", name="My Project"), db_path=tmp_db)
+    entry = MemoryEntry(
+        content="something important happened in monitoring",
+        summary="important monitoring event",
+        type="note",
+        project="myproject",
+    )
+    add_memory(entry, db_path=tmp_db)
+    with patch("app.mcp.tools.DB_PATH", tmp_db):
+        result = await handle_get_startup_summary()
+    assert "Recent Memories" in result
+    assert "myproject" in result
+
+
+@pytest.mark.asyncio
 async def test_list_projects_no_plugin_status_header(tmp_db):
     p = Project(slug="monitoring", name="Monitoring Migration", one_liner="Grafana migration")
     from app.storage import upsert_project

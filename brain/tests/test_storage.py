@@ -72,8 +72,8 @@ def test_get_recent_includes_content_preview(tmp_db):
     assert "content_preview" in results[0]
 
 
-def test_get_next_session_notes_fallback_to_latest_project(tmp_db):
-    """When project is empty, falls back to most recently active project's notes."""
+def test_get_next_session_notes_fallback_finds_any_project(tmp_db):
+    """When project is empty, finds the most recent next_session note across all projects."""
     p = Project(slug="memorybrain", name="MemoryBrain")
     upsert_project(p, db_path=tmp_db)
     note = MemoryEntry(
@@ -83,6 +83,25 @@ def test_get_next_session_notes_fallback_to_latest_project(tmp_db):
         tags=["next_session"],
     )
     add_memory(note, db_path=tmp_db)
+    result = get_next_session_notes(project="", db_path=tmp_db)
+    assert "fluffy dog" in result.lower()
+
+
+def test_get_next_session_notes_crosses_projects(tmp_db):
+    """Most recent next_session note surfaces even when another project is more recently active."""
+    p1 = Project(slug="memorybrain", name="MemoryBrain")
+    p2 = Project(slug="monitoring", name="Monitoring")
+    upsert_project(p1, db_path=tmp_db)
+    upsert_project(p2, db_path=tmp_db)  # monitoring upserted last → most recently active
+
+    note = MemoryEntry(
+        content="Next session: remember the fluffy dog test",
+        type="note",
+        project="memorybrain",
+        tags=["next_session"],
+    )
+    add_memory(note, db_path=tmp_db)
+    # monitoring has no next_session notes — should still find memorybrain's note
     result = get_next_session_notes(project="", db_path=tmp_db)
     assert "fluffy dog" in result.lower()
 
