@@ -9,7 +9,7 @@ def read_mcp_tools(claude_json_path: str = "~/.claude.json") -> dict:
         with open(path) as f:
             data = json.load(f)
         tools = sorted(data.get("mcpServers", {}).keys())
-        return {"tools": tools, "source": str(claude_json_path)}
+        return {"tools": tools, "source": str(path)}
     except FileNotFoundError:
         return {"tools": [], "source": None, "error": f"{claude_json_path} not found"}
     except json.JSONDecodeError as e:
