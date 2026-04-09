@@ -106,8 +106,6 @@ async def startup_summary():
 
 @app.get("/next-session")
 async def next_session(project: str = ""):
-    if not project:
-        return {"notes": ""}
     notes = get_next_session_notes(project, db_path=DB_PATH)
     return {"notes": notes}
 

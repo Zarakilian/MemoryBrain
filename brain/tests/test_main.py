@@ -112,6 +112,26 @@ def test_readiness_chromadb_down(tmp_db):
     assert data["checks"]["ollama"] == "ok"
 
 
+def test_next_session_no_project_falls_back_to_latest(tmp_db):
+    """GET /next-session with no project param falls back to most recently active project."""
+    from app.storage import upsert_project, add_memory as storage_add
+    from app.models import Project, MemoryEntry
+    import json
+    with patch("app.main.DB_PATH", tmp_db), patch("app.storage.DB_PATH", tmp_db):
+        p = Project(slug="testproj", name="Test Project")
+        upsert_project(p, db_path=tmp_db)
+        note = MemoryEntry(
+            content="Next: remember to check the deploy logs",
+            type="note",
+            project="testproj",
+            tags=["next_session"],
+        )
+        storage_add(note, db_path=tmp_db)
+        resp = client.get("/next-session")
+        assert resp.status_code == 200
+        assert "deploy logs" in resp.json()["notes"]
+
+
 def test_readiness_is_public_when_auth_enabled():
     """GET /readiness must work without API key even when auth is enabled."""
     from app import auth
