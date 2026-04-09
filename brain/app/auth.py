@@ -9,7 +9,7 @@ from fastapi import Request, HTTPException
 _API_KEY: str | None = os.getenv("BRAIN_API_KEY")
 
 # Paths that never require auth
-PUBLIC_PATHS = {"/health", "/docs", "/openapi.json"}
+PUBLIC_PATHS = {"/health", "/docs", "/openapi.json", "/mcp-tools"}
 
 
 async def require_api_key(request: Request):

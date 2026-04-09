@@ -6,10 +6,9 @@ from mcp.server.sse import SseServerTransport
 from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
-from .ingestion.plugins import discover_plugins, ACTIVE_PLUGINS, INACTIVE_PLUGINS
-from .ingestion.scheduler import start_scheduler
 from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
 from .auth import require_api_key
+from .mcp_discovery import read_mcp_tools
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +16,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    active, inactive = await discover_plugins()
-    scheduler = start_scheduler(active)
-    logger.info(f"Brain started — {len(active)} plugins active, {len(inactive)} inactive")
+    logger.info("Brain started")
     yield
-    scheduler.shutdown()
 
 
-app = FastAPI(title="MemoryBrain", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="0.4.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 
@@ -49,10 +45,14 @@ async def health():
 @app.get("/status")
 async def status():
     return {
+        "version": "0.4.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
-        "active_plugins": [p.MEMORY_TYPE for p in ACTIVE_PLUGINS],
-        "inactive_plugins": [p.MEMORY_TYPE for p in INACTIVE_PLUGINS],
     }
+
+
+@app.get("/mcp-tools")
+async def mcp_tools():
+    return read_mcp_tools()
 
 
 @app.get("/startup-summary")

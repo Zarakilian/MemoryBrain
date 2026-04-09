@@ -84,19 +84,12 @@ async def test_get_startup_summary_under_200_tokens(tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_list_projects_includes_plugin_status(tmp_db):
-    import types
-
-    fake_active = types.ModuleType("confluence")
-    fake_active.MEMORY_TYPE = "confluence"
-    fake_inactive = types.ModuleType("clickhouse")
-    fake_inactive.MEMORY_TYPE = "clickhouse"
-
-    # Patch the names as imported into tools.py (not the plugin module globals)
-    with patch("app.mcp.tools.ACTIVE_PLUGINS", [fake_active]), \
-         patch("app.mcp.tools.INACTIVE_PLUGINS", [fake_inactive]), \
-         patch("app.mcp.tools.DB_PATH", tmp_db):
+async def test_list_projects_no_plugin_status_header(tmp_db):
+    p = Project(slug="monitoring", name="Monitoring Migration", one_liner="Grafana migration")
+    from app.storage import upsert_project
+    upsert_project(p, db_path=tmp_db)
+    with patch("app.mcp.tools.DB_PATH", tmp_db):
         result = await handle_list_projects()
-
-    assert "confluence ✅" in result
-    assert "clickhouse ❌" in result
+    assert "## Projects" in result
+    assert "Active plugins" not in result
+    assert "Inactive plugins" not in result

@@ -4,6 +4,7 @@ from app.main import app
 
 client = TestClient(app)
 
+
 def test_health_returns_ok():
     resp = client.get("/health")
     assert resp.status_code == 200
@@ -17,7 +18,6 @@ def test_status_endpoint_returns_structure(tmp_db):
             assert resp.status_code == 200
             data = resp.json()
             assert "project_count" in data
-            assert "active_plugins" in data
-            assert "inactive_plugins" in data
-            assert isinstance(data["active_plugins"], list)
-            assert isinstance(data["inactive_plugins"], list)
+            assert "version" in data
+            assert "active_plugins" not in data
+            assert "inactive_plugins" not in data
