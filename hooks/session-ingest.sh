@@ -51,6 +51,26 @@ if ! curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/health" > /dev/null 2>&1; the
     exit 0
 fi
 
+# ── Update MemoryBrain Last Active timestamp ─────────────────────────────────
+# Stamps this project's MEMORY.md so Claude knows MemoryBrain is active and
+# should not fall back to reading project files like PROGRESS_LOG.md.
+_mb_stamp_memory() {
+    local cwd="$1"
+    local ts
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    local hash
+    hash=$(printf '%s' "$cwd" | tr -c '[:alnum:]' '-')
+    local mem_file="$HOME/.claude/projects/${hash}/memory/MEMORY.md"
+    if [ -f "$mem_file" ]; then
+        if grep -q '^\*\*MemoryBrain Last Active' "$mem_file"; then
+            sed -i "s|^\*\*MemoryBrain Last Active:.*|**MemoryBrain Last Active:** ${ts}|" "$mem_file"
+        else
+            sed -i "1s|^|**MemoryBrain Last Active:** ${ts}\n\n|" "$mem_file"
+        fi
+    fi
+}
+_mb_stamp_memory "$CWD"
+
 # ── Version check ─────────────────────────────────────────────────────────────
 # Compare repo VERSION file against running container. Warns if git pull happened
 # but docker compose up -d --build has not been run yet.

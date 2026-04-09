@@ -75,8 +75,9 @@ Both stores are in the `data/` directory — a Docker volume on your machine. **
 2. **Container health check** — if brain is not running, prints a clear message with the exact `docker compose up -d` command to start it, then falls back to legacy `MEMORY.md` (no crash)
 3. **Version check** — if `MEMORYBRAIN_DIR` is set (written by `brain setup`), compares `$MEMORYBRAIN_DIR/VERSION` against the running container's reported version. If they differ (e.g. after `git pull` without rebuilding), prints an update message with the exact rebuild command
 4. **Subsystem readiness check** — calls `GET /readiness`, which checks all four subsystems: SQLite, ChromaDB, Ollama, and both required models (`embeddinggemma`, `llama3.2:3b`). If anything is degraded, prints a `## MemoryBrain — PARTIAL SERVICE` block listing exactly what failed, what still works, and the exact commands to fix it. On a healthy system, this step is completely silent
-5. Calls `GET /startup-summary` — brain returns a compact project index (~150 tokens): last activity per project
-6. Hook injects it into your session — Claude is immediately oriented
+5. **Stamps the project MEMORY.md** — writes a `**MemoryBrain Last Active:** <ISO timestamp>` line to `~/.claude/projects/<hash>/memory/MEMORY.md`. This is the authoritative signal Claude reads at the start of every session to confirm MemoryBrain is active. The hash is derived from the CWD path (all non-alphanumeric characters replaced with `-`). If the MEMORY.md file doesn't exist for this project, the step is silently skipped.
+6. Calls `GET /startup-summary` — brain returns a compact project index (~150 tokens): last activity per project
+7. Hook injects it into your session — Claude is immediately oriented
 
 **Degraded service modes** (reported at startup when detected):
 
@@ -103,27 +104,37 @@ Claude calls MCP tools on demand:
 The session-start hook injects MemoryBrain context automatically, but Claude must also actively
 call the MCP tools — not default to reading project files like `MEMORY.md` or `PROGRESS_LOG.md`.
 
-**Required order at every session start:**
+**Required sequence at every session start:**
 
+**Step 0 — Check the auto-loaded MEMORY.md (already in context):**
+Look for `**MemoryBrain Last Active:**` at the top.
+- Timestamp **< 7 days old** → MemoryBrain is active, proceed to Step 1
+- Timestamp **missing or > 7 days old** → MemoryBrain likely offline, fall back to file-based memory
+
+**Step 1 — Call MemoryBrain MCP tools:**
 1. `mcp__memorybrain__get_startup_summary` — always first
 2. `mcp__memorybrain__get_recent_context` (days=14) — for detailed recent activity
-3. Only then read project files (if still needed for specific detail)
 
-**Why:** `MEMORY.md` and `PROGRESS_LOG.md` are fallbacks for when MemoryBrain is not running.
-When the brain is available, it is the authoritative cross-session memory source. Defaulting to
-file-based memory defeats the purpose of the system.
+**After Step 1: STOP.** Do NOT read `MEMORY.md`, `PROGRESS_LOG.md`, or any other project files.
+Only read a specific file if the user explicitly asks for it.
 
-**How this is enforced (two layers):**
-- `~/.claude/CLAUDE.md` contains an explicit "Session Start Protocol (MANDATORY)" section
-- The session-start hook prints a `## MANDATORY: MemoryBrain-first protocol` block as its last
-  output, so the instruction is the most recent thing in Claude's injected context
+**Why the timestamp:** `MEMORY.md` and `PROGRESS_LOG.md` are fallbacks for when MemoryBrain is not
+running. The `**MemoryBrain Last Active:**` timestamp is written to `MEMORY.md` by the session-start
+hook every time MemoryBrain is confirmed healthy — giving Claude an explicit, file-based signal that
+MemoryBrain is the authoritative source and no additional project files should be loaded.
+
+**How this is enforced (three layers):**
+- `~/.claude/CLAUDE.md` contains an explicit "Session Start Protocol (MANDATORY)" section with the timestamp-check decision tree
+- The session-start hook prints a `## MANDATORY: MemoryBrain-first protocol` block as its last output, so the instruction is the most recent thing in Claude's injected context
+- The `**MemoryBrain Last Active:**` timestamp in the auto-loaded `MEMORY.md` provides a file-based confirmation signal that Claude can check before making any decisions
 
 ### Session ends (pre-compact)
 1. `pre-compact-auto-handover.py` hook fires
 2. Reads handover content from stdin or the most recent `HANDOVER-*.md` file
 3. POSTs it to `POST /ingest/session`
 4. Brain: summarises → scores importance (1–5) → embeds → stores in SQLite + ChromaDB
-5. The session is now permanently searchable
+5. **Stamps the project MEMORY.md** — same timestamp update as session start, confirming MemoryBrain was active during this session
+6. The session is now permanently searchable
 
 ### Why summaries, not full content in search results
 A 5000-token handover becomes a ~50-token summary on ingest. Search returns summaries only. Claude calls `get_memory(id)` only for entries it actually needs in full. This keeps the context window lean.

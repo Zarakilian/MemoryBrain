@@ -33,6 +33,23 @@ def detect_project(cwd: Path) -> str:
     return parts[-1].lower() if parts else "unknown"
 
 
+def update_memory_timestamp(cwd: Path) -> None:
+    """Stamp this project's MEMORY.md with the current MemoryBrain Last Active time."""
+    import re
+    project_hash = re.sub(r'[^a-zA-Z0-9]', '-', str(cwd))
+    mem_file = Path.home() / ".claude" / "projects" / project_hash / "memory" / "MEMORY.md"
+    if not mem_file.exists():
+        return
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    marker = "**MemoryBrain Last Active:**"
+    text = mem_file.read_text()
+    if marker in text:
+        text = re.sub(r'\*\*MemoryBrain Last Active:\*\*.*', f"{marker} {ts}", text)
+    else:
+        text = f"{marker} {ts}\n\n" + text
+    mem_file.write_text(text)
+
+
 def post_session(content: str, project: str):
     payload = json.dumps({
         "content": content,
@@ -52,6 +69,7 @@ def post_session(content: str, project: str):
         with urllib.request.urlopen(req, timeout=60) as resp:
             result = json.loads(resp.read())
             print(f"[memorybrain] Session ingested — id={result.get('id', '?')}", file=sys.stderr)
+            update_memory_timestamp(CWD)
     except (urllib.error.URLError, TimeoutError):
         print("[memorybrain] Brain not running or timed out — session not ingested", file=sys.stderr)
 

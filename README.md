@@ -39,9 +39,11 @@ If absent, the last path segment of CWD is used as the project slug.
 | `list_projects` | All projects + last activity |
 | `get_startup_summary` | Compact session-start injection |
 
-> **Session start rule:** Claude must call `get_startup_summary` then `get_recent_context` at the
-> start of every session, BEFORE reading any project files (`MEMORY.md`, `PROGRESS_LOG.md`, etc.).
-> File-based memory is a fallback for when MemoryBrain is not running. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
+> **Session start rule:** At session start, Claude checks the auto-loaded `MEMORY.md` for a
+> `**MemoryBrain Last Active:**` timestamp. If fresh (< 7 days), it calls `get_startup_summary`
+> then `get_recent_context` — and then **stops**. No project files are read. The timestamp is
+> written by the session-start hook every time MemoryBrain is confirmed healthy, giving Claude an
+> explicit signal to trust MemoryBrain over stale file-based memory. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
 ## Architecture
 
