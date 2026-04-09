@@ -8,7 +8,7 @@ from app.ingest_pipeline import ingest
 @pytest.mark.asyncio
 async def test_ingest_preserves_non_default_importance(tmp_db, mock_ollama):
     """When caller sets importance != 3 (e.g. PagerDuty sets 4), pipeline should not overwrite."""
-    entry = MemoryEntry(content="PD incident resolved", type="pagerduty", project="pd", importance=4)
+    entry = MemoryEntry(content="PD incident resolved", type="note", project="pd", importance=4)
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
          patch("app.ingest_pipeline.chroma_add"):
         result = await ingest(entry)

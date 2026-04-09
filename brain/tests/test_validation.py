@@ -2,7 +2,7 @@
 import pytest
 from app.models import MemoryEntry, validate_entry, ValidationError
 
-VALID_TYPES = ["session", "handover", "note", "confluence", "pagerduty", "clickhouse", "fact", "file"]
+VALID_TYPES = ["note", "fact", "session", "handover", "file"]
 
 
 # M1: type enum
@@ -16,6 +16,13 @@ def test_invalid_type_rejected():
     entry = MemoryEntry(content="x", type="evil_type", project="proj")
     with pytest.raises(ValidationError, match="type"):
         validate_entry(entry)
+
+
+def test_plugin_era_types_rejected():
+    for t in ("confluence", "pagerduty", "clickhouse"):
+        entry = MemoryEntry(content="x", type=t, project="proj")
+        with pytest.raises(ValidationError, match="type"):
+            validate_entry(entry)
 
 
 # M2: importance clamp

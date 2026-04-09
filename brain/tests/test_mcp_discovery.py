@@ -66,3 +66,31 @@ def test_mcp_tools_endpoint_returns_200():
     data = resp.json()
     assert data["tools"] == ["clickhouse-iom", "memorybrain"]
     assert "source" in data
+
+
+def test_returns_empty_when_mcp_servers_not_a_dict(tmp_path):
+    config = {"mcpServers": ["not", "a", "dict"]}
+    p = tmp_path / "claude.json"
+    p.write_text(json.dumps(config))
+    result = read_mcp_tools(str(p))
+    assert result["tools"] == []
+    assert "error" in result
+
+
+def test_returns_empty_on_permission_error(tmp_path):
+    p = tmp_path / "claude.json"
+    p.write_text('{"mcpServers": {"tool": {}}}')
+    p.chmod(0o000)
+    result = read_mcp_tools(str(p))
+    assert result["tools"] == []
+    assert "error" in result
+    p.chmod(0o644)  # restore so tmp_path cleanup works
+
+
+def test_returns_empty_list_when_mcp_servers_is_empty(tmp_path):
+    config = {"mcpServers": {}}
+    p = tmp_path / "claude.json"
+    p.write_text(json.dumps(config))
+    result = read_mcp_tools(str(p))
+    assert result["tools"] == []
+    assert "error" not in result

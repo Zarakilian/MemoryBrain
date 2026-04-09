@@ -9,7 +9,7 @@ def utcnow() -> datetime:
     """Timezone-aware UTC now, without deprecation warning."""
     return datetime.now(timezone.utc)
 
-VALID_TYPES = {"session", "handover", "note", "confluence", "pagerduty", "clickhouse", "fact", "file"}
+VALID_TYPES = {"note", "fact", "session", "handover", "file"}
 MAX_CONTENT_LENGTH = 100_000
 MAX_TAGS = 20
 MAX_TAG_LENGTH = 100

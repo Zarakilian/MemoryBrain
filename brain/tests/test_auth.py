@@ -1,4 +1,5 @@
 """Tests for API key authentication (A1)."""
+import os
 import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
@@ -80,3 +81,11 @@ def test_auth_accepts_correct_key():
         assert resp.status_code == 201
     finally:
         auth._API_KEY = None
+
+
+def test_mcp_tools_always_public():
+    with patch.dict(os.environ, {"BRAIN_API_KEY": "secret-key"}):
+        from app.main import app
+        client = TestClient(app)
+        resp = client.get("/mcp-tools")
+    assert resp.status_code == 200
