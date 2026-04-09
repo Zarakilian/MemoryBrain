@@ -44,7 +44,7 @@ MemoryBrain replaces that with a persistent, searchable memory service that:
 └─────────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────────┐
 │  Ollama container                                            │
-│    nomic-embed-text  — 768-dim embeddings (~274MB)           │
+│    embeddinggemma    — embeddings (~621MB, #1 MTEB sub-500M) │
 │    llama3.2:3b       — summarisation + importance (~2GB)     │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -128,22 +128,18 @@ echo "my-project-name" > .brainproject
 
 ---
 
-## Part 2 — Plugins (coming next)
+## Plugins ✅
 
-> Status: design complete, not yet implemented.
+Plugins run on a schedule inside the brain container and automatically pull from external sources.
 
-Plugins automatically pull from external sources and store them as memories — no manual steps required.
+| Plugin | Schedule | What it pulls | Activate |
+|---|---|---|---|
+| Confluence | Every 6h | Pages you authored or last modified | Set `CONFLUENCE_URL` + `CONFLUENCE_TOKEN` in `.env` |
+| PagerDuty | Every 2h | Incidents assigned to you, resolved | Set `PAGERDUTY_TOKEN` in `.env` |
+| ClickHouse | Every 12h | Error rate + P95 latency by service | Set `CLICKHOUSE_IOM_URL` + `CLICKHOUSE_TOKEN` in `.env` |
+| Jira | (stub) | — | Not yet implemented |
 
-| Plugin | Schedule | What it pulls |
-|---|---|---|
-| Confluence | Every 6h | Pages you created/modified in the last 7 days |
-| PagerDuty | Every 2h | Incidents assigned to you/your teams, resolved in last 48h |
-| ClickHouse | Every 12h | (future) query results you flag manually |
-| Jira | Every 6h | (stub) tickets assigned to you, recently updated |
-
-**Plugins auto-detect from `.env`** — if a plugin's credentials are absent, it's silently skipped. No toggling required. On a work machine with Confluence access, the plugin runs. On a personal machine without it, it doesn't.
-
-Also in Part 2: the `brain` CLI (`brain add "..."`, `brain import file.md`, `brain setup --auto-detect`).
+**Plugins auto-detect from `.env`** — if credentials are absent, the plugin is silently skipped. No toggling required.
 
 ---
 
@@ -173,9 +169,26 @@ git clone https://github.com/Zarakilian/MemoryBrain ~/memorybrain
 cd ~/memorybrain
 ```
 
-> Clone to `~/memorybrain` so the hooks and scripts know where to find it. You can use a different path but must update `MEMORYBRAIN_PATH` in the hooks.
+> You can clone to any path — the CLI and hooks resolve paths dynamically from `__file__` / CWD. `~/memorybrain` is conventional but not required.
 
 ---
+
+---
+
+### Option A — One-command setup (recommended)
+
+After cloning, run:
+
+```bash
+cp .env.example .env    # add credentials if you want Confluence/PagerDuty plugins
+python3 cli/brain.py setup --auto-detect
+```
+
+This handles Steps 3–8 automatically: starts Docker, pulls models, registers the MCP server, installs hooks + skills, adds the `brain` shell alias. Skip to Step 8 (tag your projects) when done.
+
+---
+
+### Option B — Manual setup (Steps 2–7)
 
 ### Step 2 — Configure environment
 
@@ -223,10 +236,10 @@ curl http://localhost:7741/health
 
 ---
 
-### Step 4 — Pull Ollama models (first time only, ~2.3GB)
+### Step 4 — Pull Ollama models (first time only, ~2.6GB)
 
 ```bash
-docker compose exec ollama ollama pull nomic-embed-text
+docker compose exec ollama ollama pull embeddinggemma
 docker compose exec ollama ollama pull llama3.2:3b
 ```
 
@@ -235,7 +248,7 @@ This is a one-time download. Models are stored in a Docker volume (`ollama_data`
 Verify:
 ```bash
 docker compose exec ollama ollama list
-# Should show: nomic-embed-text, llama3.2:3b
+# Should show: embeddinggemma, llama3.2:3b
 ```
 
 ---
@@ -254,23 +267,26 @@ claude mcp list
 
 ---
 
-### Step 6 — Install the session hooks
+### Step 6 — Install hooks and skills
 
-These replace the existing flat-file memory hooks. **Back up your existing hooks first if you have custom ones.**
+The `brain setup` command (Step 3b below) handles this automatically. To install manually:
 
 ```bash
-# Back up existing hooks (if any)
-cp ~/.claude/hooks/session-start-memory.sh ~/.claude/hooks/session-start-memory.sh.backup 2>/dev/null || true
-cp ~/.claude/hooks/pre-compact-auto-handover.py ~/.claude/hooks/pre-compact-auto-handover.py.backup 2>/dev/null || true
-
-# Install MemoryBrain hooks
-cp ~/memorybrain/hooks/session-ingest.sh ~/.claude/hooks/session-start-memory.sh
-cp ~/memorybrain/hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
-
-# Make executable
+# Hooks — replace existing flat-file hooks
+cp hooks/session-ingest.sh ~/.claude/hooks/session-start-memory.sh
+cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
 chmod +x ~/.claude/hooks/session-start-memory.sh
 chmod +x ~/.claude/hooks/pre-compact-auto-handover.py
+
+# Skills — copy to ~/.claude/skills/
+mkdir -p ~/.claude/skills/log-everything
+cp skills/log-everything/SKILL.md ~/.claude/skills/log-everything/SKILL.md
 ```
+
+Skills included:
+| Skill | Trigger | What it does |
+|---|---|---|
+| `log-everything` | `/log-everything` | Generates session summary → saves via `add_memory` → prompts for next-session notes |
 
 ---
 
@@ -303,9 +319,7 @@ echo "memorybrain" > ~/memorybrain/.brainproject
 
 ---
 
-## Part 2 — Plugins + `brain` CLI
-
-### The `brain` CLI
+## The `brain` CLI ✅
 
 After running `brain setup`, a `brain` alias is available in your terminal:
 
@@ -322,29 +336,11 @@ On a fresh machine, the full setup is one command:
 python3 ~/path/to/MemoryBrain/cli/brain.py setup --auto-detect
 ```
 
-### Plugins (Confluence + PagerDuty)
-
-Plugins run on a schedule inside the brain container. They auto-activate if credentials
-are present in `.env`, and are silently skipped if not.
-
-| Plugin | Schedule | What it pulls |
-|---|---|---|
-| Confluence | Every 6h | Pages you authored or last modified |
-| PagerDuty | Every 2h | Incidents assigned to you, resolved |
-
-**Credentials in `.env`:**
-```bash
-CONFLUENCE_URL=https://your-confluence.example.com/
-CONFLUENCE_TOKEN=your-personal-access-token
-
-PAGERDUTY_TOKEN=your-pd-api-token
-```
-
-Run `brain setup --auto-detect` to extract these automatically from `~/.claude.json`.
+This single command: starts Docker containers, pulls Ollama models, registers the MCP server with Claude Code, installs session hooks, installs skills, and adds the `brain` shell alias.
 
 ### Embedding model
 
-MemoryBrain uses **EmbeddingGemma** (`embeddinggemma` via Ollama) for semantic search — the #1 ranked sub-500M embedding model on MTEB benchmarks, at ~200MB (smaller than the previous `nomic-embed-text`).
+MemoryBrain uses **EmbeddingGemma** (`embeddinggemma` via Ollama) for semantic search — the #1 ranked sub-500M embedding model on MTEB benchmarks, at ~621MB.
 
 ---
 
@@ -378,11 +374,10 @@ The Claude Code hooks read `BRAIN_API_KEY` from env automatically and pass it as
 ```bash
 cd ~/memorybrain
 git pull
-docker compose down
 docker compose up -d --build
 ```
 
-Models are preserved in the `ollama_data` volume — no re-download needed.
+Both data (`memorybrain_brain_data`) and model (`memorybrain_ollama_data`) volumes are preserved — no re-download needed. Open a new Claude session after the upgrade.
 
 ---
 
@@ -436,11 +431,36 @@ Then restart WSL: `wsl --shutdown` from PowerShell, reopen terminal.
 
 | What | Where |
 |---|---|
-| SQLite database | `~/memorybrain/data/brain.db` (via Docker volume) |
-| ChromaDB vectors | `~/memorybrain/data/chroma/` (via Docker volume) |
-| Ollama models | Docker volume `ollama_data` |
-| Config | `~/memorybrain/.env` (machine-local, never committed) |
+| SQLite database | Docker named volume `memorybrain_brain_data` |
+| ChromaDB vectors | Docker named volume `memorybrain_brain_data` (subdirectory) |
+| Ollama models | Docker named volume `memorybrain_ollama_data` |
+| Config | `.env` in repo root (machine-local, never committed) |
 
-**To back up your memories:** copy `~/memorybrain/data/` somewhere safe.
+Data lives in Docker named volumes — not in the repo directory. This ensures data survives container recreation.
+
+**To back up your memories:**
+```bash
+docker run --rm -v memorybrain_brain_data:/data -v $(pwd):/backup alpine \
+  tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz -C /data .
+```
+
+**To restore:**
+```bash
+docker run --rm -v memorybrain_brain_data:/data -v $(pwd):/backup alpine \
+  tar xzf /backup/brain-backup-YYYYMMDD.tar.gz -C /data
+```
 
 **Data is machine-local by design.** Work PC and home PC maintain independent memory databases. The code (this repo) is shared; the memories are not.
+
+---
+
+## Restart behavior
+
+| Command | What happens | Data safe? | MCP session? |
+|---|---|---|---|
+| `docker compose restart brain` | Stops + restarts container process | ✅ Yes | ⚠️ Breaks — open new Claude session |
+| `docker compose up -d` | No change if config unchanged; recreates if changed | ✅ Yes (named volume) | ⚠️ Breaks if recreated |
+| `docker compose up -d --force-recreate` | Always recreates container | ✅ Yes (named volume) | ⚠️ Breaks — open new Claude session |
+| `docker compose down && up -d` | Stops + removes containers, restarts | ✅ Yes (named volume) | ⚠️ Breaks — open new Claude session |
+
+**MCP session note:** When the brain container restarts mid-session, the SSE connection drops. The MCP client reconnects but the server-side session state is reset — tool calls will fail with "initialization not complete". Open a new Claude Code session to restore full MCP functionality.

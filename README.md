@@ -8,18 +8,14 @@ that gives Claude automatic context on every new session, with on-demand semanti
 ## Quick Start
 
 ```bash
-cd ~/memorybrain  # or wherever you cloned this
+git clone https://github.com/Zarakilian/MemoryBrain ~/memorybrain
+cd ~/memorybrain
 cp .env.example .env
-docker compose up -d
-# Pull Ollama models (first time only — ~2GB download):
-docker compose exec ollama ollama pull nomic-embed-text
-docker compose exec ollama ollama pull llama3.2:3b
-# Add MCP server to Claude Code:
-claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse
-# Install hooks (replaces existing flat-file hooks):
-cp hooks/session-ingest.sh ~/.claude/hooks/session-start-memory.sh
-cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
+# One command does everything (Docker, models, MCP, hooks, skills):
+python3 cli/brain.py setup --auto-detect
 ```
+
+Or manually, step by step — see [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for the full setup guide.
 
 ## Project detection
 
@@ -45,7 +41,7 @@ If absent, the last path segment of CWD is used as the project slug.
 - **FastAPI** on port 7741
 - **SQLite FTS5** for keyword search + storage
 - **ChromaDB** for semantic vector search
-- **Ollama** (`nomic-embed-text` + `llama3.2:3b`) for embeddings + summarisation
+- **Ollama** (`embeddinggemma` + `llama3.2:3b`) for embeddings + summarisation
 - **Hybrid search**: FTS5 keywords + ChromaDB cosine → Reciprocal Rank Fusion
 - **MCP SSE** at `http://localhost:7741/sse`
 - **Data**: machine-local only — not synced across machines
