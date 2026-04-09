@@ -33,8 +33,7 @@ def test_brain_status_shows_running(monkeypatch, capsys):
     health_resp = _make_response(200, {"status": "ok"})
     status_resp = _make_response(200, {
         "project_count": 3,
-        "active_plugins": ["confluence"],
-        "inactive_plugins": ["clickhouse"],
+        "version": "0.4.0",
     })
 
     with patch("urllib.request.urlopen", side_effect=[health_resp, status_resp]):
@@ -43,7 +42,6 @@ def test_brain_status_shows_running(monkeypatch, capsys):
 
     captured = capsys.readouterr()
     assert "running" in captured.out
-    assert "confluence" in captured.out
     assert "3" in captured.out
 
 

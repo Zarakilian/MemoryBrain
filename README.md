@@ -5,6 +5,9 @@ Persistent searchable memory service for Claude Code via MCP SSE.
 Replaces the flat MEMORY.md system with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
 that gives Claude automatic context on every new session, with on-demand semantic search.
 
+MemoryBrain is a **passive store** — it stores what Claude saves via `add_memory`. No polling,
+no plugin credentials. Works identically on any machine with any MCP tools registered.
+
 ## Quick Start
 
 ```bash
@@ -45,3 +48,4 @@ If absent, the last path segment of CWD is used as the project slug.
 - **Hybrid search**: FTS5 keywords + ChromaDB cosine → Reciprocal Rank Fusion
 - **MCP SSE** at `http://localhost:7741/sse`
 - **Data**: machine-local only — not synced across machines
+- **`GET /mcp-tools`**: Reports registered MCP servers from `~/.claude.json` at session start

@@ -1,7 +1,15 @@
 # MemoryBrain — How It Works
 
-> **Status:** Part 1 (Core) ✅ + Part 2 (Plugins + CLI) ✅ complete.
+> **Status:** v0.4.0 ✅ — passive store, tool-agnostic.
 > **Keep this file up to date** as features are added.
+
+---
+
+## Philosophy
+
+MemoryBrain is a **passive, tool-agnostic memory store**. It does not pull from external systems. Claude retrieves data using its MCP tools (Confluence, ClickHouse, PagerDuty, etc.) and saves what it finds useful via `add_memory`. On a new machine with different MCP tools, MemoryBrain works identically — the memories reflect actual usage.
+
+At session start, MemoryBrain reads `~/.claude.json` to report which MCP tools are registered. This provides context about what tools Claude has available — but MemoryBrain itself only stores what Claude explicitly saves.
 
 ---
 
@@ -128,18 +136,21 @@ echo "my-project-name" > .brainproject
 
 ---
 
-## Plugins ✅
+## MCP Tool Awareness
 
-Plugins run on a schedule inside the brain container and automatically pull from external sources.
+At session start, MemoryBrain reads `~/.claude.json` and injects a list of your registered MCP servers into the session context. Example:
 
-| Plugin | Schedule | What it pulls | Activate |
-|---|---|---|---|
-| Confluence | Every 6h | Pages you authored or last modified | Set `CONFLUENCE_URL` + `CONFLUENCE_TOKEN` in `.env` |
-| PagerDuty | Every 2h | Incidents assigned to you, resolved | Set `PAGERDUTY_TOKEN` in `.env` |
-| ClickHouse | Every 12h | Error rate + P95 latency by service | Set `CLICKHOUSE_IOM_URL` + `CLICKHOUSE_TOKEN` in `.env` |
-| Jira | (stub) | — | Not yet implemented |
+```
+## Available MCP Tools
+- clickhouse-iom
+- confluence-mcp
+- memorybrain
+- pagerduty
 
-**Plugins auto-detect from `.env`** — if credentials are absent, the plugin is silently skipped. No toggling required.
+MemoryBrain will store what you retrieve with these tools.
+```
+
+No credentials required — this is a read of your local Claude config only. If `~/.claude.json` is missing or has no `mcpServers`, this block is silently skipped.
 
 ---
 
@@ -180,7 +191,7 @@ cd ~/memorybrain
 After cloning, run:
 
 ```bash
-cp .env.example .env    # add credentials if you want Confluence/PagerDuty plugins
+cp .env.example .env
 python3 cli/brain.py setup --auto-detect
 ```
 
@@ -207,12 +218,6 @@ OLLAMA_URL=http://ollama:11434   # leave as-is for Docker Compose setup
 # Set to any random string — enables X-Brain-Key header check on all endpoints
 # Leave blank to run open (fine for single-user localhost-only use)
 BRAIN_API_KEY=
-
-# Optional — fill in to enable plugins
-CONFLUENCE_URL=https://your-confluence.example.com/
-CONFLUENCE_TOKEN=your-personal-access-token
-
-PAGERDUTY_TOKEN=your-pd-api-token
 ```
 
 ---
@@ -327,7 +332,7 @@ After running `brain setup`, a `brain` alias is available in your terminal:
 brain add "just discovered X about Y"       # store a note from anywhere
 brain import ~/Downloads/some-doc.md        # import a file
 brain seed                                  # bulk import MEMORY.md + HANDOVER files from CWD
-brain status                                # check brain health + plugin status
+brain status                                # check brain health + service version
 brain setup --auto-detect                   # re-run setup (safe on any machine)
 ```
 

@@ -4,11 +4,11 @@
 
 ---
 
-## Status: v0.3.2+ — FULLY OPERATIONAL + REGISTERED ✅
+## Status: v0.4.0 — FULLY OPERATIONAL ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.3.2` (commits ahead: 3)
-**Tests:** 129 passing
+**Latest tag:** `v0.4.0` (pending tag — commits on master)
+**Tests:** 101 passing
 **Docker:** Running (named volume), healthy, models pulled
 **MCP registered:** `http://localhost:7741/sse`
 **Hooks installed:** session-start + pre-compact
@@ -25,9 +25,8 @@ None. MemoryBrain is registered and tested. In any Claude session:
 - `search_memory`, `add_memory`, `list_projects`, `get_recent_context` available as MCP tools
 
 **Possible future work:**
-- Tag v0.4.0 (covers next-session feature + named volume + skills portability)
-- Enable Confluence/PagerDuty plugins (set tokens in `.env`, `docker compose restart brain`)
-- ClickHouse APM plugin: set `CLICKHOUSE_IOM_URL` + `CLICKHOUSE_TOKEN` in `.env`
+- Push tag v0.4.0 to GitHub: `git push origin master --tags`
+- Add new memory types or search capabilities
 
 ---
 
@@ -109,6 +108,28 @@ HOW_IT_WORKS.md           — Part 2 section
 ---
 
 ## Session log
+
+### 2026-04-09 — Session 6: Plugin removal + MCP tool awareness (v0.4.0)
+
+**What happened:**
+
+| Item | Status |
+|---|---|
+| Removed plugin system (Confluence, PagerDuty, ClickHouse, APScheduler) | ✅ |
+| Removed 5 plugin test files + scheduler test | ✅ |
+| Removed plugin storage functions (`plugin_state` table, `get_last_run`, `set_last_run`, `get_memory_by_source`) | ✅ |
+| Removed `apscheduler` from requirements.txt | ✅ |
+| Removed plugin credentials from `.env.example` | ✅ |
+| Added `brain/app/mcp_discovery.py` — reads `~/.claude.json`, returns sorted MCP server names | ✅ |
+| Added `GET /mcp-tools` endpoint — always public, no auth required | ✅ |
+| Added `brain/tests/test_mcp_discovery.py` — 6 tests | ✅ |
+| Updated `hooks/session-ingest.sh` — injects `## Available MCP Tools` block at session start | ✅ |
+| Updated `cli/brain.py` — removed credential auto-detection; added MCP tools display in setup | ✅ |
+| Updated docs (HOW_IT_WORKS.md, README.md, PROGRESS_LOG.md) | ✅ |
+
+**Test count:** 101 (was 129; removed ~35 plugin/scheduler tests, added 6 new MCP discovery tests)
+
+**Philosophy locked in:** MemoryBrain is a passive, tool-agnostic store. No polling, no credentials for external services, no scheduled jobs. Claude retrieves with its MCP tools; MemoryBrain stores what Claude saves.
 
 ### 2026-04-09 — Session 5: Data persistence fix + portability + registration
 
