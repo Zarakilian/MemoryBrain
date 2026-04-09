@@ -39,6 +39,10 @@ If absent, the last path segment of CWD is used as the project slug.
 | `list_projects` | All projects + last activity |
 | `get_startup_summary` | Compact session-start injection |
 
+> **Session start rule:** Claude must call `get_startup_summary` then `get_recent_context` at the
+> start of every session, BEFORE reading any project files (`MEMORY.md`, `PROGRESS_LOG.md`, etc.).
+> File-based memory is a fallback for when MemoryBrain is not running. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
+
 ## Architecture
 
 - **FastAPI** on port 7741

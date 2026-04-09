@@ -98,6 +98,26 @@ Claude calls MCP tools on demand:
 | `list_projects()` | All known projects + last activity |
 | `get_startup_summary()` | Same compact index as session start |
 
+### Claude behavior rules (MANDATORY)
+
+The session-start hook injects MemoryBrain context automatically, but Claude must also actively
+call the MCP tools — not default to reading project files like `MEMORY.md` or `PROGRESS_LOG.md`.
+
+**Required order at every session start:**
+
+1. `mcp__memorybrain__get_startup_summary` — always first
+2. `mcp__memorybrain__get_recent_context` (days=14) — for detailed recent activity
+3. Only then read project files (if still needed for specific detail)
+
+**Why:** `MEMORY.md` and `PROGRESS_LOG.md` are fallbacks for when MemoryBrain is not running.
+When the brain is available, it is the authoritative cross-session memory source. Defaulting to
+file-based memory defeats the purpose of the system.
+
+**How this is enforced (two layers):**
+- `~/.claude/CLAUDE.md` contains an explicit "Session Start Protocol (MANDATORY)" section
+- The session-start hook prints a `## MANDATORY: MemoryBrain-first protocol` block as its last
+  output, so the instruction is the most recent thing in Claude's injected context
+
 ### Session ends (pre-compact)
 1. `pre-compact-auto-handover.py` hook fires
 2. Reads handover content from stdin or the most recent `HANDOVER-*.md` file
