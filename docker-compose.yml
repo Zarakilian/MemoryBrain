@@ -5,7 +5,7 @@ services:
     ports:
       - "127.0.0.1:${BRAIN_PORT:-7741}:7741"
     volumes:
-      - ./data:/app/data
+      - brain_data:/app/data
     env_file: .env
     environment:
       - OLLAMA_URL=http://ollama:11434
@@ -22,4 +22,5 @@ services:
     restart: unless-stopped
 
 volumes:
+  brain_data:
   ollama_data:

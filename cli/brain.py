@@ -258,7 +258,24 @@ def cmd_setup(auto_detect: bool = False):
             hooks_installed = True
     print("\u2705 Hooks installed" if hooks_installed else "\u23ed\ufe0f  Hooks \u2014 already up to date")
 
-    # 8. Install shell alias
+    # 8. Install Claude Code skills
+    skills_src = MEMORYBRAIN_DIR / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    skills_installed = False
+    if skills_src.exists():
+        for skill_dir in skills_src.iterdir():
+            if skill_dir.is_dir():
+                skill_file = skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    dst_skill_dir = skills_dst / skill_dir.name
+                    dst_skill_dir.mkdir(parents=True, exist_ok=True)
+                    dst_file = dst_skill_dir / "SKILL.md"
+                    if _file_hash(dst_file) != _file_hash(skill_file):
+                        shutil.copy2(skill_file, dst_file)
+                        skills_installed = True
+    print("\u2705 Skills installed" if skills_installed else "\u23ed\ufe0f  Skills \u2014 already up to date")
+
+    # 9. Install shell alias
     alias_line = f"alias brain='python3 {MEMORYBRAIN_DIR}/cli/brain.py'"
     alias_added = False
     for rc in [Path.home() / ".bashrc", Path.home() / ".zshrc"]:
