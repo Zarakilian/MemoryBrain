@@ -3,9 +3,9 @@ import pytest
 from datetime import datetime
 from app.models import MemoryEntry, Project
 from app.storage import (
-    add_memory, get_memory, keyword_search,
+    add_memory, get_memory, keyword_search, get_recent,
     upsert_project, get_project, list_projects,
-    init_db,
+    get_next_session_notes, init_db,
 )
 
 
@@ -45,7 +45,51 @@ def test_keyword_search_returns_summary_not_full_content(tmp_db):
     add_memory(e, db_path=tmp_db)
     results = keyword_search("very long content", db_path=tmp_db)
     assert results[0]["summary"] == "short summary"
-    assert "content" not in results[0]  # full content NOT in search results
+    assert "content" not in results[0]  # full content column NOT in results
+    assert "content_preview" in results[0]  # but preview IS included
+    assert results[0]["content_preview"] == ("very long content " * 100)[:200]
+
+
+def test_keyword_search_content_preview_contains_keywords(tmp_db):
+    """FTS match on raw content surfaces keyword via content_preview even if summary is bad."""
+    e = MemoryEntry(
+        content="The last thing I said was 'Fluffy dog'. Test of cross-session recall.",
+        summary="no meaningful information to summarize",
+        type="note",
+        project="test",
+    )
+    add_memory(e, db_path=tmp_db)
+    results = keyword_search("fluffy", db_path=tmp_db)
+    assert len(results) == 1
+    assert "Fluffy dog" in results[0]["content_preview"]
+
+
+def test_get_recent_includes_content_preview(tmp_db):
+    e = MemoryEntry(content="recent memory about grafana", type="note", project="monitoring")
+    add_memory(e, db_path=tmp_db)
+    results = get_recent(db_path=tmp_db)
+    assert len(results) >= 1
+    assert "content_preview" in results[0]
+
+
+def test_get_next_session_notes_fallback_to_latest_project(tmp_db):
+    """When project is empty, falls back to most recently active project's notes."""
+    p = Project(slug="memorybrain", name="MemoryBrain")
+    upsert_project(p, db_path=tmp_db)
+    note = MemoryEntry(
+        content="Next session: test fluffy dog recall",
+        type="note",
+        project="memorybrain",
+        tags=["next_session"],
+    )
+    add_memory(note, db_path=tmp_db)
+    result = get_next_session_notes(project="", db_path=tmp_db)
+    assert "fluffy dog" in result.lower()
+
+
+def test_get_next_session_notes_empty_when_no_projects(tmp_db):
+    result = get_next_session_notes(project="", db_path=tmp_db)
+    assert result == ""
 
 
 def test_keyword_search_filters_by_project(tmp_db):

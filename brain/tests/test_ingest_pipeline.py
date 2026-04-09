@@ -7,7 +7,9 @@ from app.ingest_pipeline import ingest
 
 @pytest.mark.asyncio
 async def test_ingest_stores_entry_in_sqlite(tmp_db, mock_ollama):
-    entry = MemoryEntry(content="clickhouse query is slow", type="note", project="monitoring")
+    # Content must be > 400 chars to go through Ollama summarisation
+    long_content = "clickhouse query is slow because the index is missing on the timestamp column " * 6
+    entry = MemoryEntry(content=long_content, type="note", project="monitoring")
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
          patch("app.ingest_pipeline.chroma_add"):
         result = await ingest(entry)
@@ -17,7 +19,7 @@ async def test_ingest_stores_entry_in_sqlite(tmp_db, mock_ollama):
     from app.storage import get_memory
     stored = get_memory(result.id, db_path=tmp_db)
     assert stored is not None
-    assert stored.content == "clickhouse query is slow"
+    assert stored.content == long_content
 
 
 @pytest.mark.asyncio

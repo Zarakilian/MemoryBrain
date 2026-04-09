@@ -115,7 +115,8 @@ def keyword_search(
     safe_query = " ".join('"' + t.replace('"', '""') + '"' for t in tokens) if tokens else '""'
     with _connect(db_path) as conn:
         sql = """
-            SELECT m.id, m.summary, m.type, m.project, m.source, m.importance, m.timestamp
+            SELECT m.id, m.summary, substr(m.content, 1, 200) AS content_preview,
+                   m.type, m.project, m.source, m.importance, m.timestamp
             FROM memories_fts
             JOIN memories m ON memories_fts.rowid = m.rowid
             WHERE memories_fts MATCH ?
@@ -148,7 +149,7 @@ def get_recent(
 ) -> list[dict]:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     with _connect(db_path) as conn:
-        sql = "SELECT id, summary, type, project, source, importance, timestamp FROM memories WHERE timestamp >= ?"
+        sql = "SELECT id, summary, substr(content, 1, 200) AS content_preview, type, project, source, importance, timestamp FROM memories WHERE timestamp >= ?"
         params: list = [cutoff]
         if project:
             sql += " AND project = ?"
@@ -226,9 +227,21 @@ def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PA
     return _row_to_entry(row)
 
 
-def get_next_session_notes(project: str, db_path: Path = DB_PATH) -> str:
-    """Return the most recent next_session note for a project, or empty string."""
+def get_next_session_notes(project: str = "", db_path: Path = DB_PATH) -> str:
+    """Return the most recent next_session note for a project, or empty string.
+
+    If project is empty, falls back to the most recently active project so that
+    next-session notes are surfaced even when the session starts in a different directory.
+    """
     with _connect(db_path) as conn:
+        if not project:
+            proj_row = conn.execute(
+                "SELECT slug FROM projects ORDER BY last_activity DESC LIMIT 1"
+            ).fetchone()
+            if proj_row:
+                project = proj_row["slug"]
+            else:
+                return ""
         row = conn.execute(
             "SELECT content FROM memories WHERE project = ? AND tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
             (project, '%next_session%'),

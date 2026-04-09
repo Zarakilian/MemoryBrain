@@ -4,6 +4,7 @@ import ollama
 
 EMBED_MODEL = "embeddinggemma"
 SUMMARISE_MODEL = "llama3.2:3b"
+SHORT_CONTENT_THRESHOLD = 400  # chars — below this, skip Ollama and store verbatim
 
 
 def validate_ollama_url(url: str) -> str:
@@ -27,6 +28,8 @@ async def embed(text: str) -> list[float]:
 
 
 async def summarise(content: str, max_sentences: int = 3) -> str:
+    if len(content) <= SHORT_CONTENT_THRESHOLD:
+        return content  # preserve verbatim — short notes are already concise
     prompt = (
         f"Summarise the following in {max_sentences} sentences. "
         f"Be specific — include key facts, names, and numbers:\n\n{content[:4000]}"

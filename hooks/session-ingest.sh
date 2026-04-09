@@ -132,16 +132,22 @@ if [ -n "$SUMMARY" ]; then
 fi
 
 # ── Next-session plan ─────────────────────────────────────────────────────────
+# Always fetched — if no .brainproject in CWD, falls back to most recently active project.
 
+NEXT_NOTES_URL="${BRAIN_URL}/next-session"
 if [ -n "$PROJECT_SLUG" ]; then
-    NEXT_NOTES=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/next-session?project=${PROJECT_SLUG}" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('notes',''))" 2>/dev/null \
-        || echo "")
-    if [ -n "$NEXT_NOTES" ]; then
-        echo ""
-        echo "## Next Session Plan — ${PROJECT_SLUG}"
-        echo "$NEXT_NOTES"
-    fi
+    NEXT_NOTES_URL="${BRAIN_URL}/next-session?project=${PROJECT_SLUG}"
+fi
+
+NEXT_NOTES=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${NEXT_NOTES_URL}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('notes',''))" 2>/dev/null \
+    || echo "")
+
+if [ -n "$NEXT_NOTES" ]; then
+    echo ""
+    PLAN_LABEL="${PROJECT_SLUG:-recent project}"
+    echo "## Next Session Plan — ${PLAN_LABEL}"
+    echo "$NEXT_NOTES"
 fi
 
 # ── Available MCP tools ───────────────────────────────────────────────────────

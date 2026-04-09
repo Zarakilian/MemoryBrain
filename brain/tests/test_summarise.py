@@ -19,6 +19,23 @@ async def test_summarise_returns_non_empty_string(mock_ollama):
 
 
 @pytest.mark.asyncio
+async def test_summarise_short_content_returned_verbatim(mock_ollama):
+    """Content <= 400 chars must be returned as-is without calling Ollama."""
+    short = "The last thing I said was 'Fluffy dog'. This is a test of cross-session recall."
+    result = await summarise(short)
+    assert result == short
+    mock_ollama.generate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_summarise_long_content_calls_ollama(mock_ollama):
+    """Content > 400 chars must go through Ollama."""
+    long_content = "word " * 100  # 500 chars
+    await summarise(long_content)
+    mock_ollama.generate.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_score_importance_returns_int_1_to_5(mock_ollama):
     score = await score_importance("trivial note about nothing")
     assert isinstance(score, int)
