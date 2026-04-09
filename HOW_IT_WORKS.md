@@ -72,10 +72,10 @@ Both stores are in the `data/` directory — a Docker volume on your machine. **
 
 ### Session starts
 1. `session-start-memory.sh` hook fires
-2. Calls `GET /startup-summary` on the brain
-3. Brain returns a compact project index (~150 tokens): last activity per project
-4. Hook injects it into your session — Claude is immediately oriented
-5. If brain is not running, falls back to legacy `MEMORY.md` (no crash)
+2. **Container health check** — if brain is not running, prints a clear message with the exact `docker compose up -d` command to start it, then falls back to legacy `MEMORY.md` (no crash)
+3. **Version check** — if `MEMORYBRAIN_DIR` is set (written by `brain setup`), compares `$MEMORYBRAIN_DIR/VERSION` against the running container's reported version. If they differ (e.g. after `git pull` without rebuilding), prints an update message with the exact rebuild command
+4. Calls `GET /startup-summary` — brain returns a compact project index (~150 tokens): last activity per project
+5. Hook injects it into your session — Claude is immediately oriented
 
 ### During a session
 Claude calls MCP tools on demand:
@@ -151,6 +151,8 @@ MemoryBrain will store what you retrieve with these tools.
 ```
 
 This happens on the host — not inside Docker. `~/.claude.json` is never mounted into the container (it contains credentials). If `~/.claude.json` is missing or has no `mcpServers`, the block is silently skipped.
+
+The `brain/app/mcp_discovery.py` module still exists and is unit-tested — it can be used by the CLI or future tooling. It is intentionally not exposed as an HTTP endpoint because the Docker container cannot access `~/.claude.json` (the `brain` user's home is `/app`, not the host home). Host-side execution is both simpler and more secure.
 
 ---
 

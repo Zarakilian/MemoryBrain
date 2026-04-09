@@ -7,7 +7,7 @@
 ## Status: v0.4.0 — FULLY OPERATIONAL ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.4.0`
+**Latest tag:** `v0.4.0` (Session 8 fix committed, not yet re-tagged)
 **Tests:** 104 passing
 **Docker:** Running (named volume), healthy, models pulled
 **MCP registered:** `http://localhost:7741/sse`
@@ -107,6 +107,30 @@ HOW_IT_WORKS.md           — Part 2 section
 ---
 
 ## Session log
+
+### 2026-04-09 — Session 8: Session startup health + version checks
+
+**Goal:** Make MemoryBrain seamless — session startup should clearly report problems and tell the user exactly how to fix them.
+
+| Item | Status |
+|---|---|
+| Add `VERSION` file to repo root (`0.4.0`) | ✅ |
+| Session hook: "NOT RUNNING" message with exact `docker compose up -d` command | ✅ |
+| Session hook: version mismatch check — compares `$MEMORYBRAIN_DIR/VERSION` vs `/status` | ✅ |
+| Session hook: version mismatch shows exact rebuild command `docker compose up -d --build` | ✅ |
+| `brain setup` now exports `MEMORYBRAIN_DIR=` alongside the shell alias | ✅ |
+| `MEMORYBRAIN_DIR` added to `~/.bashrc` on this machine | ✅ |
+| Hook copied to `~/.claude/hooks/session-start-memory.sh` | ✅ |
+| `HOW_IT_WORKS.md` updated — startup flow + MCP discovery rationale | ✅ |
+
+**Three tested scenarios:**
+1. Brain running, versions match → normal startup summary, no warnings
+2. Brain not running → clear message + exact start command using `$MEMORYBRAIN_DIR`
+3. Brain running but outdated → shows running vs repo version + exact rebuild command
+
+**MCP tools explanation (documented):** The `/mcp-tools` Docker endpoint was removed because the Docker `brain` user's home is `/app`, not the host home — so `~/.claude.json` was never found and the endpoint always returned empty. The feature is intact: the session hook reads `~/.claude.json` directly on the host (where it runs) and injects `## Available MCP Tools`. `mcp_discovery.py` module is kept and tested.
+
+---
 
 ### 2026-04-09 — Session 7: Fix MCP discovery architecture (host-side, not Docker)
 

@@ -214,20 +214,29 @@ def cmd_setup(auto_detect: bool = False):
                         skills_installed = True
     print("\u2705 Skills installed" if skills_installed else "\u23ed\ufe0f  Skills \u2014 already up to date")
 
-    # 8. Install shell alias
+    # 8. Install shell alias + MEMORYBRAIN_DIR export
+    # MEMORYBRAIN_DIR is read by the session hook for version checks and start instructions.
     alias_line = f"alias brain='python3 {MEMORYBRAIN_DIR}/cli/brain.py'"
-    alias_added = False
+    dir_line = f"export MEMORYBRAIN_DIR='{MEMORYBRAIN_DIR}'"
+    shell_added = False
     for rc in [Path.home() / ".bashrc", Path.home() / ".zshrc"]:
         if rc.exists():
             content = rc.read_text()
-            if "alias brain=" not in content:
-                rc.write_text(content + f"\n# MemoryBrain CLI\n{alias_line}\n")
-                alias_added = True
+            needs_alias = "alias brain=" not in content
+            needs_dir = "MEMORYBRAIN_DIR=" not in content
+            if needs_alias or needs_dir:
+                block = "\n# MemoryBrain CLI\n"
+                if needs_dir:
+                    block += f"{dir_line}\n"
+                if needs_alias:
+                    block += f"{alias_line}\n"
+                rc.write_text(content + block)
+                shell_added = True
 
-    if alias_added:
-        print("\u2705 Shell alias added (run: source ~/.bashrc)")
+    if shell_added:
+        print("\u2705 Shell config updated (run: source ~/.bashrc)")
     else:
-        print("\u23ed\ufe0f  Shell alias \u2014 already present")
+        print("\u23ed\ufe0f  Shell config \u2014 already up to date")
 
     # 9. Show detected MCP tools from ~/.claude.json (read directly on host)
     print()

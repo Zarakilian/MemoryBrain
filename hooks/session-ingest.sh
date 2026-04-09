@@ -6,6 +6,7 @@
 set -euo pipefail
 
 BRAIN_URL="${MEMORYBRAIN_URL:-http://localhost:7741}"
+MEMORYBRAIN_DIR="${MEMORYBRAIN_DIR:-}"
 CWD="${1:-$(pwd)}"
 
 # Validate BRAIN_URL is localhost-only (prevent SSRF via env manipulation)
@@ -26,26 +27,67 @@ if [ -n "${BRAIN_API_KEY:-}" ]; then
     CURL_AUTH_ARGS=(-H "X-Brain-Key: ${BRAIN_API_KEY}")
 fi
 
-# Check if brain is running
+# ── Container health check ────────────────────────────────────────────────────
+
 if ! curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/health" > /dev/null 2>&1; then
-    # Brain not running — fall back to legacy MEMORY.md if present
+    echo ""
+    echo "## MemoryBrain — NOT RUNNING"
+    echo ""
+    echo "No session context available. Start the container to restore memory."
+    echo ""
+    if [ -n "$MEMORYBRAIN_DIR" ] && [ -d "$MEMORYBRAIN_DIR" ]; then
+        echo "  cd \"${MEMORYBRAIN_DIR}\" && docker compose up -d"
+    else
+        echo "  docker compose -f ~/memorybrain/docker-compose.yml up -d"
+        echo ""
+        echo "  (Set MEMORYBRAIN_DIR in your shell profile to use the exact path)"
+    fi
+    echo ""
+    # Fall back to legacy MEMORY.md if present
     if [ -f "${CWD}/memory/MEMORY.md" ]; then
-        echo "# Context (from MEMORY.md — MemoryBrain not running)"
+        echo "## Context (from MEMORY.md — MemoryBrain not running)"
         head -100 "${CWD}/memory/MEMORY.md"
     fi
     exit 0
 fi
 
-# Fetch startup summary
-SUMMARY=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/startup-summary" | python3 -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null || echo "")
+# ── Version check ─────────────────────────────────────────────────────────────
+# Compare repo VERSION file against running container. Warns if git pull happened
+# but docker compose up -d --build has not been run yet.
+
+if [ -n "$MEMORYBRAIN_DIR" ] && [ -f "${MEMORYBRAIN_DIR}/VERSION" ]; then
+    REPO_VERSION=$(tr -d '[:space:]' < "${MEMORYBRAIN_DIR}/VERSION")
+    RUNNING_VERSION=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/status" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))" 2>/dev/null \
+        || echo "unknown")
+    if [ -n "$REPO_VERSION" ] && [ "$RUNNING_VERSION" != "unknown" ] && [ "$REPO_VERSION" != "$RUNNING_VERSION" ]; then
+        echo ""
+        echo "## MemoryBrain — UPDATE AVAILABLE"
+        echo ""
+        echo "  Running: v${RUNNING_VERSION}   Repo: v${REPO_VERSION}"
+        echo ""
+        echo "  Rebuild the container:"
+        echo "    cd \"${MEMORYBRAIN_DIR}\" && docker compose up -d --build"
+        echo ""
+    fi
+fi
+
+# ── Startup summary ───────────────────────────────────────────────────────────
+
+SUMMARY=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/startup-summary" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null \
+    || echo "")
 
 if [ -n "$SUMMARY" ]; then
     echo "$SUMMARY"
 fi
 
-# Inject next-session plan if a project is detected
+# ── Next-session plan ─────────────────────────────────────────────────────────
+
 if [ -n "$PROJECT_SLUG" ]; then
-    NEXT_NOTES=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/next-session?project=${PROJECT_SLUG}" | python3 -c "import sys,json; print(json.load(sys.stdin).get('notes',''))" 2>/dev/null || echo "")
+    NEXT_NOTES=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/next-session?project=${PROJECT_SLUG}" \
+        | python3 -c "import sys,json; print(json.load(sys.stdin).get('notes',''))" 2>/dev/null \
+        || echo "")
     if [ -n "$NEXT_NOTES" ]; then
         echo ""
         echo "## Next Session Plan — ${PROJECT_SLUG}"
@@ -53,7 +95,10 @@ if [ -n "$PROJECT_SLUG" ]; then
     fi
 fi
 
-# Inject available MCP tools — read ~/.claude.json directly on host (no Docker needed)
+# ── Available MCP tools ───────────────────────────────────────────────────────
+# Read ~/.claude.json directly on the host — never routed through Docker
+# (the file contains credentials and must never be mounted into a container)
+
 MCP_TOOLS=$(python3 -c "
 import json, os
 path = os.path.expanduser('~/.claude.json')
