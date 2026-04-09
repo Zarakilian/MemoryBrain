@@ -8,7 +8,7 @@ set -euo pipefail
 BRAIN_URL="${MEMORYBRAIN_URL:-http://localhost:7741}"
 CWD="${1:-$(pwd)}"
 
-# H3: Validate BRAIN_URL is localhost-only (prevent SSRF via env manipulation)
+# Validate BRAIN_URL is localhost-only (prevent SSRF via env manipulation)
 case "$BRAIN_URL" in
     http://localhost:*|http://127.0.0.1:*|http://\[::1\]:*) ;;
     *) echo "[memorybrain] BRAIN_URL must be localhost — refusing to connect to ${BRAIN_URL}" >&2; exit 0 ;;
@@ -51,4 +51,22 @@ if [ -n "$PROJECT_SLUG" ]; then
         echo "## Next Session Plan — ${PROJECT_SLUG}"
         echo "$NEXT_NOTES"
     fi
+fi
+
+# Inject available MCP tools (public endpoint — no auth header needed)
+MCP_TOOLS=$(curl -sf "${BRAIN_URL}/mcp-tools" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+tools = data.get('tools', [])
+if tools:
+    print('## Available MCP Tools')
+    for t in tools:
+        print(f'- {t}')
+    print()
+    print('MemoryBrain will store what you retrieve with these tools.')
+" 2>/dev/null || echo "")
+
+if [ -n "$MCP_TOOLS" ]; then
+    echo ""
+    echo "$MCP_TOOLS"
 fi
