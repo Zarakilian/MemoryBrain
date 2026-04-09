@@ -4,25 +4,30 @@
 
 ---
 
-## Status: v0.3.2 — FULLY OPERATIONAL ✅
+## Status: v0.3.2+ — FULLY OPERATIONAL + REGISTERED ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.3.2` (2026-04-08)
+**Latest tag:** `v0.3.2` (commits ahead: 3)
 **Tests:** 129 passing
-**Docker:** Running, healthy, models pulled, end-to-end tested
-**Next action:** Register MCP server in Claude Code + install session hooks → test in a real session
+**Docker:** Running (named volume), healthy, models pulled
+**MCP registered:** `http://localhost:7741/sse`
+**Hooks installed:** session-start + pre-compact
+**Skills installed:** `log-everything` (/log-everything in Claude)
+**Next action:** None — fully operational. Use `/log-everything` to save sessions.
 
 ---
 
 ## IMMEDIATE NEXT STEP
 
-Register MemoryBrain as an MCP server and install the hooks so Claude Code starts using it:
+None. MemoryBrain is registered and tested. In any Claude session:
+- Session startup auto-injects Brain summary + next-session notes
+- `/log-everything` saves session to Brain and captures next-session plan
+- `search_memory`, `add_memory`, `list_projects`, `get_recent_context` available as MCP tools
 
-1. `claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse`
-2. Install hooks (see HOW_IT_WORKS.md Step 6)
-3. Open a new Claude Code session — it should auto-inject startup summary
-4. Try `search_memory`, `add_memory`, `list_projects` via Claude
-5. Optionally enable Confluence/PagerDuty plugins in `.env` + `docker compose restart brain`
+**Possible future work:**
+- Tag v0.4.0 (covers next-session feature + named volume + skills portability)
+- Enable Confluence/PagerDuty plugins (set tokens in `.env`, `docker compose restart brain`)
+- ClickHouse APM plugin: set `CLICKHOUSE_IOM_URL` + `CLICKHOUSE_TOKEN` in `.env`
 
 ---
 
@@ -104,6 +109,29 @@ HOW_IT_WORKS.md           — Part 2 section
 ---
 
 ## Session log
+
+### 2026-04-09 — Session 5: Data persistence fix + portability + registration
+
+**What happened:**
+
+| Item | Status |
+|---|---|
+| Root cause of "empty DB after up -d" | ✅ Found: Rancher Desktop translates bind mounts to UUID virtiofsd paths; new container = new UUID = empty dir |
+| Fix: named Docker volume (`memorybrain_brain_data`) | ✅ Applied — data now persists through any container recreate |
+| MCP registered | ✅ `claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse` |
+| Hooks installed | ✅ session-ingest.sh + pre-compact-ingest.py active |
+| Next-session plan feature committed | ✅ storage.py, main.py, hooks |
+| Skills: add to repo | ✅ `skills/log-everything/SKILL.md` added; brain setup now installs skills |
+| HOW_IT_WORKS.md major update | ✅ model names, data location, restart behavior, skills, Option A/B setup |
+| README quick start updated | ✅ one-command setup via brain CLI |
+| Pushed to GitHub | ✅ 3 new commits on master |
+
+**MCP session break behavior (documented):** After any container restart mid-session, SSE connection drops and MCP tool calls fail. Open a new Claude session to restore. This is expected — not a bug.
+
+**Key finding on Rancher Desktop + WSL:**
+- Bind mounts from WSL paths → Rancher translates to `/mnt/wsl/rancher-desktop/run/docker-mounts/<UUID>/`
+- UUID is per-container (not per-volume), so `up -d` (recreate) = new UUID = empty dir
+- Named volumes use `/var/lib/docker/volumes/<name>/_data` — stable across recreates
 
 ### 2026-04-08 — Session 4: Security Hardening (Opus 4.6 deep-dive)
 
