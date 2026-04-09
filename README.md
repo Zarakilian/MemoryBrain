@@ -48,4 +48,4 @@ If absent, the last path segment of CWD is used as the project slug.
 - **Hybrid search**: FTS5 keywords + ChromaDB cosine → Reciprocal Rank Fusion
 - **MCP SSE** at `http://localhost:7741/sse`
 - **Data**: machine-local only — not synced across machines
-- **`GET /mcp-tools`**: Reports registered MCP servers from `~/.claude.json` at session start
+- **`GET /mcp-tools`**: Reports registered MCP servers from `~/.claude.json`; called by the session-start hook

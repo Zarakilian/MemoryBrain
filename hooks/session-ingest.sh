@@ -17,7 +17,7 @@ esac
 # Detect project slug: check for .brainproject file first, then heuristic
 PROJECT_SLUG=""
 if [ -f "${CWD}/.brainproject" ]; then
-    PROJECT_SLUG=$(cat "${CWD}/.brainproject" | tr -d '[:space:]')
+    PROJECT_SLUG=$(cat "${CWD}/.brainproject" | tr -cd '[:alnum:]_-')
 fi
 
 # Build auth header if API key is set

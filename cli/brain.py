@@ -258,7 +258,7 @@ def main():
     # setup
     p_setup = sub.add_parser("setup", help="Install MemoryBrain and register with Claude Code")
     p_setup.add_argument("--auto-detect", action="store_true",
-                         help="Read ~/.claude.json to detect registered MCP tools")
+                         help="Kept for backwards compatibility. MCP tool detection always runs.")
 
     # add
     p_add = sub.add_parser("add", help="Add a memory note")

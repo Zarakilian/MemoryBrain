@@ -207,7 +207,7 @@ This handles Steps 3–8 automatically: starts Docker, pulls models, registers t
 cp .env.example .env
 ```
 
-Open `.env` and fill in credentials for any external services you want to use. Everything is optional except the core variables:
+Open `.env` if you need to change the port or add API key authentication. All fields are optional:
 
 ```bash
 # Required
@@ -274,7 +274,7 @@ claude mcp list
 
 ### Step 6 — Install hooks and skills
 
-The `brain setup` command (Step 3b below) handles this automatically. To install manually:
+The `brain setup --auto-detect` command (Option A above) handles this automatically. To install manually:
 
 ```bash
 # Hooks — replace existing flat-file hooks
