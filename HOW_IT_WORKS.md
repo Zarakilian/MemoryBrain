@@ -74,8 +74,17 @@ Both stores are in the `data/` directory — a Docker volume on your machine. **
 1. `session-start-memory.sh` hook fires
 2. **Container health check** — if brain is not running, prints a clear message with the exact `docker compose up -d` command to start it, then falls back to legacy `MEMORY.md` (no crash)
 3. **Version check** — if `MEMORYBRAIN_DIR` is set (written by `brain setup`), compares `$MEMORYBRAIN_DIR/VERSION` against the running container's reported version. If they differ (e.g. after `git pull` without rebuilding), prints an update message with the exact rebuild command
-4. Calls `GET /startup-summary` — brain returns a compact project index (~150 tokens): last activity per project
-5. Hook injects it into your session — Claude is immediately oriented
+4. **Subsystem readiness check** — calls `GET /readiness`, which checks all four subsystems: SQLite, ChromaDB, Ollama, and both required models (`embeddinggemma`, `llama3.2:3b`). If anything is degraded, prints a `## MemoryBrain — PARTIAL SERVICE` block listing exactly what failed, what still works, and the exact commands to fix it. On a healthy system, this step is completely silent
+5. Calls `GET /startup-summary` — brain returns a compact project index (~150 tokens): last activity per project
+6. Hook injects it into your session — Claude is immediately oriented
+
+**Degraded service modes** (reported at startup when detected):
+
+| Condition | Available | Unavailable |
+|---|---|---|
+| Ollama down or models missing | Read + keyword search | `add_memory`, semantic search |
+| ChromaDB down | Read + keyword search + `add_memory` | Semantic search |
+| SQLite down | Nothing | Everything |
 
 ### During a session
 Claude calls MCP tools on demand:

@@ -72,6 +72,55 @@ if [ -n "$MEMORYBRAIN_DIR" ] && [ -f "${MEMORYBRAIN_DIR}/VERSION" ]; then
     fi
 fi
 
+# ── Subsystem readiness check ────────────────────────────────────────────────
+# Checks SQLite, ChromaDB, Ollama, and both models. Always public — no auth needed.
+# On full success: silent (no noise on a healthy system).
+# On degraded: explains exactly what's broken, what still works, and how to fix it.
+
+READINESS_MSG=$(curl -sf "${BRAIN_URL}/readiness" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if data.get('ready', True):
+    sys.exit(0)  # all OK — print nothing
+
+checks = data.get('checks', {})
+lines = ['', '## MemoryBrain — PARTIAL SERVICE', '']
+
+for name, status in checks.items():
+    if status != 'ok':
+        lines.append(f'  \u2717 {name}: {status}')
+
+lines.append('')
+
+ollama_ok = all(checks.get(k) == 'ok' for k in ('ollama', 'embedding_model', 'summary_model'))
+chroma_ok = checks.get('chromadb') == 'ok'
+
+if not ollama_ok:
+    lines.append('  Available:    read + keyword search (no Ollama needed)')
+    lines.append('  Unavailable:  add_memory, semantic search')
+    lines.append('')
+    lines.append('  Fix Ollama:')
+elif not chroma_ok:
+    lines.append('  Available:    read + keyword search + add_memory')
+    lines.append('  Unavailable:  semantic search')
+
+print('\n'.join(lines))
+" 2>/dev/null || echo "")
+
+if [ -n "$READINESS_MSG" ]; then
+    echo "$READINESS_MSG"
+    if [ -n "$MEMORYBRAIN_DIR" ]; then
+        echo "    cd \"${MEMORYBRAIN_DIR}\" && docker compose up -d"
+        echo "    docker compose -f \"${MEMORYBRAIN_DIR}/docker-compose.yml\" exec ollama ollama pull embeddinggemma"
+        echo "    docker compose -f \"${MEMORYBRAIN_DIR}/docker-compose.yml\" exec ollama ollama pull llama3.2:3b"
+    else
+        echo "    docker compose up -d"
+        echo "    docker compose exec ollama ollama pull embeddinggemma"
+        echo "    docker compose exec ollama ollama pull llama3.2:3b"
+    fi
+    echo ""
+fi
+
 # ── Startup summary ───────────────────────────────────────────────────────────
 
 SUMMARY=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/startup-summary" \

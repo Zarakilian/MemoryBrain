@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock, MagicMock
 from app.main import app
 
 client = TestClient(app)
@@ -21,3 +21,103 @@ def test_status_endpoint_returns_structure(tmp_db):
             assert "version" in data
             assert "active_plugins" not in data
             assert "inactive_plugins" not in data
+
+
+# ── /readiness tests ──────────────────────────────────────────────────────────
+
+def _make_ollama_list_response(model_names: list[str]):
+    """Build a mock ollama list() response with the given model name strings."""
+    models = []
+    for name in model_names:
+        m = MagicMock()
+        m.model = name
+        models.append(m)
+    resp = MagicMock()
+    resp.models = models
+    return resp
+
+
+def test_readiness_all_ok(tmp_db):
+    mock_list = AsyncMock(return_value=_make_ollama_list_response(
+        ["embeddinggemma:latest", "llama3.2:3b"]
+    ))
+    with patch("app.main.DB_PATH", tmp_db), \
+         patch("app.storage.DB_PATH", tmp_db), \
+         patch("app.main.ollama_client") as mock_oc, \
+         patch("app.main.get_chroma_client") as mock_chroma:
+        mock_oc.list = mock_list
+        mock_chroma.return_value.get_or_create_collection.return_value = MagicMock()
+        resp = client.get("/readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is True
+    assert data["checks"]["sqlite"] == "ok"
+    assert data["checks"]["chromadb"] == "ok"
+    assert data["checks"]["ollama"] == "ok"
+    assert data["checks"]["embedding_model"] == "ok"
+    assert data["checks"]["summary_model"] == "ok"
+
+
+def test_readiness_ollama_down(tmp_db):
+    mock_list = AsyncMock(side_effect=ConnectionError("refused"))
+    with patch("app.main.DB_PATH", tmp_db), \
+         patch("app.storage.DB_PATH", tmp_db), \
+         patch("app.main.ollama_client") as mock_oc, \
+         patch("app.main.get_chroma_client") as mock_chroma:
+        mock_oc.list = mock_list
+        mock_chroma.return_value.get_or_create_collection.return_value = MagicMock()
+        resp = client.get("/readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["checks"]["ollama"] == "error"
+    assert data["checks"]["embedding_model"] == "unknown"
+    assert data["checks"]["summary_model"] == "unknown"
+    assert data["checks"]["sqlite"] == "ok"
+
+
+def test_readiness_models_missing(tmp_db):
+    # Ollama is up but models not yet pulled
+    mock_list = AsyncMock(return_value=_make_ollama_list_response([]))
+    with patch("app.main.DB_PATH", tmp_db), \
+         patch("app.storage.DB_PATH", tmp_db), \
+         patch("app.main.ollama_client") as mock_oc, \
+         patch("app.main.get_chroma_client") as mock_chroma:
+        mock_oc.list = mock_list
+        mock_chroma.return_value.get_or_create_collection.return_value = MagicMock()
+        resp = client.get("/readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["checks"]["ollama"] == "ok"
+    assert data["checks"]["embedding_model"] == "missing"
+    assert data["checks"]["summary_model"] == "missing"
+
+
+def test_readiness_chromadb_down(tmp_db):
+    mock_list = AsyncMock(return_value=_make_ollama_list_response(
+        ["embeddinggemma:latest", "llama3.2:3b"]
+    ))
+    with patch("app.main.DB_PATH", tmp_db), \
+         patch("app.storage.DB_PATH", tmp_db), \
+         patch("app.main.ollama_client") as mock_oc, \
+         patch("app.main.get_chroma_client") as mock_chroma:
+        mock_oc.list = mock_list
+        mock_chroma.side_effect = Exception("ChromaDB unavailable")
+        resp = client.get("/readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ready"] is False
+    assert data["checks"]["chromadb"] == "error"
+    assert data["checks"]["ollama"] == "ok"
+
+
+def test_readiness_is_public_when_auth_enabled():
+    """GET /readiness must work without API key even when auth is enabled."""
+    from app import auth
+    auth._API_KEY = "secret"
+    try:
+        resp = client.get("/readiness")
+        assert resp.status_code == 200
+    finally:
+        auth._API_KEY = None

@@ -7,9 +7,9 @@
 ## Status: v0.4.0 — FULLY OPERATIONAL ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.4.0` (Session 8 fix committed, not yet re-tagged)
-**Tests:** 104 passing
-**Docker:** Running (named volume), healthy, models pulled
+**Latest tag:** `v0.4.0` (Session 9 changes committed — not re-tagged, no version bump)
+**Tests:** 109 passing
+**Docker:** Running (named volume), healthy, models pulled, /readiness endpoint live
 **MCP registered:** `http://localhost:7741/sse`
 **Hooks installed:** session-start + pre-compact
 **Skills installed:** `log-everything` (/log-everything in Claude)
@@ -107,6 +107,31 @@ HOW_IT_WORKS.md           — Part 2 section
 ---
 
 ## Session log
+
+### 2026-04-09 — Session 9: Full subsystem readiness check
+
+**Goal:** Make MemoryBrain "all go and ready" aware — session startup should check every subsystem (not just "is FastAPI alive?") and report degraded states with actionable fix instructions.
+
+| Item | Status |
+|---|---|
+| `GET /readiness` endpoint — checks SQLite, ChromaDB, Ollama, both models | ✅ |
+| `auth.py` — `/readiness` added to `PUBLIC_PATHS` (no API key needed) | ✅ |
+| Session hook — readiness check section between version check and startup summary | ✅ |
+| Degraded report: `## MemoryBrain — PARTIAL SERVICE` with ✗ per failed check | ✅ |
+| Degraded report: explains what's available vs unavailable + exact fix commands | ✅ |
+| Silent on healthy system — no output when all checks pass | ✅ |
+| 5 new tests (109 total): all_ok, ollama_down, models_missing, chroma_down, public_no_auth | ✅ |
+| Hook copied to `~/.claude/hooks/session-start-memory.sh` | ✅ |
+| `HOW_IT_WORKS.md` updated — readiness step + degraded service modes table | ✅ |
+
+**Docker Compose idempotency clarified:** `docker compose up -d` is always safe — no-op if running+unchanged, restarts if stopped, recreates if image changed. No "new container name" ever needed. Named volumes survive any container recreation.
+
+**Degraded service modes documented:**
+- Ollama down/models missing → read + keyword search still works; `add_memory` and semantic search unavailable
+- ChromaDB down → read + keyword search + `add_memory` still work; semantic search unavailable
+- SQLite down → nothing works
+
+---
 
 ### 2026-04-09 — Session 8: Session startup health + version checks
 
