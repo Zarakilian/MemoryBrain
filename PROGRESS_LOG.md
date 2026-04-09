@@ -7,8 +7,8 @@
 ## Status: v0.4.0 — FULLY OPERATIONAL ✅
 
 **GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.4.0` (pending tag — commits on master)
-**Tests:** 101 passing
+**Latest tag:** `v0.4.0` (pending push)
+**Tests:** 106 passing
 **Docker:** Running (named volume), healthy, models pulled
 **MCP registered:** `http://localhost:7741/sse`
 **Hooks installed:** session-start + pre-compact
@@ -127,7 +127,7 @@ HOW_IT_WORKS.md           — Part 2 section
 | Updated `cli/brain.py` — removed credential auto-detection; added MCP tools display in setup | ✅ |
 | Updated docs (HOW_IT_WORKS.md, README.md, PROGRESS_LOG.md) | ✅ |
 
-**Test count:** 101 (was 129; removed ~35 plugin/scheduler tests, added 6 new MCP discovery tests)
+**Test count:** 106 (was 129; removed ~35 plugin/scheduler tests, added 6 MCP discovery + 4 edge case + 1 plugin-era rejection tests; also fixed `test_importance_preserve.py` using removed `pagerduty` type)
 
 **Philosophy locked in:** MemoryBrain is a passive, tool-agnostic store. No polling, no credentials for external services, no scheduled jobs. Claude retrieves with its MCP tools; MemoryBrain stores what Claude saves.
 
