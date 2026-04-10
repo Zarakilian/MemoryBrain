@@ -22,11 +22,37 @@ Or manually, step by step — see [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for the ful
 
 ## Project detection
 
-Place a `.brainproject` file in any project root containing just the project slug:
-```
-monitoring
-```
-If absent, the last path segment of CWD is used as the project slug.
+Every memory stored in MemoryBrain belongs to a **project**. The project slug is a short label
+(e.g. `api-service`, `mobile-app`) that scopes memories so they don't bleed across unrelated work.
+
+When Claude calls `add_memory`, it tags the memory with the current project slug. When it calls
+`get_recent_context` or `search_memory`, it can filter by that slug — so your API service memories
+stay separate from your infrastructure memories, and each session starts with context that is
+actually relevant to what you are working on right now.
+
+**Two ways the slug is determined, in priority order:**
+
+1. **`.brainproject` file** — create a file in your project root containing just the slug name.
+   This is explicit and reliable. MemoryBrain reads it every session.
+
+   ```bash
+   echo "my-project-name" > /path/to/project/.brainproject
+   ```
+
+2. **Automatic fallback** — if no `.brainproject` file is present, MemoryBrain uses the last
+   meaningful segment of your current working directory path as the slug. For example, if you are
+   working in `/home/user/projects/api-service`, the slug becomes `api-service`.
+
+The `.brainproject` file approach is recommended for any project you work in regularly, because
+it gives you a stable, intentional slug that won't change if you rename or move the directory.
+
+## Skills included
+
+| Skill | Trigger | What it does |
+|---|---|---|
+| `log-everything` | `/log-everything` | Generates session summary → saves via `add_memory` → prompts for next-session notes |
+| `handover` | `/handover` | Creates comprehensive session handover document → saves to MemoryBrain or file |
+| `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a reference memory so future sessions know exactly where to look |
 
 ## MCP Tools available in Claude
 
