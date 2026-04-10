@@ -166,8 +166,8 @@ Entries that match both keyword and semantic search rank highest. Keyword-only a
 
 The brain needs to know which project a session belongs to. It uses this order:
 
-1. **`.brainproject` file** in the CWD — contains just the project slug (e.g. `monitoring`)
-2. **Heuristic** — last meaningful path segment of CWD (e.g. `/mnt/c/git/_git/Monitoring` → `monitoring`)
+1. **`.brainproject` file** in the CWD — contains just the project slug (e.g. `api-service`)
+2. **Heuristic** — last meaningful path segment of CWD (e.g. `/home/user/projects/api-service` → `api-service`)
 
 To explicitly tag a repo, create a `.brainproject` file:
 ```bash
@@ -328,6 +328,8 @@ mkdir -p ~/.claude/skills/log-everything
 cp skills/log-everything/SKILL.md ~/.claude/skills/log-everything/SKILL.md
 mkdir -p ~/.claude/skills/handover
 cp skills/handover/SKILL.md ~/.claude/skills/handover/SKILL.md
+mkdir -p ~/.claude/skills/map-project-files
+cp skills/map-project-files/SKILL.md ~/.claude/skills/map-project-files/SKILL.md
 ```
 
 Skills included:
@@ -335,6 +337,7 @@ Skills included:
 |---|---|---|
 | `log-everything` | `/log-everything` | Generates session summary → saves via `add_memory` → prompts for next-session notes |
 | `handover` | `/handover` | Creates a comprehensive session handover document → saves to MemoryBrain or file |
+| `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a `reference` memory so future sessions know exactly where to look without scanning the filesystem |
 
 ---
 
@@ -356,14 +359,23 @@ Open a **new Claude Code session**. You should see the session context injected 
 
 ---
 
-### Step 8 — (Optional) Tag projects
+### Step 8 — Tag your projects and build file maps
 
-For any repo you work in, create a `.brainproject` file so sessions are correctly attributed:
+For every repo you work in regularly, do two things:
 
+**1. Create a `.brainproject` file** so the project slug is explicit and stable:
 ```bash
-echo "monitoring" > /path/to/your/project/.brainproject
+echo "your-project-name" > /path/to/your/project/.brainproject
 echo "memorybrain" > ~/memorybrain/.brainproject
 ```
+
+**2. Run `/map-project-files`** in a Claude Code session inside that project. This scans the
+project for high-priority `.md` files (CLAUDE.md, MEMORY.md, progress logs, etc.), reads any
+file references declared in CLAUDE.md, and saves a structured file map as a `reference` memory.
+Future sessions will have this map at startup — Claude knows exactly which files are authoritative
+without having to scan or guess.
+
+> Re-run `/map-project-files` any time you add new important files to a project.
 
 ---
 
