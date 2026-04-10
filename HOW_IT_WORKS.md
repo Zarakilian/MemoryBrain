@@ -226,8 +226,6 @@ cd ~/memorybrain
 
 ---
 
----
-
 ### Option A — One-command setup (recommended)
 
 After cloning, run:
@@ -328,12 +326,15 @@ chmod +x ~/.claude/hooks/pre-compact-auto-handover.py
 # Skills — copy to ~/.claude/skills/
 mkdir -p ~/.claude/skills/log-everything
 cp skills/log-everything/SKILL.md ~/.claude/skills/log-everything/SKILL.md
+mkdir -p ~/.claude/skills/handover
+cp skills/handover/SKILL.md ~/.claude/skills/handover/SKILL.md
 ```
 
 Skills included:
 | Skill | Trigger | What it does |
 |---|---|---|
 | `log-everything` | `/log-everything` | Generates session summary → saves via `add_memory` → prompts for next-session notes |
+| `handover` | `/handover` | Creates a comprehensive session handover document → saves to MemoryBrain or file |
 
 ---
 
@@ -471,6 +472,19 @@ Enable WSL integration in Docker Desktop / Rancher Desktop:
 - Rancher Desktop → Preferences → WSL → Integrations → enable your distro
 
 Then restart WSL: `wsl --shutdown` from PowerShell, reopen terminal.
+
+### Shell scripts failing with syntax errors after cloning on Windows
+
+If you cloned on Windows and are running scripts in WSL/Linux, shell scripts may have Windows CRLF
+line endings. Fix with:
+
+```bash
+cd ~/memorybrain
+sed -i 's/\r$//' hooks/session-ingest.sh hooks/pre-compact-ingest.py
+```
+
+The `.gitattributes` in this repo enforces LF line endings on clone — but if you cloned before it
+was added, run the fix above once.
 
 ---
 
