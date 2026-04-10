@@ -1,0 +1,26 @@
+version: "3.9"
+services:
+  brain:
+    build: ./brain
+    ports:
+      - "127.0.0.1:${BRAIN_PORT:-7741}:7741"
+    volumes:
+      - brain_data:/app/data
+    env_file: .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+      # Mount host CA certs so Ollama can verify TLS through corporate proxy
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    restart: unless-stopped
+
+volumes:
+  brain_data:
+  ollama_data:
