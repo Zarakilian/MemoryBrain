@@ -3,6 +3,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from mcp.server.sse import SseServerTransport
 from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
@@ -37,6 +38,28 @@ async def auth_middleware(request: Request, call_next):
 
 app.include_router(session_router)
 app.include_router(manual_router)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    """Return OAuth-formatted error bodies for 404s.
+
+    Claude Code's MCP client (v0.2+) probes /.well-known/oauth-protected-resource
+    and other OAuth discovery endpoints before connecting to SSE servers. FastAPI's
+    default 404 body {"detail":"Not Found"} fails the client's Zod schema, which
+    expects an "error" field. This leaves Claude Code stuck in "needs authentication"
+    mode, exposing only a meta-authenticate tool instead of the real MCP tools.
+
+    By returning {"error": "not_found", "error_description": "Not found"} on 404,
+    the client's schema validation passes, it concludes "no OAuth here", and
+    proceeds with the unauthenticated SSE connection.
+    """
+    if exc.status_code == 404:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "error_description": "Not found"},
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
 
 
 @app.get("/health")
