@@ -29,11 +29,36 @@ sse_transport = SseServerTransport("/messages/")
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    # Skip auth for public endpoints needed for MCP transport and health checks
+    public_paths = {
+        "/sse",         # SSE connection
+        "/messages/",   # SSE message post handler
+        "/health",      # Server health check
+        "/readiness",   # Server readiness check
+    }
+
+    if request.url.path in public_paths:
+        return await call_next(request)
+
     try:
         await require_api_key(request)
     except HTTPException as exc:
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    # Claude Code's MCP client parses 404 bodies with a Zod schema expecting an `error` field.
+    # FastAPI's default 404 body is {"detail":"Not Found"} which fails that schema and leaves
+    # the client stuck in "auth required" mode. Return OAuth-style error bodies so probes of
+    # /.well-known/* cleanly signal "no OAuth here" and the client proceeds unauthenticated.
+    if exc.status_code == 404:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "not_found", "error_description": "Not found"},
+        )
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc.detail)})
 
 
 app.include_router(session_router)

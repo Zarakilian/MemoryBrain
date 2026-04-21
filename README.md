@@ -1,11 +1,13 @@
 # MemoryBrain
 
-Persistent searchable memory service for Claude Code via MCP SSE.
+Persistent searchable memory service for AI assistants (Claude Code, Gemini/Antigravity) via MCP.
 
-Replaces the flat MEMORY.md system with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
-that gives Claude automatic context on every new session, with on-demand semantic search.
+Replaces flat MEMORY.md files with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
+that gives your AI assistant automatic context on every new session, with on-demand semantic search.
 
-MemoryBrain is a **passive store** — it stores what Claude saves via `add_memory`. No polling,
+MemoryBrain natively supports **SSE transport** for Claude Code and **stdio transport** (via a Docker wrapper) for Gemini.
+
+MemoryBrain is a **passive store** — it stores what your assistant saves via `add_memory`. No polling,
 no plugin credentials. Works identically on any machine with any MCP tools registered.
 
 ## Quick Start
@@ -54,7 +56,7 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 | `handover` | `/handover` | Creates comprehensive session handover document → saves to MemoryBrain or file |
 | `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a reference memory so future sessions know exactly where to look |
 
-## MCP Tools available in Claude
+## MCP Tools available in Claude & Gemini
 
 | Tool | Description |
 |---|---|

@@ -168,13 +168,49 @@ def cmd_setup(auto_detect: bool = False):
             print(f"\u23ed\ufe0f  {model} \u2014 already present")
 
     # 5. Register MCP server with Claude Code
-    mcp_list = _run(["claude", "mcp", "list"])
-    if "memorybrain" not in mcp_list.stdout:
-        _run(["claude", "mcp", "add", "-s", "user", "--transport", "sse",
-              "memorybrain", f"{BRAIN_URL}/sse"])
-        print("\u2705 MCP server registered")
-    else:
-        print("\u23ed\ufe0f  MCP server \u2014 already registered")
+    try:
+        mcp_list = _run(["claude", "mcp", "list"])
+        if "memorybrain" not in mcp_list.stdout:
+            _run(["claude", "mcp", "add", "-s", "user", "--transport", "sse",
+                  "memorybrain", f"{BRAIN_URL}/sse"])
+            print("\u2705 MCP server registered for Claude")
+        else:
+            print("\u23ed\ufe0f  MCP server for Claude \u2014 already registered")
+    except FileNotFoundError:
+        print("\u23ed\ufe0f  Claude CLI not found \u2014 skipping Claude MCP registration")
+
+    # 5b. Register MCP server with Gemini (Antigravity)
+    gemini_config_path = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
+    if gemini_config_path.parent.exists():
+        try:
+            if gemini_config_path.exists():
+                with open(gemini_config_path, "r", encoding="utf-8") as f:
+                    try:
+                        g_data = json.load(f)
+                    except json.JSONDecodeError:
+                        g_data = {"mcpServers": {}}
+            else:
+                g_data = {"mcpServers": {}}
+                
+            if "mcpServers" not in g_data:
+                g_data["mcpServers"] = {}
+                
+            g_data["mcpServers"]["memorybrain"] = {
+                "command": "docker",
+                "args": [
+                    "exec",
+                    "-i",
+                    "memorybrain-brain-1",
+                    "python",
+                    "/app/stdio_server.py"
+                ],
+                "env": {}
+            }
+            with open(gemini_config_path, "w", encoding="utf-8") as f:
+                json.dump(g_data, f, indent=2)
+            print("\u2705 MCP server registered for Gemini")
+        except Exception as e:
+            print(f"\u26a0\ufe0f  Failed to register Gemini MCP: {e}")
 
     # 6. Install hooks
     hooks_dir = Path.home() / ".claude" / "hooks"
