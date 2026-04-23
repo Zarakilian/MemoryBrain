@@ -25,7 +25,12 @@ def run_migrations(db_path: Path) -> None:
         for mf in sorted(MIGRATIONS_DIR.glob("*.sql")):
             if mf.name in applied:
                 continue
-            conn.executescript(mf.read_text(encoding="utf-8"))
+            try:
+                conn.executescript(mf.read_text(encoding="utf-8"))
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" not in str(e):
+                    raise
+                # Schema already at target (init_db created columns ahead of migration) — stamp as applied
             conn.execute(
                 "INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)",
                 (mf.name, datetime.now(timezone.utc).isoformat()),
