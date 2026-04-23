@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MemoryBrain CLI — brain add / brain import / brain seed / brain status / brain setup
+MemoryBrain CLI — brain add / brain import / brain seed / brain status / brain setup / brain update
 
 Usage:
     brain setup [--auto-detect]
@@ -8,6 +8,7 @@ Usage:
     brain import <path> [--project SLUG]
     brain seed [--project SLUG]
     brain status
+    brain update
 """
 import argparse
 import hashlib
@@ -298,6 +299,94 @@ def cmd_setup(auto_detect: bool = False):
         pass
 
 
+def cmd_update():
+    """Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills."""
+    import os
+
+    # Locate repo directory
+    repo_dir = os.getenv("MEMORYBRAIN_DIR")
+    if not repo_dir:
+        cwd = Path(os.getcwd())
+        if (cwd / "brain").exists() and (cwd / "cli").exists():
+            repo_dir = str(cwd)
+        else:
+            print("❌ Cannot find MemoryBrain repo.")
+            print("   Set MEMORYBRAIN_DIR env var or run from the repo directory.")
+            sys.exit(1)
+            return
+
+    repo_path = Path(repo_dir)
+
+    # 1. git pull — try tracked remote first, fall back to origin master
+    print("⬇️  Pulling latest changes...")
+    result = subprocess.run(["git", "pull"], cwd=repo_path, capture_output=True, text=True)
+    if result.returncode != 0:
+        # No tracking remote — pull origin master explicitly
+        result = subprocess.run(
+            ["git", "pull", "origin", "master"],
+            cwd=repo_path, capture_output=True, text=True,
+        )
+    if result.returncode != 0:
+        print(f"❌ git pull failed:\n{result.stderr}")
+        sys.exit(1)
+        return
+    print(result.stdout.strip() or "Already up to date.")
+
+    # 2. Rebuild Docker (migrations run automatically at container startup)
+    print("🔨 Rebuilding Docker image...")
+    result = subprocess.run(
+        ["docker", "compose", "up", "-d", "--build"],
+        cwd=repo_path,
+    )
+    if result.returncode != 0:
+        print("❌ Docker rebuild failed.")
+        sys.exit(1)
+    print("✅ Docker rebuilt — migrations applied automatically at startup.")
+
+    # 3. Reinstall hooks if changed
+    hooks_src = repo_path / "hooks"
+    hooks_dst = Path.home() / ".claude" / "hooks"
+    if hooks_src.exists() and hooks_dst.exists():
+        for src in sorted(hooks_src.iterdir()):
+            if not src.is_file():
+                continue
+            dst = hooks_dst / src.name
+            if dst.exists():
+                src_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+                dst_hash = hashlib.sha256(dst.read_bytes()).hexdigest()
+                if src_hash == dst_hash:
+                    print(f"⏭️  Hook unchanged: {src.name}")
+                    continue
+            shutil.copy2(src, dst)
+            dst.chmod(dst.stat().st_mode | 0o111)
+            print(f"✅ Updated hook: {src.name}")
+
+    # 4. Reinstall skills if changed
+    skills_src = repo_path / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    if skills_src.exists():
+        for skill_dir in sorted(skills_src.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_file = skill_dir / "SKILL.md"
+            if not skill_file.exists():
+                continue
+            dst_dir = skills_dst / skill_dir.name
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst_file = dst_dir / "SKILL.md"
+            if dst_file.exists():
+                src_hash = hashlib.sha256(skill_file.read_bytes()).hexdigest()
+                dst_hash = hashlib.sha256(dst_file.read_bytes()).hexdigest()
+                if src_hash == dst_hash:
+                    print(f"⏭️  Skill unchanged: {skill_dir.name}")
+                    continue
+            shutil.copy2(skill_file, dst_file)
+            print(f"✅ Updated skill: {skill_dir.name}")
+
+    print("\n✅ MemoryBrain updated successfully.")
+    print("   Open a new Claude Code session to use the updated tools.")
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
@@ -327,6 +416,9 @@ def main():
     # status
     sub.add_parser("status", help="Show MemoryBrain status")
 
+    # update
+    sub.add_parser("update", help="Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills")
+
     args = parser.parse_args()
 
     if args.command == "setup":
@@ -340,6 +432,8 @@ def main():
         cmd_seed(project=args.project)
     elif args.command == "status":
         cmd_status()
+    elif args.command == "update":
+        cmd_update()
     else:
         parser.print_help()
 

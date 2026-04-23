@@ -17,7 +17,17 @@ def tmp_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def mock_ollama():
-    """Mock async ollama client so tests don't need a running Ollama instance."""
+    """Mock async ollama client so tests don't need a running Ollama instance.
+
+    After the provider-abstraction refactor, the Ollama client lives as
+    OllamaProvider._client rather than a module-level ``_client``.  We build a
+    real OllamaProvider instance, replace its internal client with the mock,
+    inject it as the active provider, and yield the mock client so existing
+    tests that assert on ``mock_ollama.generate`` / ``mock_ollama.embeddings``
+    continue to work unchanged.
+    """
+    import app.summarise as s
+
     mock_client = AsyncMock()
     mock_client.embeddings.return_value = {"embedding": [0.1] * 768}
     mock_client.generate.side_effect = AsyncMock(
@@ -25,8 +35,18 @@ def mock_ollama():
             "response": "3" if "Rate the importance" in prompt else "Short two sentence summary."
         }
     )
-    with patch("app.summarise._client", mock_client):
+
+    provider = s.OllamaProvider.__new__(s.OllamaProvider)
+    provider._client = mock_client
+    provider._embed_model = "embeddinggemma"
+    provider._summarise_model = "llama3.2:3b"
+
+    original_provider = s._provider
+    s._provider = provider
+    try:
         yield mock_client
+    finally:
+        s._provider = original_provider
 
 
 @pytest.fixture

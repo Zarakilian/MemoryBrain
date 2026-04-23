@@ -1,7 +1,9 @@
 version: "3.9"
 services:
   brain:
-    build: ./brain
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
     ports:
       - "127.0.0.1:${BRAIN_PORT:-7741}:7741"
     volumes:

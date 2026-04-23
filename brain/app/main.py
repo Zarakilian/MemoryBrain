@@ -10,7 +10,15 @@ from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
 from .auth import require_api_key
-from .summarise import _client as ollama_client, EMBED_MODEL, SUMMARISE_MODEL
+from .summarise import _get_ollama_client, _get_embed_model, _get_summarise_model
+
+# Module-level references — initialised eagerly so that tests can patch
+# 'app.main.ollama_client' and have the /readiness handler see the mock.
+# When a non-Ollama provider is active, ollama_client will be None and the
+# /readiness handler skips the Ollama-specific checks.
+ollama_client = _get_ollama_client()
+EMBED_MODEL = _get_embed_model()
+SUMMARISE_MODEL = _get_summarise_model()
 from .chroma import get_client as get_chroma_client, COLLECTION_NAME
 
 logger = logging.getLogger(__name__)
@@ -23,7 +31,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="MemoryBrain", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="0.5.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 
@@ -119,20 +127,29 @@ async def readiness():
     except Exception:
         checks["chromadb"] = "error"
 
-    # Ollama + model presence
-    try:
-        response = await ollama_client.list()
-        model_names = [
-            (m.model if hasattr(m, "model") else m.get("model", m.get("name", "")))
-            for m in (response.models if hasattr(response, "models") else response.get("models", []))
-        ]
-        checks["ollama"] = "ok"
-        checks["embedding_model"] = "ok" if any(EMBED_MODEL in n for n in model_names) else "missing"
-        checks["summary_model"] = "ok" if any(SUMMARISE_MODEL in n for n in model_names) else "missing"
-    except Exception:
-        checks["ollama"] = "error"
-        checks["embedding_model"] = "unknown"
-        checks["summary_model"] = "unknown"
+    # Ollama + model presence (only checked when using OllamaProvider).
+    # `ollama_client`, `EMBED_MODEL`, `SUMMARISE_MODEL` are module-level names
+    # so that tests can patch them via `patch("app.main.ollama_client")`.
+    # `global` here tells Python we want the module namespace lookup, not a local.
+    global ollama_client, EMBED_MODEL, SUMMARISE_MODEL  # noqa: PLW0603
+    if ollama_client is not None:
+        try:
+            response = await ollama_client.list()
+            model_names = [
+                (m.model if hasattr(m, "model") else m.get("model", m.get("name", "")))
+                for m in (response.models if hasattr(response, "models") else response.get("models", []))
+            ]
+            checks["ollama"] = "ok"
+            checks["embedding_model"] = "ok" if any(EMBED_MODEL in n for n in model_names) else "missing"
+            checks["summary_model"] = "ok" if any(SUMMARISE_MODEL in n for n in model_names) else "missing"
+        except Exception:
+            checks["ollama"] = "error"
+            checks["embedding_model"] = "unknown"
+            checks["summary_model"] = "unknown"
+    else:
+        checks["ollama"] = "skipped"
+        checks["embedding_model"] = "skipped"
+        checks["summary_model"] = "skipped"
 
     ready = all(v == "ok" for v in checks.values())
     return {"ready": ready, "checks": checks}
@@ -141,7 +158,7 @@ async def readiness():
 @app.get("/status")
 async def status():
     return {
-        "version": "0.4.0",
+        "version": "0.5.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
     }
 
