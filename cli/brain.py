@@ -317,12 +317,19 @@ def cmd_update():
 
     repo_path = Path(repo_dir)
 
-    # 1. git pull
+    # 1. git pull — try tracked remote first, fall back to origin master
     print("⬇️  Pulling latest changes...")
     result = subprocess.run(["git", "pull"], cwd=repo_path, capture_output=True, text=True)
     if result.returncode != 0:
+        # No tracking remote — pull origin master explicitly
+        result = subprocess.run(
+            ["git", "pull", "origin", "master"],
+            cwd=repo_path, capture_output=True, text=True,
+        )
+    if result.returncode != 0:
         print(f"❌ git pull failed:\n{result.stderr}")
         sys.exit(1)
+        return
     print(result.stdout.strip() or "Already up to date.")
 
     # 2. Rebuild Docker (migrations run automatically at container startup)
