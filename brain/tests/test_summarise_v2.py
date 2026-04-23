@@ -18,7 +18,7 @@ def test_ollama_provider_selected_by_default(monkeypatch):
 def test_gemini_provider_selected_when_key_set(monkeypatch):
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    with patch("google.generativeai.configure"):
+    with patch("google.genai.Client"):
         import importlib
         import app.summarise as s
         importlib.reload(s)
@@ -69,3 +69,76 @@ async def test_embed_delegates_to_provider():
     result = await s.embed("hello")
     assert result == [0.1, 0.2, 0.3]
     mock_provider.embed.assert_called_once_with("hello")
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_embed_with_google_genai():
+    """Test GeminiProvider.embed() correctly calls google-genai API."""
+    import importlib
+    import app.summarise as s
+    importlib.reload(s)
+
+    # Mock the google.genai.Client and its response
+    mock_response = MagicMock()
+    mock_response.embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
+
+    mock_client = MagicMock()
+    mock_client.models.embed_content = MagicMock(return_value=mock_response)
+
+    with patch("google.genai.Client", return_value=mock_client):
+        os.environ["GOOGLE_API_KEY"] = "test-key"
+        provider = s.GeminiProvider()
+        result = await provider.embed("test content")
+
+    assert result == [0.1, 0.2, 0.3, 0.4, 0.5]
+    mock_client.models.embed_content.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_summarise_with_google_genai():
+    """Test GeminiProvider.summarise() correctly calls google-genai API."""
+    import importlib
+    import app.summarise as s
+    importlib.reload(s)
+
+    # Mock the response
+    mock_response = MagicMock()
+    mock_response.text = "This is a summary."
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content = MagicMock(return_value=mock_response)
+
+    with patch("google.genai.Client", return_value=mock_client):
+        os.environ["GOOGLE_API_KEY"] = "test-key"
+        provider = s.GeminiProvider()
+        result = await provider.summarise("A very long document " * 100)
+
+    assert result == "This is a summary."
+    mock_client.models.generate_content.assert_called_once()
+    # Verify the call included the model and contents
+    call_args = mock_client.models.generate_content.call_args
+    assert call_args[1]["model"] == "gemini-2.0-flash"
+    assert "Summarise" in call_args[1]["contents"]
+
+
+@pytest.mark.asyncio
+async def test_gemini_provider_score_importance_with_google_genai():
+    """Test GeminiProvider.score_importance() correctly calls google-genai API."""
+    import importlib
+    import app.summarise as s
+    importlib.reload(s)
+
+    # Mock the response
+    mock_response = MagicMock()
+    mock_response.text = "4"
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content = MagicMock(return_value=mock_response)
+
+    with patch("google.genai.Client", return_value=mock_client):
+        os.environ["GOOGLE_API_KEY"] = "test-key"
+        provider = s.GeminiProvider()
+        result = await provider.score_importance("Important note about the system")
+
+    assert result == 4
+    mock_client.models.generate_content.assert_called_once()
