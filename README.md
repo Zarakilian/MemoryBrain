@@ -1,11 +1,13 @@
 # MemoryBrain
 
-Persistent searchable memory service for Claude Code via MCP SSE.
+Persistent searchable memory service for AI assistants (Claude Code, Gemini/Antigravity) via MCP.
 
-Replaces the flat MEMORY.md system with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
-that gives Claude automatic context on every new session, with on-demand semantic search.
+Replaces flat MEMORY.md files with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
+that gives your AI assistant automatic context on every new session, with on-demand semantic search.
 
-MemoryBrain is a **passive store** — it stores what Claude saves via `add_memory`. No polling,
+MemoryBrain natively supports **SSE transport** for Claude Code and **stdio transport** (via a Docker wrapper) for Gemini.
+
+MemoryBrain is a **passive store** — it stores what your assistant saves via `add_memory`. No polling,
 no plugin credentials. Works identically on any machine with any MCP tools registered.
 
 ## Quick Start
@@ -54,7 +56,7 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 | `handover` | `/handover` | Creates comprehensive session handover document → saves to MemoryBrain or file |
 | `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a reference memory so future sessions know exactly where to look |
 
-## MCP Tools available in Claude
+## MCP Tools available in Claude & Gemini
 
 | Tool | Description |
 |---|---|
@@ -71,13 +73,26 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 > written by the session-start hook every time MemoryBrain is confirmed healthy, giving Claude an
 > explicit signal to trust MemoryBrain over stale file-based memory. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
+## What's New in v0.5.0
+
+- **Semantic supersession** — Auto-archives stale memories using type-aware similarity thresholds (e.g., facts need higher confidence than sessions). Audit trail preserved; nothing is deleted.
+- **Recency decay** — Recent memories rank higher in search results. Configurable via `RECENCY_DECAY_RATE` env var.
+- **Tag + type filters** — `search_memory` gains `tags` and `type_filter` parameters for faster, more precise lookups.
+- **Multi-AI provider support** — Use Ollama (local, default), Gemini, or OpenAI-compatible endpoints for summarization and embeddings. Provider auto-selected from env vars.
+- **Versioned migrations** — Schema changes apply automatically at container startup. No manual SQL needed.
+- **`brain update` command** — One-step upgrade: pulls latest, rebuilds Docker, reinstalls hooks and skills.
+- **`delete_memory` MCP tool** — Hard delete for wrong entries (vs. supersession for stale ones).
+- **Per-project session context** — `get_startup_summary` now shows the most recent memory for each project.
+
 ## Architecture
 
 - **FastAPI** on port 7741
 - **SQLite FTS5** for keyword search + storage
 - **ChromaDB** for semantic vector search
-- **Ollama** (`embeddinggemma` + `llama3.2:3b`) for embeddings + summarisation
-- **Hybrid search**: FTS5 keywords + ChromaDB cosine → Reciprocal Rank Fusion
+- **Provider-based AI backend:** Ollama (default, local), Gemini, or OpenAI-compatible for embeddings + summarisation
+- **Hybrid search**: FTS5 keywords + ChromaDB cosine → Reciprocal Rank Fusion, with recency decay
+- **Semantic supersession engine**: Type-aware thresholds, audit trail, automatic archive on ingest
+- **Migration system**: Versioned SQL migrations in `brain/migrations/` — applied at startup, idempotent
 - **MCP SSE** at `http://localhost:7741/sse`
 - **Data**: machine-local only — not synced across machines
 - **`GET /mcp-tools`**: Reports registered MCP servers from `~/.claude.json`; called by the session-start hook

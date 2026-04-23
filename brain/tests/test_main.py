@@ -141,3 +141,28 @@ def test_readiness_is_public_when_auth_enabled():
         assert resp.status_code == 200
     finally:
         auth._API_KEY = None
+
+
+# ── OAuth discovery 404 format tests ─────────────────────────────────────────
+
+def test_404_returns_oauth_error_format():
+    """404 responses must use OAuth error format for Claude Code MCP compatibility.
+
+    Claude Code's MCP client probes /.well-known/oauth-protected-resource before
+    SSE connection. FastAPI's default 404 {"detail":"Not Found"} fails the client's
+    Zod schema (expects "error" field), leaving it stuck in auth-required mode.
+    """
+    resp = client.get("/nonexistent-endpoint")
+    assert resp.status_code == 404
+    data = resp.json()
+    assert data["error"] == "not_found"
+    assert data["error_description"] == "Not found"
+    assert "detail" not in data
+
+
+def test_oauth_discovery_probe_returns_oauth_404():
+    """The exact endpoint Claude Code probes must return OAuth-formatted 404."""
+    resp = client.get("/.well-known/oauth-protected-resource")
+    assert resp.status_code == 404
+    data = resp.json()
+    assert data["error"] == "not_found"

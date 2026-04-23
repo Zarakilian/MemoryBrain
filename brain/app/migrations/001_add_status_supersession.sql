@@ -1,0 +1,4 @@
+ALTER TABLE memories ADD COLUMN status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE memories ADD COLUMN superseded_by TEXT DEFAULT NULL;
+ALTER TABLE memories ADD COLUMN supersedes TEXT DEFAULT NULL;
+CREATE INDEX IF NOT EXISTS idx_status ON memories(status);

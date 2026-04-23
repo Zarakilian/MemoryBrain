@@ -328,3 +328,22 @@ claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse
 cp hooks/session-ingest.sh ~/.claude/hooks/session-start-memory.sh
 cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
 ```
+
+## v0.5.0 — 2026-04-23
+
+### Shipped
+- Semantic supersession engine: auto-archives stale memories on ingest (type-aware thresholds)
+- `add_memory` response includes `superseded` + `potential_supersessions`
+- `search_memory` gains `include_history`, `tags`, `type_filter` params
+- Recency decay on RRF scores (`RECENCY_DECAY_RATE` env var)
+- `delete_memory` MCP tool (hard delete)
+- `get_startup_summary` includes per-project recent state
+- `description` param on `add_memory` bypasses LLM summariser
+- Provider abstraction: Gemini and OpenAI-compatible backends alongside Ollama
+- `brain update` CLI command — one-command upgrade on any machine
+- Versioned migration system (`brain/app/migrations/`) — schema evolution without manual SQL
+- `build_where()` helper for ChromaDB 1.5.x multi-key where syntax
+
+### Known followup (v0.5.1)
+- Migrate `GeminiProvider` from deprecated `google-generativeai` to `google-genai` package
+  (all support for `google-generativeai` has ended upstream)
