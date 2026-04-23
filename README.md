@@ -84,6 +84,24 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 - **`delete_memory` MCP tool** — Hard delete for wrong entries (vs. supersession for stale ones).
 - **Per-project session context** — `get_startup_summary` now shows the most recent memory for each project.
 
+## AI Provider — Ollama, Gemini, or OpenAI?
+
+MemoryBrain **defaults to Ollama** (local, private, no keys needed). You can optionally switch:
+
+| Provider | Key needed? | Speed | Cost | Privacy | Setup time |
+|---|---|---|---|---|---|
+| **Ollama** (default) | ❌ No | Medium | Free | 100% local | Auto-downloads models |
+| **Gemini** | ✅ Yes (free) | ⚡ Fast | Free tier (15k/mo) | Cloud | 5 minutes |
+| **OpenAI** | ✅ Yes (paid) | ⚡ Fast | Pay per use | Cloud | 5 minutes |
+
+**Want to use Gemini?** The setup wizard will guide you through getting a free Google API key:
+```bash
+python3 cli/brain.py setup
+# Interactive prompt: "Would you like to set up Gemini? (y/N)"
+```
+
+See **[GEMINI_SETUP_GUIDE.md](docs/GEMINI_SETUP_GUIDE.md)** for detailed walkthrough, why you might want it, and troubleshooting.
+
 ## Architecture
 
 - **FastAPI** on port 7741
