@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from .models import MemoryEntry, Project
+from .migrations.runner import run_migrations
 
 DB_PATH = Path("/app/data/brain.db")
 
@@ -17,6 +18,8 @@ def content_hash(content: str, project: str) -> str:
 def init_db(db_path: Path = DB_PATH):
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
+        # v0.4.x base schema only — v0.5.0+ columns (status, superseded_by, supersedes)
+        # are added by migrations/001_add_status_supersession.sql at startup.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY,
@@ -29,14 +32,14 @@ def init_db(db_path: Path = DB_PATH):
                 importance INTEGER DEFAULT 3,
                 timestamp TEXT NOT NULL,
                 chroma_id TEXT DEFAULT '',
-                content_hash TEXT DEFAULT '',
-                status TEXT NOT NULL DEFAULT 'active',
-                superseded_by TEXT DEFAULT NULL,
-                supersedes TEXT DEFAULT NULL
+                content_hash TEXT DEFAULT ''
             )
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON memories(content_hash)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON memories(status)")
+        conn.commit()
+    # Apply any pending migrations (adds status, superseded_by, supersedes etc.)
+    run_migrations(db_path=db_path)
+    with sqlite3.connect(db_path) as conn:
         conn.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                 content, summary, tags,
