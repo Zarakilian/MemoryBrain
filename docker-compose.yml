@@ -5,6 +5,7 @@ services:
     ports:
       - "127.0.0.1:${BRAIN_PORT:-7741}:7741"
     volumes:
+      - ./brain:/app
       - brain_data:/app/data
     env_file: .env
     environment:

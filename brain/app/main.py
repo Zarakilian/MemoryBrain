@@ -31,7 +31,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="MemoryBrain", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="0.5.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 
@@ -158,7 +158,7 @@ async def readiness():
 @app.get("/status")
 async def status():
     return {
-        "version": "0.4.0",
+        "version": "0.5.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
     }
 

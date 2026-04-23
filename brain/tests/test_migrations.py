@@ -63,3 +63,11 @@ def test_migration_default_status_is_active():
             conn.commit()
             row = conn.execute("SELECT status FROM memories WHERE id='t1'").fetchone()
         assert row[0] == "active"
+
+
+def test_init_db_calls_run_migrations():
+    """init_db must call run_migrations so all schema changes apply automatically."""
+    import inspect
+    from app.storage import init_db
+    src = inspect.getsource(init_db)
+    assert "run_migrations" in src, "init_db must call run_migrations"
