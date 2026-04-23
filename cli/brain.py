@@ -170,15 +170,20 @@ def cmd_setup(auto_detect: bool = False):
 
     # 5. Register MCP server with Claude Code
     try:
-        mcp_list = _run(["claude", "mcp", "list"])
+        # On Windows, we might need to look for claude.cmd or use shell=True
+        claude_cmd = "claude"
+        if sys.platform == "win32":
+            claude_cmd = shutil.which("claude") or "claude.cmd"
+        
+        mcp_list = _run([claude_cmd, "mcp", "list"])
         if "memorybrain" not in mcp_list.stdout:
-            _run(["claude", "mcp", "add", "-s", "user", "--transport", "sse",
+            _run([claude_cmd, "mcp", "add", "-s", "user", "--transport", "sse",
                   "memorybrain", f"{BRAIN_URL}/sse"])
             print("\u2705 MCP server registered for Claude")
         else:
             print("\u23ed\ufe0f  MCP server for Claude \u2014 already registered")
-    except FileNotFoundError:
-        print("\u23ed\ufe0f  Claude CLI not found \u2014 skipping Claude MCP registration")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("\u23ed\ufe0f  Claude CLI not found or error \u2014 skipping Claude MCP registration")
 
     # 5b. Register MCP server with Gemini (Antigravity)
     gemini_config_path = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"

@@ -66,6 +66,7 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 | `get_recent_context` | Recent entries by project |
 | `list_projects` | All projects + last activity |
 | `get_startup_summary` | Compact session-start injection |
+| `delete_memory` | Hard delete a memory by ID |
 
 > **Session start rule:** At session start, Claude checks the auto-loaded `MEMORY.md` for a
 > `**MemoryBrain Last Active:**` timestamp. If fresh (< 7 days), it calls `get_startup_summary`

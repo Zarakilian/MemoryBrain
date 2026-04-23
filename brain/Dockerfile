@@ -3,6 +3,7 @@ WORKDIR /app
 COPY brain/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY brain/app/ app/
+COPY brain/stdio_server.py stdio_server.py
 COPY brain/tests/ tests/
 COPY brain/entrypoint.sh /entrypoint.sh
 COPY cli/ cli/
