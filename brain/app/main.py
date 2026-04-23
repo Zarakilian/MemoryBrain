@@ -1,4 +1,5 @@
 import logging
+import os
 import sqlite3
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
@@ -10,7 +11,7 @@ from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
 from .auth import require_api_key
-from .summarise import _get_ollama_client, _get_embed_model, _get_summarise_model
+from .summarise import _get_ollama_client, _get_embed_model, _get_summarise_model, _get_provider
 
 # Module-level references — initialised eagerly so that tests can patch
 # 'app.main.ollama_client' and have the /readiness handler see the mock.
@@ -127,29 +128,55 @@ async def readiness():
     except Exception:
         checks["chromadb"] = "error"
 
-    # Ollama + model presence (only checked when using OllamaProvider).
-    # `ollama_client`, `EMBED_MODEL`, `SUMMARISE_MODEL` are module-level names
-    # so that tests can patch them via `patch("app.main.ollama_client")`.
-    # `global` here tells Python we want the module namespace lookup, not a local.
+    # Provider-specific checks — Ollama or Gemini or OpenAI
     global ollama_client, EMBED_MODEL, SUMMARISE_MODEL  # noqa: PLW0603
-    if ollama_client is not None:
-        try:
-            response = await ollama_client.list()
-            model_names = [
-                (m.model if hasattr(m, "model") else m.get("model", m.get("name", "")))
-                for m in (response.models if hasattr(response, "models") else response.get("models", []))
-            ]
-            checks["ollama"] = "ok"
-            checks["embedding_model"] = "ok" if any(EMBED_MODEL in n for n in model_names) else "missing"
-            checks["summary_model"] = "ok" if any(SUMMARISE_MODEL in n for n in model_names) else "missing"
-        except Exception:
-            checks["ollama"] = "error"
-            checks["embedding_model"] = "unknown"
-            checks["summary_model"] = "unknown"
-    else:
-        checks["ollama"] = "skipped"
-        checks["embedding_model"] = "skipped"
-        checks["summary_model"] = "skipped"
+
+    # Determine which provider is active
+    active_provider = _get_provider().__class__.__name__
+
+    if active_provider == "OllamaProvider":
+        # Ollama + model presence checks
+        if ollama_client is not None:
+            try:
+                response = await ollama_client.list()
+                model_names = [
+                    (m.model if hasattr(m, "model") else m.get("model", m.get("name", "")))
+                    for m in (response.models if hasattr(response, "models") else response.get("models", []))
+                ]
+                checks["ollama"] = "ok"
+                checks["embedding_model"] = "ok" if any(EMBED_MODEL in n for n in model_names) else "missing"
+                checks["summary_model"] = "ok" if any(SUMMARISE_MODEL in n for n in model_names) else "missing"
+            except Exception as e:
+                checks["ollama"] = "error"
+                checks["embedding_model"] = "unknown"
+                checks["summary_model"] = "unknown"
+        else:
+            checks["ollama"] = "skipped"
+            checks["embedding_model"] = "skipped"
+            checks["summary_model"] = "skipped"
+
+    elif active_provider == "GeminiProvider":
+        # Gemini provider checks
+        if not os.getenv("GOOGLE_API_KEY"):
+            checks["gemini_api_key"] = "missing"
+        else:
+            try:
+                from .summarise import GeminiProvider
+                provider = GeminiProvider()
+                # Try a lightweight test call
+                test_embedding = await provider.embed("test")
+                checks["gemini_api_key"] = "ok"
+                checks["gemini_client"] = "ok" if isinstance(test_embedding, list) else "error"
+            except Exception as e:
+                checks["gemini_api_key"] = "ok"  # Key exists but client failed
+                checks["gemini_client"] = f"error: {str(e)[:50]}"
+
+    elif active_provider == "OpenAIProvider":
+        # OpenAI provider checks
+        if not os.getenv("OPENAI_API_KEY"):
+            checks["openai_api_key"] = "missing"
+        else:
+            checks["openai_api_key"] = "ok"
 
     ready = all(v == "ok" for v in checks.values())
     return {"ready": ready, "checks": checks}
