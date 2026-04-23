@@ -1,10 +1,11 @@
 FROM python:3.11-slim
 WORKDIR /app
-COPY requirements.txt .
+COPY brain/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-COPY app/ app/
-COPY tests/ tests/
-COPY entrypoint.sh /entrypoint.sh
+COPY brain/app/ app/
+COPY brain/tests/ tests/
+COPY brain/entrypoint.sh /entrypoint.sh
+COPY cli/ cli/
 
 # L8: Run as non-root user
 # gosu is the standard Docker privilege-drop helper (used by official images)

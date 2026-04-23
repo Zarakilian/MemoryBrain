@@ -8,7 +8,7 @@ def _load_cli():
     """Load cli/brain.py directly to avoid the 'brain' module import issue."""
     spec = importlib.util.spec_from_file_location(
         "brain_cli",
-        Path(__file__).parent.parent.parent / "cli" / "brain.py"
+        Path(__file__).parent.parent / "cli" / "brain.py"
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
