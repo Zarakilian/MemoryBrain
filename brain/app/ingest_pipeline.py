@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from .models import MemoryEntry, Project, validate_entry
 from .storage import add_memory, delete_memory, upsert_project, archive_memory, set_supersedes, get_memory, DB_PATH
-from .chroma import chroma_add, chroma_search, chroma_update_metadata
+from .chroma import chroma_add, chroma_search, chroma_update_metadata, build_where
 from .summarise import embed, summarise, score_importance
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ async def _check_supersession(
 
     candidates = chroma_search(
         embedding, n_results=5,
-        where={"$and": [{"project": {"$eq": entry.project}}, {"status": {"$eq": "active"}}]},
+        where=build_where({"project": entry.project, "status": "active"}),
     )
 
     superseded: list[str] = []

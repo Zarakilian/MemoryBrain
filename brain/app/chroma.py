@@ -39,6 +39,22 @@ def chroma_update_metadata(
     col.update(ids=[memory_id], metadatas=[metadata])
 
 
+def build_where(filters: dict) -> Optional[dict]:
+    """Convert a flat {key: value} dict to ChromaDB 1.5.x where syntax.
+
+    ChromaDB 1.5.x requires exactly one top-level operator in a where clause:
+      - 0 keys → None (no filter)
+      - 1 key  → {"key": {"$eq": value}}
+      - 2+ keys → {"$and": [{"key1": {"$eq": v1}}, ...]}
+    """
+    if not filters:
+        return None
+    clauses = [{k: {"$eq": v}} for k, v in filters.items()]
+    if len(clauses) == 1:
+        return clauses[0]
+    return {"$and": clauses}
+
+
 def chroma_search(
     embedding: list[float],
     n_results: int = 20,
