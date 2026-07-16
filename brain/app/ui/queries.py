@@ -146,3 +146,80 @@ def search_fts(conn, q: str, project: Optional[str] = None,
         return _rows(conn, sql, tuple(params))
     except sqlite3.OperationalError:
         return []
+
+
+# ------------------------------------------------------------------- stream
+
+def stream(conn, project: Optional[str] = None, mtype: Optional[str] = None,
+           min_importance: int = 1, before: Optional[str] = None,
+           limit: int = 60) -> dict[str, Any]:
+    """Reverse-chronological feed with cursor pagination, grouped by day.
+
+    `before` is an ISO timestamp cursor (exclusive). Returns
+    {"days": [{"day": "YYYY-MM-DD", "items": [...]}], "next_before": str|None}.
+    ISO-8601 strings compare correctly as strings, so the cursor is a plain
+    lexicographic comparison.
+    """
+    sql = """SELECT id, summary, type, project, tags, importance, timestamp,
+                    COALESCE(link_degree, 0) AS link_degree
+             FROM memories WHERE status = 'active' AND importance >= ?"""
+    params: list[Any] = [min_importance]
+    if project:
+        sql += " AND project = ?"
+        params.append(project)
+    if mtype in VALID_TYPES:
+        sql += " AND type = ?"
+        params.append(mtype)
+    if before:
+        sql += " AND timestamp < ?"
+        params.append(before)
+    sql += " ORDER BY timestamp DESC LIMIT ?"
+    params.append(limit + 1)  # one extra row = "has more"
+    rows = _rows(conn, sql, tuple(params))
+    has_more = len(rows) > limit
+    rows = rows[:limit]
+    days: list[dict[str, Any]] = []
+    for m in rows:
+        m["tags"] = parse_tags(m["tags"])
+        day = (m.get("timestamp") or "")[:10] or "undated"
+        if not days or days[-1]["day"] != day:
+            days.append({"day": day, "items": []})
+        days[-1]["items"].append(m)
+    next_before = rows[-1]["timestamp"] if (has_more and rows) else None
+    return {"days": days, "next_before": next_before}
+
+
+# ---------------------------------------------------------------- chronicle
+
+def chronicle(conn, project: Optional[str] = None,
+              limit: int = 500) -> dict[str, Any]:
+    """Sessions/handovers per project along the time axis, with the
+    session_chain edges as the spine. Read-only, like everything here."""
+    sql = """SELECT m.id, m.summary, m.type, m.project, m.importance,
+                    m.timestamp, COALESCE(p.name, m.project) AS project_name
+             FROM memories m LEFT JOIN projects p ON p.slug = m.project
+             WHERE m.status = 'active' AND m.type IN ('session', 'handover')"""
+    params: list[Any] = []
+    if project:
+        sql += " AND m.project = ?"
+        params.append(project)
+    sql += " ORDER BY m.timestamp ASC LIMIT ?"
+    params.append(limit)
+    rows = _rows(conn, sql, tuple(params))
+    ids = {r["id"] for r in rows}
+    lanes: list[dict[str, Any]] = []
+    lane_ix: dict[str, int] = {}
+    for r in rows:
+        slug = r.pop("project")
+        name = r.pop("project_name")
+        if slug not in lane_ix:
+            lane_ix[slug] = len(lanes)
+            lanes.append({"project": slug, "name": name, "items": []})
+        lanes[lane_ix[slug]]["items"].append(r)
+    links = [
+        {"src": l["src_id"], "dst": l["dst_id"]}
+        for l in _rows(conn, """SELECT src_id, dst_id FROM memory_links
+                                WHERE kind = 'session_chain'""")
+        if l["src_id"] in ids and l["dst_id"] in ids
+    ]
+    return {"lanes": lanes, "links": links}

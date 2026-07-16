@@ -111,8 +111,16 @@ directory to reclaim disk: `docker compose exec brain rm -rf /app/data/chroma`
   payload.
 - HTTP: `POST /admin/rebuild-graph`, `POST /admin/backfill-vectors`,
   `GET /api/ui/graph`, `GET /api/ui/search`, `GET /api/ui/stats`.
-- Web UI: dashboard, per-project browsing with filters, memory detail with
-  related/backlinks/supersession trail, interactive graph view, live search.
+- Web UI — **MemoryBrain Atlas**: one continuous workspace at `/ui` with a
+  project rail, a command palette (`Ctrl+K`), a sliding inspector, and three
+  lenses on the same data — **Stream** (server-rendered daily feed; works with
+  JS disabled), **Constellation** (2D force graph of the memory web), and
+  **Chronicle** (horizontal time axis of sessions/handovers per project,
+  drawn from the `session_chain` edges). Switch lenses with `1/2/3`.
+  Old `/ui/graph` and `/ui/project/{slug}` URLs redirect.
+- UI diagnostics: `GET /api/ui/version` (build stamp baked at image build,
+  also in the footer and asset URLs) and `/ui/doctor` (dependency-free
+  in-browser checks with a copy-paste report).
 
 ## Env vars added in v2.0.0
 

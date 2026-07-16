@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_macros.html" import mem_row, empty_state %}
+{% block title %}{{ current.name if current else 'Atlas' }} — MemoryBrain{% endblock %}
+{% block stage %}
+
+<header class="stagehead">
+  <nav class="lenses" role="tablist" aria-label="Lens">
+    <a role="tab" data-lens="stream" aria-selected="{{ 'true' if lens == 'stream' else 'false' }}"
+       class="lens-tab {{ 'on' if lens == 'stream' else '' }}"
+       href="/ui?lens=stream{% if filters.project %}&project={{ filters.project }}{% endif %}">Stream <kbd>1</kbd></a>
+    <a role="tab" data-lens="constellation" aria-selected="{{ 'true' if lens == 'constellation' else 'false' }}"
+       class="lens-tab {{ 'on' if lens == 'constellation' else '' }}"
+       href="/ui?lens=constellation{% if filters.project %}&project={{ filters.project }}{% endif %}">Constellation <kbd>2</kbd></a>
+    <a role="tab" data-lens="chronicle" aria-selected="{{ 'true' if lens == 'chronicle' else 'false' }}"
+       class="lens-tab {{ 'on' if lens == 'chronicle' else '' }}"
+       href="/ui?lens=chronicle{% if filters.project %}&project={{ filters.project }}{% endif %}">Chronicle <kbd>3</kbd></a>
+  </nav>
+  <form class="filters" method="get" action="/ui" id="stream-filters">
+    {% if filters.project %}<input type="hidden" name="project" value="{{ filters.project }}">{% endif %}
+    <label>type
+      <select name="type">
+        <option value="">all</option>
+        {% for t in types %}<option value="{{ t }}" {{ 'selected' if filters.type == t else '' }}>{{ t }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>importance &ge;
+      <select name="min_importance">
+        {% for i in [1,2,3,4,5] %}<option value="{{ i }}" {{ 'selected' if filters.min_importance == i else '' }}>{{ i }}</option>{% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit">Apply</button></noscript>
+  </form>
+</header>
+
+<div class="panes">
+
+  <section id="pane-stream" class="pane {{ 'on' if lens == 'stream' else '' }}"
+           role="tabpanel" {{ 'hidden' if lens != 'stream' else '' }}>
+    {% if stream.days %}
+    <div id="stream-feed">
+      {% for d in stream.days %}
+      <section class="day">
+        <h3 class="day-head"><span>{{ d.day }}</span></h3>
+        <div class="day-rows">
+          {% for m in d['items'] %}{{ mem_row(m, show_project=(not current)) }}{% endfor %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+    {% if stream.next_before %}
+    <a class="more" id="stream-more"
+       href="/ui?before={{ stream.next_before }}{% if filters.project %}&project={{ filters.project }}{% endif %}{% if filters.type %}&type={{ filters.type }}{% endif %}&min_importance={{ filters.min_importance }}"
+       data-before="{{ stream.next_before }}">Older memories</a>
+    {% endif %}
+    {% else %}
+    {{ empty_state('Nothing here yet',
+                   'Memories appear as your sessions are ingested — or seed one with `brain add`.') }}
+    {% endif %}
+  </section>
+
+  <section id="pane-constellation" class="pane {{ 'on' if lens == 'constellation' else '' }}"
+           role="tabpanel" {{ 'hidden' if lens != 'constellation' else '' }}
+           data-project="{{ filters.project }}">
+    <div class="lens-controls" data-js hidden>
+      <label>min weight <input id="cst-weight" type="range" min="0" max="0.9" step="0.05" value="0.35">
+        <output id="cst-weight-out">0.35</output></label>
+      <label>max nodes
+        <select id="cst-cap"><option>75</option><option selected>150</option><option>300</option><option>500</option></select>
+      </label>
+      <span id="cst-status" class="lens-status" aria-live="polite"></span>
+    </div>
+    <div id="constellation" class="lens-canvas"></div>
+    <noscript><div class="noscript-note">The Constellation lens needs JavaScript.
+      The <a href="/ui">Stream</a> works without it.</div></noscript>
+  </section>
+
+  <section id="pane-chronicle" class="pane {{ 'on' if lens == 'chronicle' else '' }}"
+           role="tabpanel" {{ 'hidden' if lens != 'chronicle' else '' }}
+           data-project="{{ filters.project }}">
+    <div id="chronicle" class="lens-canvas"></div>
+    <noscript><div class="noscript-note">The Chronicle lens needs JavaScript.
+      The <a href="/ui">Stream</a> works without it.</div></noscript>
+  </section>
+
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="/static/vendor/force-graph.min.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/constellation.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/chronicle.js?b={{ build_stamp }}" defer></script>
+{% endblock %}

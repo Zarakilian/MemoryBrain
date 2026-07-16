@@ -1,8 +1,16 @@
 # brain/app/ui/routes.py
-"""UI pages + read-only JSON endpoints. No writes anywhere in this module.
+"""MemoryBrain Atlas — UI pages + read-only JSON endpoints.
 
-Search uses the same hybrid pipeline as the search_memory MCP tool and
-falls back to keyword-only FTS5 when the embedding provider is down.
+No writes anywhere in this module (connections are PRAGMA query_only).
+Page structure: one continuous workspace at /ui (left rail, three lenses on
+the same data, right inspector). Stream and the memory page are fully
+server-rendered and usable with JS disabled; the palette, Constellation and
+Chronicle lenses are progressive enhancements.
+
+The /api/ui/{stats,search,graph} and /api/ui/memories/{id}/related response
+shapes are shared with the MCP assistant tools' underlying queries and must
+not change. New endpoints (version, stream, chronicle, memory detail) are
+additive.
 """
 from __future__ import annotations
 
@@ -11,7 +19,7 @@ import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from ..graph_queries import get_graph, get_related
@@ -28,6 +36,27 @@ templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 # Available in every template: footer stamp + cache-busting asset URLs
 # (?b={{ build_stamp }}). Fixed for the container's lifetime.
 templates.env.globals["build_stamp"] = get_build_stamp()
+
+# Deterministic project colour: same hash + hue table lives in atlas.js
+# (projectHue) — keep the two in sync. Muted hues tuned for the dark surface.
+_HUES = (28, 82, 140, 190, 215, 255, 285, 320, 350, 45, 165, 5)
+
+
+def _project_hue(slug) -> int:
+    h = 0
+    for ch in str(slug or ""):
+        h = (h * 31 + ord(ch)) % 997
+    return _HUES[h % 12]
+
+
+templates.env.filters["phue"] = _project_hue
+
+# HTML pages and the version endpoint must never be cached: the build stamp
+# comparison on /ui/doctor relies on both being live. Static assets are the
+# opposite — they carry the stamp in their URL, so caching them is safe.
+_NO_STORE = {"Cache-Control": "no-store, max-age=0"}
+
+VALID_LENSES = ("stream", "constellation", "chronicle")
 
 
 def db():
@@ -51,12 +80,6 @@ async def _search(conn, text: str, project: str | None, mtype: str | None,
                             limit=limit), "keyword"
 
 
-# HTML pages and the version endpoint must never be cached: the build stamp
-# comparison on /ui/doctor relies on both being live. Static assets are the
-# opposite — they carry the stamp in their URL, so caching them is safe.
-_NO_STORE = {"Cache-Control": "no-store, max-age=0"}
-
-
 # ----------------------------------------------------------- diagnostics
 
 @router.get("/api/ui/version")
@@ -78,40 +101,36 @@ def doctor_page():
 # ------------------------------------------------------------------- pages
 
 @router.get("/ui", response_class=HTMLResponse)
-def dashboard(request: Request, conn: sqlite3.Connection = Depends(db)):
-    return templates.TemplateResponse(request, "dashboard.html", {
-        "stats": q.stats(conn),
-        "recent": q.recent_memories(conn, limit=12),
-        "top": q.top_by_degree(conn, limit=8),
-        "projects": q.all_projects(conn),
-        "active": "dashboard",
-    })
-
-
-@router.get("/ui/project/{slug}", response_class=HTMLResponse)
-def project_page(request: Request, slug: str,
-                 type: str | None = None,
-                 min_importance: int = Query(1, ge=1, le=5),
-                 sort: str = "recent",
-                 conn: sqlite3.Connection = Depends(db)):
+def atlas(request: Request,
+          project: str | None = None,
+          type: str | None = None,
+          min_importance: int = Query(1, ge=1, le=5),
+          before: str | None = None,
+          lens: str = "stream",
+          conn: sqlite3.Connection = Depends(db)):
+    """The Atlas shell. Stream is server-rendered inside it; Constellation
+    and Chronicle activate client-side on the same data."""
     projects = q.all_projects(conn)
-    proj = next((p for p in projects if p["slug"] == slug), None)
-    if proj is None:
-        raise HTTPException(404, f"Unknown project: {slug}")
-    return templates.TemplateResponse(request, "project.html", {
-        "project": proj,
-        "memories": q.project_memories(conn, slug, mtype=type,
-                                       min_importance=min_importance, sort=sort),
+    proj = next((p for p in projects if p["slug"] == project), None)
+    if project and proj is None:
+        raise HTTPException(404, f"Unknown project: {project}")
+    return templates.TemplateResponse(request, "index.html", {
+        "stats": q.stats(conn),
+        "stream": q.stream(conn, project=project, mtype=type,
+                           min_importance=min_importance, before=before),
         "projects": projects,
-        "filters": {"type": type or "", "min_importance": min_importance,
-                    "sort": sort},
-        "active": slug,
-    })
+        "current": proj,
+        "filters": {"project": project or "", "type": type or "",
+                    "min_importance": min_importance},
+        "lens": lens if lens in VALID_LENSES else "stream",
+        "types": q.VALID_TYPES,
+    }, headers=_NO_STORE)
 
 
 @router.get("/ui/memory/{memory_id}", response_class=HTMLResponse)
 def memory_page(request: Request, memory_id: str,
                 conn: sqlite3.Connection = Depends(db)):
+    """Full memory page: deep link + no-JS fallback for the inspector."""
     mem = q.get_memory_row(conn, memory_id)
     if mem is None:
         raise HTTPException(404, "Memory not found")
@@ -123,31 +142,40 @@ def memory_page(request: Request, memory_id: str,
     return templates.TemplateResponse(request, "memory.html", {
         "m": mem, "related": rel, "backlinks": backlinks,
         "projects": q.all_projects(conn),
-        "active": mem.get("project"),
-    })
-
-
-@router.get("/ui/graph", response_class=HTMLResponse)
-def graph_page(request: Request, project: str | None = None,
-               conn: sqlite3.Connection = Depends(db)):
-    return templates.TemplateResponse(request, "graph.html", {
-        "project": project or "",
-        "projects": q.all_projects(conn),
-        "active": "graph",
-    })
+        "stats": q.stats(conn),
+        "current": next((p for p in q.all_projects(conn)
+                         if p["slug"] == mem.get("project")), None),
+    }, headers=_NO_STORE)
 
 
 @router.get("/ui/search", response_class=HTMLResponse)
 async def search_page(request: Request, q_: str = Query("", alias="q"),
                       project: str | None = None, type: str | None = None,
                       conn: sqlite3.Connection = Depends(db)):
+    """Server-rendered search results: the no-JS fallback for the palette."""
     results, mode = (await _search(conn, q_, project, type)) if q_ else ([], "none")
     return templates.TemplateResponse(request, "search.html", {
         "q": q_, "results": results, "search_mode": mode,
         "projects": q.all_projects(conn),
+        "stats": q.stats(conn),
+        "current": None,
         "filters": {"project": project or "", "type": type or ""},
-        "active": "search",
-    })
+    }, headers=_NO_STORE)
+
+
+# Old bookmarks from the previous UI keep working.
+
+@router.get("/ui/graph")
+def legacy_graph(project: str | None = None):
+    dest = "/ui?lens=constellation"
+    if project:
+        dest += f"&project={project}"
+    return RedirectResponse(dest, status_code=301)
+
+
+@router.get("/ui/project/{slug}")
+def legacy_project(slug: str):
+    return RedirectResponse(f"/ui?project={slug}", status_code=301)
 
 
 # --------------------------------------------------------- JSON (read-only)
@@ -183,3 +211,33 @@ def api_related(memory_id: str,
     if result is None:
         raise HTTPException(404, "Memory not found")
     return result
+
+
+# Additive endpoints for the Atlas lenses (new in the Atlas rebuild).
+
+@router.get("/api/ui/stream")
+def api_stream(project: str | None = None, type: str | None = None,
+               min_importance: int = Query(1, ge=1, le=5),
+               before: str | None = None,
+               limit: int = Query(60, ge=1, le=200),
+               conn: sqlite3.Connection = Depends(db)):
+    """Same query that server-renders the Stream; used for load-more."""
+    return q.stream(conn, project=project, mtype=type,
+                    min_importance=min_importance, before=before, limit=limit)
+
+
+@router.get("/api/ui/chronicle")
+def api_chronicle(project: str | None = None,
+                  limit: int = Query(500, ge=10, le=2000),
+                  conn: sqlite3.Connection = Depends(db)):
+    """Sessions/handovers per project + session_chain spine."""
+    return q.chronicle(conn, project=project, limit=limit)
+
+
+@router.get("/api/ui/memories/{memory_id}")
+def api_memory(memory_id: str, conn: sqlite3.Connection = Depends(db)):
+    """Full memory detail for the inspector."""
+    mem = q.get_memory_row(conn, memory_id)
+    if mem is None:
+        raise HTTPException(404, "Memory not found")
+    return mem

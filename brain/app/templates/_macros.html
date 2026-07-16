@@ -1,0 +1,22 @@
+{# Shared fragments. mem_row renders one memory as a link row: fully usable
+   without JS; atlas.js intercepts clicks to open the inspector instead. #}
+{% macro mem_row(m, show_project=true) -%}
+<a class="mem" href="/ui/memory/{{ m.id }}" data-id="{{ m.id }}"
+   data-project="{{ m.project }}">
+  <time datetime="{{ m.timestamp }}">{{ (m.timestamp or '')[11:16] or '·' }}</time>
+  <span class="badge t-{{ m.type }}">{{ m.type }}</span>
+  {% if show_project %}<span class="pdot" style="--ph:{{ m.project|phue }}"
+        title="{{ m.project }}"></span>{% endif %}
+  <span class="sum">{{ m.summary or '(no summary)' }}</span>
+  <span class="imp" data-imp="{{ m.importance or 1 }}"
+        title="importance {{ m.importance or 1 }}/5"></span>
+</a>
+{%- endmacro %}
+
+{% macro empty_state(title, hint) -%}
+<div class="empty">
+  <div class="empty-plate" aria-hidden="true"></div>
+  <p class="empty-title">{{ title }}</p>
+  <p class="empty-hint">{{ hint }}</p>
+</div>
+{%- endmacro %}

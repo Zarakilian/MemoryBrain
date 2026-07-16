@@ -1,60 +1,54 @@
 {% extends "base.html" %}
-{% block title %}Memory — MemoryBrain{% endblock %}
-{% block content %}
+{% from "_macros.html" import mem_row %}
+{% block title %}{{ (m.summary or m.id)[:60] }} — MemoryBrain{% endblock %}
+{% block stage %}
+<article class="memory-page">
+  <header class="mem-head">
+    <nav class="crumbs">
+      <a href="/ui">Atlas</a> /
+      {% if m.project %}<a href="/ui?project={{ m.project }}">{{ m.project }}</a> /{% endif %}
+      <span class="crumb-id">{{ m.id[:8] }}</span>
+    </nav>
+    <h1 class="mem-title">{{ m.summary or '(no summary)' }}</h1>
+    <div class="mem-meta">
+      <span class="badge t-{{ m.type }}">{{ m.type }}</span>
+      <span class="pdot" style="--ph:{{ m.project|phue }}"></span>
+      <time datetime="{{ m.timestamp }}">{{ m.timestamp }}</time>
+      <span class="imp" data-imp="{{ m.importance or 1 }}" title="importance {{ m.importance or 1 }}/5"></span>
+      {% if m.status != 'active' %}<span class="badge archived">{{ m.status }}</span>{% endif %}
+    </div>
+    {% if m.tags %}<div class="tags">{% for t in m.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+  </header>
 
-<div class="page-head">
-  <h1 class="mem-title">
-    <span class="chip type-{{ m.type }}">{{ m.type }}</span>
-    {% if m.status != 'active' %}<span class="chip archived">{{ m.status }}</span>{% endif %}
-  </h1>
-</div>
+  <section class="mem-content"><pre>{{ m.content }}</pre></section>
 
-<div class="two-col detail">
-  <section class="panel">
-    <p class="lede">{{ m.summary }}</p>
-    <pre class="mem-content">{{ m.content }}</pre>
+  <dl class="mem-facts">
+    {% if m.source %}<dt>source</dt><dd>{{ m.source }}</dd>{% endif %}
+    <dt>link degree</dt><dd>{{ '%.1f' | format(m.link_degree or 0) }}</dd>
+    {% if m.supersedes %}<dt>supersedes</dt>
+      <dd><a href="/ui/memory/{{ m.supersedes }}">{{ m.supersedes[:8] }}</a></dd>{% endif %}
+    {% if m.superseded_by %}<dt>superseded by</dt>
+      <dd><a href="/ui/memory/{{ m.superseded_by }}">{{ m.superseded_by[:8] }}</a></dd>{% endif %}
+  </dl>
+
+  <section class="mem-related">
+    <h2>Related</h2>
+    {% for r in related %}
+    <div class="rel">
+      {{ mem_row(r) }}
+      <div class="rel-why">
+        {% for e in r.explanations %}<span class="why k-{{ e.kind }}">{{ e.kind }}
+          {{ '←' if e.direction == 'in' else '→' }} {{ '%.2f' | format(e.weight) }}</span>{% endfor %}
+      </div>
+    </div>
+    {% else %}<p class="quiet">No links above the weight floor.</p>{% endfor %}
   </section>
 
-  <div class="stack">
-    <section class="panel meta-panel">
-      <h2>Metadata</h2>
-      <dl>
-        <dt>Project</dt><dd><a href="/ui/project/{{ m.project }}"><span class="proj-dot" data-project="{{ m.project }}"></span>{{ m.project }}</a></dd>
-        <dt>Importance</dt><dd><span class="imp imp-{{ m.importance }}">{{ '●' * (m.importance or 0) }}</span> {{ m.importance }}/5</dd>
-        <dt>When</dt><dd>{{ (m.timestamp or '')[:19].replace('T',' ') }}</dd>
-        {% if m.source %}<dt>Source</dt><dd class="mono">{{ m.source }}</dd>{% endif %}
-        <dt>Tags</dt><dd>{% for t in m.tags %}<span class="tag">#{{ t }}</span>{% else %}—{% endfor %}</dd>
-        {% if m.supersedes %}<dt>Supersedes</dt><dd><a class="mono" href="/ui/memory/{{ m.supersedes }}">{{ m.supersedes[:8] }}…</a></dd>{% endif %}
-        {% if m.superseded_by %}<dt>Superseded by</dt><dd><a class="mono" href="/ui/memory/{{ m.superseded_by }}">{{ m.superseded_by[:8] }}…</a></dd>{% endif %}
-        <dt>ID</dt><dd class="mono">{{ m.id }}</dd>
-        {% if m.link_degree %}<dt>Link degree</dt><dd>{{ '%.2f' % m.link_degree }}</dd>{% endif %}
-      </dl>
-    </section>
-
-    <section class="panel">
-      <h2>Related <span class="hint">derived links</span></h2>
-      {% for r in related %}
-      <a class="mem-row" href="/ui/memory/{{ r.id }}">
-        <span class="degree-badge sm" title="combined weight">{{ '%.2f' % r.w_combined }}</span>
-        <span class="mem-summary">{{ r.summary or '(no summary)' }}</span>
-        <span class="mem-meta">
-          {% for k in r.kinds %}<span class="chip kind-{{ k }}">{{ k }}</span>{% endfor %}
-        </span>
-      </a>
-      {% else %}<p class="empty">No derived links yet.</p>{% endfor %}
-    </section>
-
-    <section class="panel">
-      <h2>Backlinks <span class="hint">things pointing here</span></h2>
-      {% for b in backlinks %}
-      <a class="mem-row" href="/ui/memory/{{ b.id }}">
-        {% for e in b.explanations if e.direction == 'in' %}<span class="chip kind-{{ e.kind }}">{{ e.meta.reason or e.kind }}</span>{% endfor %}
-        <span class="mem-summary">{{ b.summary or '(no summary)' }}</span>
-        <span class="mem-meta"><time>{{ (b.timestamp or '')[:16].replace('T',' ') }}</time></span>
-      </a>
-      {% else %}<p class="empty">Nothing references this memory.</p>{% endfor %}
-    </section>
-  </div>
-</div>
-
+  {% if backlinks %}
+  <section class="mem-related">
+    <h2>Backlinks</h2>
+    {% for r in backlinks %}{{ mem_row(r) }}{% endfor %}
+  </section>
+  {% endif %}
+</article>
 {% endblock %}

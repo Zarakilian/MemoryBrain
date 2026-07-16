@@ -4,52 +4,61 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
-<link rel="stylesheet" href="/static/css/ui.css?b={{ build_stamp }}">
+<link rel="stylesheet" href="/static/css/atlas.css?b={{ build_stamp }}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
 <body>
-<canvas id="ambient"></canvas>
-<div class="marginalia m-flowers" aria-hidden="true"></div>
-<div class="marginalia m-machine" aria-hidden="true"></div>
-<div class="marginalia m-tuscan" aria-hidden="true"></div>
+<div class="shell">
 
-<aside class="sidebar">
-  <a class="brand" href="/ui"><span class="brand-dot"></span>MemoryBrain</a>
-  <nav>
-    <a href="/ui" class="{{ 'on' if active == 'dashboard' }}">Dashboard</a>
-    <a href="/ui/graph" class="{{ 'on' if active == 'graph' }}">Night Folio</a>
-    <a href="/ui/search" class="{{ 'on' if active == 'search' }}">Search</a>
-  </nav>
-  <div class="side-label">Folios</div>
-  <nav class="projects">
-    {% for p in projects %}
-    <a href="/ui/project/{{ p.slug }}" class="{{ 'on' if active == p.slug }}">
-      <span class="proj-dot" data-project="{{ p.slug }}"></span>
-      <span class="proj-name">{{ p.name or p.slug }}</span>
-      <span class="count">{{ p.memory_count }}</span>
-    </a>
-    {% endfor %}
-  </nav>
-</aside>
+  <aside class="rail">
+    <a class="brand" href="/ui">Memory<em>Brain</em></a>
+    <nav class="rail-nav" aria-label="Scope">
+      <a href="/ui" class="{{ 'on' if not current else '' }}">
+        <span class="pdot all"></span><span class="pname">All memories</span>
+        <span class="count">{{ stats.total }}</span></a>
+    </nav>
+    <div class="rail-label">Projects</div>
+    <nav class="rail-projects" aria-label="Projects">
+      {% for p in projects %}
+      <a href="/ui?project={{ p.slug }}"
+         class="{{ 'on' if current and current.slug == p.slug else '' }}">
+        <span class="pdot" style="--ph:{{ p.slug|phue }}"></span>
+        <span class="pname">{{ p.name or p.slug }}</span>
+        <span class="count">{{ p.memory_count }}</span>
+      </a>
+      {% endfor %}
+    </nav>
+    <div class="rail-foot">
+      <a href="/ui/search">Search</a>
+      <span class="rail-kbd" hidden data-js>Ctrl K</span>
+    </div>
+  </aside>
 
-<main>
-  <header class="topbar">
-    <form class="searchbox" action="/ui/search" method="get" autocomplete="off">
-      <input id="q" name="q" type="search" placeholder="Search the codex…  ( / )"
-             value="{{ q if q is defined else '' }}">
-      <div id="search-preview" class="search-preview" hidden></div>
-    </form>
-  </header>
-  <div class="page">
-    {% block content %}{% endblock %}
+  <main class="stage">
+    {% block stage %}{% endblock %}
+    <footer class="buildfoot">
+      build <code>{{ build_stamp }}</code> &middot; <a href="/ui/doctor">doctor</a>
+      &middot; {{ stats.projects }} projects &middot; {{ stats.edges }} links
+    </footer>
+  </main>
+
+  <aside id="inspector" class="inspector" hidden aria-label="Memory inspector">
+    <div class="insp-body" id="insp-body"></div>
+  </aside>
+
+</div>
+
+{# Palette: hidden until atlas.js opens it. The backdrop only accepts pointer
+   events while open — [hidden]{display:none!important} in atlas.css makes the
+   hidden state unbeatable by any display rule (the old click-eater lesson). #}
+<div id="palette" class="palette" hidden role="dialog" aria-label="Command palette">
+  <div class="palette-card">
+    <input id="palette-input" type="search" placeholder="Search memories, jump to project, switch lens…" autocomplete="off">
+    <div id="palette-results" class="palette-results"></div>
   </div>
-  <footer class="buildfoot" style="padding:10px 24px;font-size:.75rem;opacity:.65">
-    build <code>{{ build_stamp }}</code> &middot; <a href="/ui/doctor">doctor</a>
-  </footer>
-</main>
+</div>
 
-<script src="/static/js/app.js?b={{ build_stamp }}"></script>
-<script src="/static/js/ambient.js?b={{ build_stamp }}"></script>
+<script src="/static/js/atlas.js?b={{ build_stamp }}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

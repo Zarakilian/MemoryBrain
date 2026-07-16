@@ -84,9 +84,14 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   derived at ingest, fully rebuildable via `POST /admin/rebuild-graph`.
 - **2 new MCP tools** (9 total): `get_related_memories`, `get_memory_graph`.
   The existing 7 contracts are unchanged.
-- **Local web UI** at `/ui`: dashboard, project browsing with filters, memory
-  detail with related/backlinks, interactive graph view, live hybrid search.
-  Server-rendered, zero third-party JS, fully offline.
+- **Local web UI — MemoryBrain Atlas** at `/ui`: one continuous workspace.
+  Left rail of projects, `Ctrl+K` command palette, sliding inspector, and
+  three lenses on the same data: **Stream** (reverse-chronological daily
+  feed, server-rendered, fully usable with JS disabled), **Constellation**
+  (2D force-directed graph of the memory web, powered by a vendored
+  force-graph build — no CDN), and **Chronicle** (a horizontal time axis of
+  sessions and handovers per project). Keys `1/2/3` switch lenses. Fully
+  offline, read-only, zero telemetry.
 - **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
   `docker compose build` time; the same stamp appears in the UI footer and in
   static asset URLs (automatic cache-busting — no manual `?v=` bumps).
