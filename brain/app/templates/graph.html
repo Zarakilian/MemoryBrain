@@ -5,6 +5,7 @@
 <div class="page-head">
   <h1>Graph {% if project %}<span class="hint">— {{ project }}</span>{% endif %}</h1>
   <div class="graph-controls">
+    <input id="g-find" type="search" placeholder="find node… (Enter)">
     <select id="g-project">
       <option value="">all projects</option>
       {% for p in projects %}
@@ -15,14 +16,18 @@
       <input id="g-weight" type="range" min="0.1" max="0.9" step="0.05" value="0.35">
       <span id="g-weight-val">0.35</span>
     </label>
+    <button id="g-physics" class="btn sm" title="Space also toggles">❚❚ physics</button>
+    <button id="g-labels" class="btn sm">labels</button>
   </div>
 </div>
 
 <div class="graph-wrap panel">
   <canvas id="graph"></canvas>
   <div id="g-tooltip" class="g-tooltip" hidden></div>
+  <div id="g-info" class="g-info" hidden></div>
   <div id="g-empty" class="empty g-empty" hidden>No links to draw — lower the weight slider, or run the graph rebuild.</div>
   <div id="g-legend" class="g-legend"></div>
+  <div class="g-help hint">drag node · grab space to pan · scroll to zoom · click = select · double-click = open · Esc = clear</div>
 </div>
 
 {% endblock %}

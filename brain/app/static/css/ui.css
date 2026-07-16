@@ -174,3 +174,71 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
             gap: 8px; font-size: .72rem; color: var(--muted); max-width: 60%; }
 .g-legend span { display: flex; align-items: center; gap: 5px; }
 .g-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+/* ================= v2.1 — vault-brain polish ================= */
+
+/* living chrome */
+.brand-dot { animation: pulse 3.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { box-shadow: 0 0 10px var(--accent); }
+                   50% { box-shadow: 0 0 22px var(--accent), 0 0 40px rgba(122,162,247,.35); } }
+.panel { transition: border-color .25s ease, transform .25s ease; }
+.panel:hover { border-color: #303a4d; }
+.mem-row, .proj-card, .btn, .filters select { transition: background .18s ease, border-color .18s ease, transform .18s ease; }
+.proj-card:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.mem-row:hover { transform: translateX(2px); }
+.stat { transition: border-color .2s ease; }
+.stat:hover { border-color: var(--accent); }
+a.panel-cta:hover { text-shadow: 0 0 12px rgba(122,162,247,.8); }
+
+/* glassy sticky topbar */
+.topbar { background: rgba(14,17,22,.8); backdrop-filter: blur(10px); }
+
+/* page entrance */
+.page > * { animation: rise .35s ease both; }
+.page > *:nth-child(2) { animation-delay: .05s; }
+.page > *:nth-child(3) { animation-delay: .1s; }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2a3342; border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: #3a4557; }
+
+/* graph page: deep-space canvas */
+.graph-wrap { background: radial-gradient(1200px 700px at 30% 20%, #131a26 0%, #0b0e14 55%, #080a0f 100%); }
+#graph { cursor: grab; touch-action: none; }
+#graph.dragging { cursor: grabbing; }
+
+/* graph controls */
+.graph-controls { flex-wrap: wrap; }
+.graph-controls #g-find {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 10px; border-radius: 8px; font-size: .85rem; width: 160px;
+}
+.graph-controls #g-find:focus { border-color: var(--accent); outline: none; }
+.btn.sm { padding: 5px 10px; font-size: .78rem; }
+.btn.sm.off { opacity: .45; }
+
+/* selection info card */
+.g-info {
+  position: absolute; right: 14px; top: 14px; width: 280px; z-index: 12;
+  background: rgba(22,27,34,.92); backdrop-filter: blur(8px);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; box-shadow: 0 16px 48px rgba(0,0,0,.55);
+  animation: rise .2s ease both;
+}
+.g-info-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.g-info-close { cursor: pointer; color: var(--muted); font-size: 1.1rem; padding: 0 4px; }
+.g-info-close:hover { color: var(--text); }
+.g-info-title { font-weight: 600; line-height: 1.35; }
+.g-info-open { display: inline-block; margin-top: 4px; }
+
+/* help strip */
+.g-help { position: absolute; right: 12px; bottom: 12px; font-size: .7rem; opacity: .7; }
+
+/* reduced motion: honour the user's OS setting */
+@media (prefers-reduced-motion: reduce) {
+  .brand-dot { animation: none; }
+  .page > * { animation: none; }
+  .panel, .mem-row, .proj-card, .stat { transition: none; }
+}
