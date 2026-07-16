@@ -537,3 +537,44 @@ docker run --rm -v memorybrain_brain_data:/data -v $(pwd):/backup alpine \
 | `docker compose down && up -d` | Stops + removes containers, restarts | ✅ Yes (named volume) | ⚠️ Breaks — open new Claude session |
 
 **MCP session note:** When the brain container restarts mid-session, the SSE connection drops. The MCP client reconnects but the server-side session state is reset — tool calls will fail with "initialization not complete". Open a new Claude Code session to restore full MCP functionality.
+
+---
+
+## v2.0.0 — single-file store, memory graph, web UI
+
+**Vector storage** now lives inside `brain.db` (`vec_memories` table, powered by
+the `sqlite-vec` extension). `add_memory` writes content, FTS index, embedding
+and graph edges in one place; hybrid search is unchanged in behaviour (FTS5 +
+cosine KNN + RRF + recency decay) but no longer round-trips to ChromaDB. The
+legacy Chroma directory is only read once — at first v2 startup, to copy
+embeddings across — and then kept untouched as a rollback target
+(`MEMORYBRAIN_VECTOR_BACKEND=chroma`).
+
+**The memory graph** is derived automatically when a memory is ingested:
+
+- `semantic` — embedding neighbours above a type-aware similarity floor
+  (deliberately below the supersession thresholds: near-duplicates supersede,
+  related memories link)
+- `tag` — IDF-weighted tag overlap (a shared rare tag counts, `python` on
+  everything does not)
+- `reference` — supersession trail, shared `source`, explicit memory-UUID
+  mentions in content
+- `session_chain` — each session/handover links to the previous one in the
+  same project
+
+Edge weights combine per pair via noisy-OR; the sum over a memory's neighbours
+is cached as `link_degree` ("gravity"). Edges are cache, not truth: a linker
+failure never fails an ingest, and `POST /admin/rebuild-graph` recomputes the
+whole graph from scratch.
+
+**The web UI** (`http://localhost:7741/ui`) is server-rendered Jinja2 with
+vanilla JS — no build step, no CDN, works fully offline. It is strictly
+read-only (`PRAGMA query_only`): the assistant remains the only writer.
+The graph view is a custom canvas force-layout; search uses the same hybrid
+pipeline as the `search_memory` MCP tool, falling back to keyword-only FTS5
+when the embedding provider is down.
+
+**MCP surface** grows from 7 to 9 tools with `get_related_memories` (ranked
+neighbours with per-kind explanations, direction included — backlinks are the
+`in` direction) and `get_memory_graph` (node/edge payload, per project or
+global). Existing tool contracts are byte-compatible with v0.5.x.

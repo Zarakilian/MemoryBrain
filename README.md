@@ -2,8 +2,9 @@
 
 Persistent searchable memory service for AI assistants (Claude Code, Gemini/Antigravity) via MCP.
 
-Replaces flat MEMORY.md files with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
-that gives your AI assistant automatic context on every new session, with on-demand semantic search.
+Replaces flat MEMORY.md files with a FastAPI + SQLite (FTS5 + sqlite-vec) + Ollama service
+that gives your AI assistant automatic context on every new session, with on-demand semantic search,
+an automatic memory graph, and a local web UI at http://localhost:7741/ui.
 
 MemoryBrain natively supports **SSE transport** for Claude Code and **stdio transport** (via a Docker wrapper) for Gemini.
 
@@ -72,6 +73,22 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 > then `get_recent_context` — and then **stops**. No project files are read. The timestamp is
 > written by the session-start hook every time MemoryBrain is confirmed healthy, giving Claude an
 > explicit signal to trust MemoryBrain over stale file-based memory. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
+
+## What's New in v2.0.0
+
+- **One database file.** Embeddings moved from embedded ChromaDB into `brain.db`
+  (sqlite-vec): exact cosine KNN, one transaction boundary, `cp` is a backup.
+  Auto-migrates existing data at first startup — see [MIGRATION.md](MIGRATION.md).
+- **Automatic memory graph.** Semantic, tag (IDF-weighted), reference
+  (supersession / shared source / UUID mentions) and session-chain edges,
+  derived at ingest, fully rebuildable via `POST /admin/rebuild-graph`.
+- **2 new MCP tools** (9 total): `get_related_memories`, `get_memory_graph`.
+  The existing 7 contracts are unchanged.
+- **Local web UI** at `/ui`: dashboard, project browsing with filters, memory
+  detail with related/backlinks, interactive graph view, live hybrid search.
+  Server-rendered, zero third-party JS, fully offline.
+- Rollback safety: `MEMORYBRAIN_VECTOR_BACKEND=chroma` switches back to the
+  untouched legacy store; `MEMORYBRAIN_GRAPH_ENABLED=false` disables the linker.
 
 ## What's New in v0.5.0
 
