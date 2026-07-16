@@ -112,6 +112,35 @@ async def handle_get_startup_summary() -> str:
     return "\n".join(lines)
 
 
+async def handle_get_related_memories(
+    memory_id: str,
+    limit: int = 10,
+    min_weight: float = 0.3,
+    kinds: Optional[list] = None,
+    include_archived: bool = False,
+) -> str:
+    from ..graph_queries import get_related
+    result = get_related(memory_id, limit=limit, min_weight=min_weight,
+                         kinds=kinds, include_archived=include_archived,
+                         db_path=DB_PATH)
+    if result is None:
+        return json.dumps({"error": f"Memory {memory_id} not found"})
+    return json.dumps(result, default=str)
+
+
+async def handle_get_memory_graph(
+    project: Optional[str] = None,
+    min_weight: float = 0.35,
+    max_nodes: int = 150,
+    include_archived: bool = False,
+) -> str:
+    from ..graph_queries import get_graph
+    return json.dumps(get_graph(project=project, min_weight=min_weight,
+                                max_nodes=max_nodes,
+                                include_archived=include_archived,
+                                db_path=DB_PATH), default=str)
+
+
 # ── MCP Server wiring ─────────────────────────────────────────────────────────
 
 @server.list_tools()
@@ -189,6 +218,34 @@ async def list_tools() -> list[types.Tool]:
             description="Compact project index with per-project recent state — use at session start.",
             inputSchema={"type": "object", "properties": {}},
         ),
+        types.Tool(
+            name="get_related_memories",
+            description="Memories linked to a given memory via the automatic graph (semantic, tag, reference, session_chain), ranked by combined weight. Returns summaries with per-kind explanations.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "memory_id": {"type": "string"},
+                    "limit": {"type": "integer", "default": 10},
+                    "min_weight": {"type": "number", "default": 0.3},
+                    "kinds": {"type": "array", "items": {"type": "string", "enum": ["semantic", "tag", "reference", "session_chain"]}},
+                    "include_archived": {"type": "boolean", "default": False},
+                },
+                "required": ["memory_id"],
+            },
+        ),
+        types.Tool(
+            name="get_memory_graph",
+            description="Node/edge graph of memories and their derived links, per project or global. Nodes capped by weighted degree then recency.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "min_weight": {"type": "number", "default": 0.35},
+                    "max_nodes": {"type": "integer", "default": 150},
+                    "include_archived": {"type": "boolean", "default": False},
+                },
+            },
+        ),
     ]
 
 
@@ -215,6 +272,8 @@ _TOOL_ARGS = {
     "get_recent_context":  ([], ["project", "days"]),
     "list_projects":       ([], []),
     "get_startup_summary": ([], []),
+    "get_related_memories": (["memory_id"], ["limit", "min_weight", "kinds", "include_archived"]),
+    "get_memory_graph":     ([], ["project", "min_weight", "max_nodes", "include_archived"]),
 }
 
 
@@ -241,6 +300,8 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         "get_recent_context":  lambda a: handle_get_recent_context(**a),
         "list_projects":       lambda _: handle_list_projects(),
         "get_startup_summary": lambda _: handle_get_startup_summary(),
+        "get_related_memories": lambda a: handle_get_related_memories(**a),
+        "get_memory_graph":     lambda a: handle_get_memory_graph(**a),
     }
     result = await handlers[name](clean)
     return [types.TextContent(type="text", text=result)]
