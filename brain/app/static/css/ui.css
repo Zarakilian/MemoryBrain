@@ -293,3 +293,96 @@ input[type="range"] { accent-color: var(--gold); }
   .page > * { animation: none; }
   .proj-card, .stat { transition: none; }
 }
+
+/* ================= v4 — alive: full-bleed folio, marginalia, ambient ===== */
+
+/* THE interaction fix: explicit display on a class must never override the
+   `hidden` attribute again. This single rule was the click-eater. */
+[hidden] { display: none !important; }
+
+/* passive overlays must never intercept the pointer */
+.g-empty, .g-legend, .g-help, .g-tooltip { pointer-events: none; }
+
+/* stacking: content above the ambient layer */
+.sidebar, main { position: relative; z-index: 1; }
+.sidebar { z-index: 2; }
+
+/* ---- ambient layer (all pages): gold dust canvas + da Vinci marginalia */
+#ambient {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+}
+.marginalia {
+  position: fixed; z-index: 0; pointer-events: none;
+  background-size: cover; background-position: center;
+  filter: sepia(.6) contrast(.92);
+  mix-blend-mode: multiply;
+  will-change: transform;
+}
+.m-flowers {
+  right: -60px; top: -40px; width: 380px; height: 460px;
+  background-image: url("/static/img/flowers.jpg");
+  opacity: .14;
+  -webkit-mask-image: radial-gradient(75% 75% at 55% 45%, #000 30%, transparent 72%);
+  mask-image: radial-gradient(75% 75% at 55% 45%, #000 30%, transparent 72%);
+}
+.m-machine {
+  left: 210px; bottom: -70px; width: 460px; height: 340px;
+  background-image: url("/static/img/flying_machine.jpg");
+  opacity: .10;
+  -webkit-mask-image: radial-gradient(70% 70% at 50% 50%, #000 25%, transparent 70%);
+  mask-image: radial-gradient(70% 70% at 50% 50%, #000 25%, transparent 70%);
+}
+.m-tuscan {
+  right: 8%; bottom: -60px; width: 520px; height: 300px;
+  background-image: url("/static/img/tuscan.jpg");
+  opacity: .09;
+  -webkit-mask-image: linear-gradient(to top, #000 20%, transparent 85%);
+  mask-image: linear-gradient(to top, #000 20%, transparent 85%);
+}
+
+/* ---- alive cards: pointer-tracked tilt (JS sets --rx/--ry) */
+.proj-card, .stat, .panel {
+  transform: perspective(900px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform .18s ease-out, box-shadow .2s ease, border-color .2s ease;
+}
+
+/* ---- the Night Folio goes full-bleed: 3D IS the background */
+body:has(#graph3d) { overflow: hidden; }
+body:has(#graph3d) .marginalia, body:has(#graph3d) #ambient { display: none; }
+body:has(#graph3d) .graph-wrap {
+  position: fixed; inset: 0 0 0 236px; z-index: 0;
+  height: auto; min-height: 0; border: 0; outline: none; border-radius: 0;
+  box-shadow: inset 0 0 120px rgba(0,0,0,.55);      /* vignette into the page */
+}
+body:has(#graph3d) .page { position: relative; z-index: 3; pointer-events: none; }
+body:has(#graph3d) .page-head {
+  pointer-events: auto;
+  background: rgba(237,225,197,.92); backdrop-filter: blur(6px);
+  border: 1px solid var(--line); outline: 1px solid var(--line-soft); outline-offset: 3px;
+  border-radius: var(--radius); padding: 10px 16px;
+  box-shadow: 0 8px 30px rgba(0,0,0,.35);
+}
+body:has(#graph3d) .topbar { background: rgba(237,225,197,.9); }
+body:has(#graph3d) .g-info, body:has(#graph3d) .g-legend, body:has(#graph3d) .g-help { position: fixed; z-index: 4; }
+body:has(#graph3d) .g-info { pointer-events: auto; right: 20px; top: 130px; }
+body:has(#graph3d) .g-legend { left: 256px; bottom: 16px; }
+body:has(#graph3d) .g-help { right: 20px; bottom: 14px; }
+body:has(#graph3d) .g-tooltip { position: fixed; z-index: 4; }
+
+/* ---- responsive: the folio must scale with the window */
+@media (max-width: 900px) {
+  .sidebar { display: none; }
+  body:has(#graph3d) .graph-wrap { inset: 0; }
+  body:has(#graph3d) .g-legend { left: 16px; }
+  .m-machine { left: 10px; }
+  .two-col, .two-col.detail { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .page { padding: 14px; }
+  .stats-strip { gap: 10px; }
+  .marginalia { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .proj-card, .stat, .panel { transform: none !important; }
+}

@@ -1,8 +1,9 @@
-/* MemoryBrain — "Night Folio" 3D graph. three.js (vendored locally), v3.
-   A slowly turning constellation of gilded memory-orbs on dark folio paper:
-   3D force layout, glowing sprites, inked edge strands, armillary rings on
-   heavy nodes, drifting dust, raycast hover/select/drag, orbit/pan/dolly
-   camera, in-graph search fly-to. ES module — no build step, fully offline. */
+/* MemoryBrain — "Night Folio" 3D graph. three.js (vendored locally), v4.
+   A slowly turning constellation of gilded memory-orbs adrift among
+   da Vinci's plates in deep space: 3D force layout, glowing sprites,
+   inked edge strands, armillary rings on heavy nodes, drifting dust,
+   raycast hover/select/drag, orbit/pan/dolly camera, in-graph search.
+   ES module — no build step, fully offline. */
 import * as THREE from "/static/vendor/three.module.min.js";
 
 const canvas = document.getElementById("graph3d");
@@ -37,9 +38,8 @@ function main() {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(BG);
   scene.fog = new THREE.FogExp2(BG, 0.0018);
-  const camera = new THREE.PerspectiveCamera(55, 1, 1, 5000);
+  const camera = new THREE.PerspectiveCamera(55, 1, 1, 6000);
 
-  // vignette + parchment tint plane behind everything (subtle depth)
   scene.add(new THREE.AmbientLight(0xffe8c0, 0.9));
   const keyLight = new THREE.PointLight(0xffd98a, 1.2, 0, 1.6);
   keyLight.position.set(300, 400, 500);
@@ -47,6 +47,48 @@ function main() {
 
   const world = new THREE.Group();      // rotates as one armillary sphere
   scene.add(world);
+
+  /* ------------- backdrop: codex plates adrift in deep space ------------- */
+  const backdrop = new THREE.Group();
+  scene.add(backdrop);
+  const texLoader = new THREE.TextureLoader();
+  function plate(url, size, pos, opacity, rot) {
+    texLoader.load(url, (tex) => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const m = new THREE.Mesh(
+        new THREE.PlaneGeometry(size, size),
+        new THREE.MeshBasicMaterial({
+          map: tex, transparent: true, opacity,
+          blending: THREE.AdditiveBlending, depthWrite: false, fog: false,
+        }));
+      m.position.set(...pos);
+      m.userData.rot = rot;
+      m.lookAt(0, 0, 0);
+      backdrop.add(m);
+    });
+  }
+  plate("/static/img/vitruvian.jpg",      2000, [-500, 250, -2200], 0.055, 0.00016);
+  plate("/static/img/flying_machine.jpg", 1500, [1300, -350, -1800], 0.05, -0.00028);
+  plate("/static/img/flowers.jpg",        1200, [-1500, -500, -1500], 0.045, 0.00022);
+
+  // deep starfield shell — the space beyond the library
+  {
+    const N = 900, pos = new Float32Array(N * 3);
+    for (let i = 0; i < N; i++) {
+      const r = 1500 + Math.random() * 1600;
+      const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+      pos[i * 3 + 1] = r * Math.cos(ph);
+      pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const starMat = new THREE.PointsMaterial({
+      color: 0xd8c49a, size: 1.5, transparent: true, opacity: 0.6,
+      sizeAttenuation: true, depthWrite: false, fog: false,
+    });
+    backdrop.add(new THREE.Points(g, starMat));
+  }
 
   /* --------------------------------------------------- sprite textures */
   function glowTexture() {
@@ -158,7 +200,7 @@ function main() {
 
   function clearWorld() {
     while (world.children.length) world.remove(world.children[0]);
-    lineSeg = dust = particlesPts = null;
+    lineSeg = particlesPts = null;
     particles = [];
   }
 
@@ -240,7 +282,7 @@ function main() {
     }
 
     // — library dust drifting through the light
-    if (!reducedMotion) {
+    if (!reducedMotion && !dust) {
       const N = 350, pos = new Float32Array(N * 3), seed = [];
       for (let i = 0; i < N; i++) {
         pos[i * 3] = (Math.random() - .5) * 1400;
@@ -365,9 +407,15 @@ function main() {
       dust.geometry.attributes.position.needsUpdate = true;
     }
 
-    // idle: the armillary sphere turns
-    if (!reducedMotion && !draggedNode && performance.now() - lastInteraction > 6000) {
-      world.rotation.y += 0.0008;
+    // idle: the armillary sphere turns; the backdrop drifts always, slower
+    if (!reducedMotion) {
+      backdrop.rotation.y += 0.00012;
+      for (const b of backdrop.children) {
+        if (b.userData.rot) b.rotation.z += b.userData.rot;
+      }
+      if (!draggedNode && performance.now() - lastInteraction > 6000) {
+        world.rotation.y += 0.0008;
+      }
     }
   }
 
@@ -375,7 +423,7 @@ function main() {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   let mode = null;              // 'orbit' | 'pan' | 'node'
-  let last = { x: 0, y: 0 }, downAt = { x: 0, y: 0 }, moved = 0;
+  let last = { x: 0, y: 0 }, moved = 0;
   const dragPlane = new THREE.Plane();
   const _v3 = new THREE.Vector3();
 
@@ -398,7 +446,7 @@ function main() {
     e.preventDefault();
     canvas.setPointerCapture(e.pointerId);
     lastInteraction = performance.now();
-    last = downAt = { x: e.clientX, y: e.clientY };
+    last = { x: e.clientX, y: e.clientY };
     moved = 0;
     const n = pick(e);
     if (n && e.button === 0) {
@@ -482,7 +530,7 @@ function main() {
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     lastInteraction = performance.now();
-    rig.tDist = Math.min(2200, Math.max(120, rig.tDist * (e.deltaY > 0 ? 1.12 : 1 / 1.12)));
+    rig.tDist = Math.min(2400, Math.max(120, rig.tDist * (e.deltaY > 0 ? 1.12 : 1 / 1.12)));
   }, { passive: false });
 
   document.addEventListener("keydown", (e) => {

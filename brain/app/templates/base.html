@@ -4,10 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
-<link rel="stylesheet" href="/static/css/ui.css?v=3">
+<link rel="stylesheet" href="/static/css/ui.css?v=4">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
 <body>
+<canvas id="ambient"></canvas>
+<div class="marginalia m-flowers" aria-hidden="true"></div>
+<div class="marginalia m-machine" aria-hidden="true"></div>
+<div class="marginalia m-tuscan" aria-hidden="true"></div>
+
 <aside class="sidebar">
   <a class="brand" href="/ui"><span class="brand-dot"></span>MemoryBrain</a>
   <nav>
@@ -40,7 +45,8 @@
   </div>
 </main>
 
-<script src="/static/js/app.js?v=3"></script>
+<script src="/static/js/app.js?v=4"></script>
+<script src="/static/js/ambient.js?v=4"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
