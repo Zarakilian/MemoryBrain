@@ -13,3 +13,8 @@ The drifting line engravings (gears, moon phases, icosahedron, golden
 spiral, bird-flight study, star chart, botanical sprig, water vortex, eye
 study, wing ribs, mirrored script) are drawn procedurally by
 `static/js/codex.js` in homage — they are not scans.
+
+`parchment_grain.jpg` and `umber_grain.jpg` are seamless vellum textures
+generated procedurally for this project (fractal value noise + fiber
+streaks + stains — see the git history for the generator). No third-party
+imagery; no licensing constraints.

@@ -66,6 +66,7 @@
         selectedId = n.id;
         repaint();
         Atlas.inspect(n.id, null);
+        openOrb(n);
       })
       .onBackgroundClick(function () {
         selectedId = null;
@@ -204,6 +205,112 @@
     });
 
     load();
+  }
+
+  /* ---------------- the orb: fly into a memory, read its sphere ----------
+     Click an orb → the camera flies to it and the memory itself appears as
+     a slowly turning sphere wrapped in its own writing. Scroll (or Esc, or
+     click the veil) to fly back out to the graph. Works in 3D and 2D. */
+  var orbVeil = null, savedCam = null;
+
+  function orbDur(ms) { return Atlas.reducedMotion ? 0 : ms; }
+
+  function orbCanvas(mem) {
+    var W = 1200, H = 600;
+    var c = document.createElement("canvas");
+    c.width = W * 2; c.height = H;
+    var g = c.getContext("2d");
+    var parch = document.documentElement.dataset.theme === "parchment";
+    var draw = function (ox) {
+      var grad = g.createLinearGradient(ox, 0, ox + W, H);
+      if (parch) { grad.addColorStop(0, "#efe4c8"); grad.addColorStop(1, "#dcc99e"); }
+      else { grad.addColorStop(0, "#33291c"); grad.addColorStop(1, "#211a12"); }
+      g.fillStyle = grad;
+      g.fillRect(ox, 0, W, H);
+      g.fillStyle = parch ? "rgba(74,58,32,.85)" : "rgba(224,196,138,.8)";
+      g.font = 'italic 30px Georgia, "Iowan Old Style", serif';
+      var words = ((mem.summary || "") + ".  " + (mem.content || "")).split(/\s+/);
+      if (!words.length || (words.length === 1 && !words[0])) words = ["(no", "content)"];
+      var x = ox + 60, y = 70, wi = 0, lh = 44;
+      while (y < H - 40) {
+        var line = "";
+        while (wi < words.length) {
+          var t = line ? line + " " + words[wi] : words[wi];
+          if (g.measureText(t).width > W - 120) break;
+          line = t; wi++;
+        }
+        if (wi >= words.length) wi = 0;             // wrap the text around the sphere
+        g.save();
+        g.translate(x, y);
+        g.rotate((Math.random() - 0.5) * 0.012);    // a living hand, not a printer
+        g.fillText(line, 0, 0);
+        g.restore();
+        y += lh;
+      }
+    };
+    draw(0); draw(W);                               // duplicated → seamless rotation
+    return c.toDataURL("image/jpeg", 0.85);
+  }
+
+  async function openOrb(n) {
+    if (orbVeil) closeOrb(true);
+    var mem;
+    try { mem = await Atlas.getJSON("/api/ui/memories/" + encodeURIComponent(n.id)); }
+    catch (e) { return; }
+
+    if (mode === "3d") {
+      var c = graph.cameraPosition();
+      savedCam = { mode: "3d", x: c.x, y: c.y, z: c.z };
+      var dist = 70, r = Math.hypot(n.x || 1, n.y || 1, n.z || 1) || 1;
+      var k = 1 + dist / r;
+      graph.cameraPosition({ x: n.x * k, y: n.y * k, z: n.z * k }, n, orbDur(900));
+    } else {
+      savedCam = { mode: "2d", zoom: graph.zoom(), center: graph.centerAt() };
+      graph.centerAt(n.x, n.y, orbDur(700));
+      graph.zoom(Math.max(graph.zoom(), 5), orbDur(700));
+    }
+
+    orbVeil = document.createElement("div");
+    orbVeil.className = "orb-veil";
+    orbVeil.innerHTML =
+      '<figure class="orb" style="background-image:url(' + orbCanvas(mem) + ')"></figure>' +
+      '<figcaption class="orb-caption"><strong>' + Atlas.esc(mem.summary || mem.id)
+      + '</strong><span>scroll to return · Esc</span></figcaption>';
+    document.body.appendChild(orbVeil);
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+      orbVeil && orbVeil.classList.add("open");
+    }); });
+
+    orbVeil.addEventListener("wheel", function (ev) {
+      ev.preventDefault();
+      closeOrb();
+    }, { passive: false });
+    orbVeil.addEventListener("click", function (ev) {
+      if (!ev.target.closest(".orb")) closeOrb();
+    });
+    document.addEventListener("keydown", orbKey, true);
+  }
+
+  function orbKey(ev) {
+    if (ev.key === "Escape") { ev.stopPropagation(); closeOrb(); }
+  }
+
+  function closeOrb(instant) {
+    if (!orbVeil) return;
+    var veil = orbVeil;
+    orbVeil = null;
+    document.removeEventListener("keydown", orbKey, true);
+    veil.classList.remove("open");
+    setTimeout(function () { veil.remove(); }, instant ? 0 : 260);
+    if (!savedCam || !graph) return;
+    if (savedCam.mode === "3d" && mode === "3d") {
+      graph.cameraPosition({ x: savedCam.x, y: savedCam.y, z: savedCam.z },
+                           { x: 0, y: 0, z: 0 }, orbDur(800));
+    } else if (savedCam.mode === "2d" && mode === "2d") {
+      graph.centerAt(savedCam.center.x, savedCam.center.y, orbDur(600));
+      graph.zoom(savedCam.zoom, orbDur(600));
+    }
+    savedCam = null;
   }
 
   if (window.Atlas) Atlas.onLens("constellation", init);

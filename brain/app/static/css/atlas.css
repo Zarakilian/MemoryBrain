@@ -30,7 +30,8 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  background: var(--bg); color: var(--ink);
+  background: var(--bg) url("/static/img/umber_grain.jpg") repeat;
+  color: var(--ink);
   font: 14px/1.5 var(--sans);
   -webkit-font-smoothing: antialiased;
 }
@@ -333,6 +334,9 @@ html[data-theme="parchment"] {
   --cream-dim: #8a7b5f;
   color-scheme: light;
 }
+html[data-theme="parchment"] body {
+  background: var(--bg) url("/static/img/parchment_grain.jpg") repeat;
+}
 html[data-theme="parchment"] .pdot { background: hsl(var(--ph, 40) 48% 62%); }
 html[data-theme="parchment"] .badge { filter: saturate(.72) brightness(1.18); }
 html[data-theme="parchment"] .inspector { border-left-color: #cbb98e; }
@@ -439,9 +443,12 @@ html[data-theme="parchment"] .ink-5 { color: #8a6b31; }
 html[data-theme="parchment"] .codex-plate {
   filter: sepia(.4) grayscale(.3); mix-blend-mode: multiply; opacity: .12;
 }
+/* polar opposite on parchment: the cursor casts shadow, not light —
+   a hand passing over the page */
 html[data-theme="parchment"] #codex-lantern {
   background: radial-gradient(circle at center,
-    rgba(176, 95, 69, .07) 0%, rgba(176, 95, 69, .03) 26%, transparent 55%);
+    rgba(63, 48, 28, .11) 0%, rgba(63, 48, 28, .045) 26%, transparent 55%);
+  mix-blend-mode: multiply;
 }
 html[data-theme="parchment"] #codex-vignette {
   background: radial-gradient(ellipse at 50% 38%, transparent 58%, rgba(74, 63, 44, .18) 100%);
@@ -478,6 +485,79 @@ html[data-theme="parchment"] #codex-vignette {
   background: linear-gradient(105deg, var(--gold-bright), #e8967e 70%);
   -webkit-background-clip: text; background-clip: text; color: transparent;
 }
+
+/* ------------------------------------------------------------- the orb
+   Click a constellation node: the camera flies in and the memory appears
+   as a slowly turning sphere wrapped in its own writing. Scroll, Esc, or
+   click the veil to fly back out. The veil is deliberately interactive —
+   it exists to be dismissed. */
+.orb-veil {
+  position: fixed; inset: 0; z-index: 48;
+  display: grid; place-items: center; align-content: center; gap: 18px;
+  background: rgba(15, 11, 7, .62);
+  backdrop-filter: blur(3px);
+  opacity: 0; transition: opacity .24s ease-out;
+}
+.orb-veil.open { opacity: 1; }
+.orb {
+  width: min(62vmin, 560px); height: min(62vmin, 560px);
+  border-radius: 50%; margin: 0; position: relative; overflow: hidden;
+  background-size: 200% 100%; background-repeat: repeat-x;
+  animation: orb-spin 44s linear infinite;
+  box-shadow: inset -34px -30px 70px rgba(0, 0, 0, .55),
+              inset 18px 16px 50px rgba(255, 244, 214, .12),
+              0 24px 90px rgba(0, 0, 0, .5);
+  transform: scale(.6);
+  transition: transform .3s cubic-bezier(.2, .9, .3, 1.15);
+}
+.orb::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 32% 26%, rgba(255, 248, 224, .28), transparent 42%);
+}
+.orb-veil.open .orb { transform: scale(1); }
+@keyframes orb-spin { from { background-position: 0 0; } to { background-position: 200% 0; } }
+.orb-caption { color: #e8e2d6; text-align: center; display: flex;
+               flex-direction: column; gap: 4px; max-width: 70vw; }
+.orb-caption strong { font: 600 17px var(--serif); }
+.orb-caption span { color: #98917f; font: 11px var(--sans); }
+
+/* ---------------------------------------------------------- the familiar
+   A shadow companion following the cursor: footprints → bird → moth → cat.
+   The layer can never intercept a pointer. */
+#familiar-layer {
+  position: fixed; inset: 0; z-index: 45; overflow: hidden;
+  pointer-events: none !important;
+}
+.fam {
+  position: absolute; left: 0; top: 0;
+  color: rgba(232, 197, 138, .55);
+  filter: drop-shadow(0 0 6px rgba(224, 189, 125, .3));
+  transition: opacity .18s ease-out;
+  will-change: transform;
+}
+html[data-theme="parchment"] .fam {
+  color: rgba(58, 46, 30, .45);
+  filter: drop-shadow(0 1px 3px rgba(58, 46, 30, .25));
+}
+.fam.morph, .fam.hidden-form { opacity: 0; }
+.fam .fam-wing {
+  transform-origin: 30px 26px;
+  animation: fam-flap .5s ease-in-out infinite alternate;
+}
+@keyframes fam-flap { from { transform: rotate(-14deg); } to { transform: rotate(16deg); } }
+.fam .fam-wing-l, .fam .fam-wing-r {
+  animation: fam-flutter .16s ease-in-out infinite alternate;
+}
+.fam .fam-wing-l { transform-origin: 28px 30px; }
+.fam .fam-wing-r { transform-origin: 32px 30px; }
+@keyframes fam-flutter { from { transform: scaleX(1); } to { transform: scaleX(.4); } }
+.fam-print {
+  position: absolute; pointer-events: none !important;
+  color: rgba(232, 197, 138, .5);
+  animation: fam-print 1.8s ease-out forwards;
+}
+html[data-theme="parchment"] .fam-print { color: rgba(58, 46, 30, .4); }
+@keyframes fam-print { 0% { opacity: .55; } 65% { opacity: .35; } 100% { opacity: 0; } }
 
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {

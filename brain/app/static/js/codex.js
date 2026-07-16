@@ -456,6 +456,7 @@
     try { localStorage.setItem(STORE, on ? "on" : "off"); } catch (e) {}
     build();
     updateBtn();
+    document.dispatchEvent(new CustomEvent("atlas:ambience", { detail: { on: on } }));
   }
 
   var btn = document.getElementById("ambience-toggle");
