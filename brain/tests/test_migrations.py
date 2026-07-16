@@ -40,7 +40,8 @@ def test_migration_idempotent():
         run_migrations(db_path=db)  # running twice must not raise
         with sqlite3.connect(db) as conn:
             count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-        assert count == 1
+        from app.migrations.runner import MIGRATIONS_DIR
+        assert count == len(list(MIGRATIONS_DIR.glob("*.sql")))
 
 
 def test_migration_creates_schema_migrations_table():

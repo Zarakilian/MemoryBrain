@@ -34,7 +34,7 @@ async def test_concurrent_ingests_are_limited(tmp_db, mock_ollama):
     mock_ollama.embeddings.side_effect = slow_embed
 
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.chroma_add"):
+         patch("app.ingest_pipeline.vec_add"):
         tasks = [
             ingest(MemoryEntry(content=f"entry {i}", type="note", project="test"))
             for i in range(MAX_CONCURRENT_INGESTS + 2)

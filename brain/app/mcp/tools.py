@@ -7,7 +7,7 @@ from ..storage import get_memory, get_recent, list_projects as storage_list_proj
 from ..search import hybrid_search
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry
-from ..chroma import chroma_delete
+from ..vector import vec_delete
 
 server = Server("memorybrain")
 
@@ -69,7 +69,7 @@ async def handle_delete_memory(memory_id: str) -> str:
     if entry is None:
         return json.dumps({"error": f"Memory {memory_id} not found"})
     delete_memory(memory_id, db_path=DB_PATH)
-    chroma_delete(memory_id)
+    vec_delete(memory_id, db_path=DB_PATH)
     return json.dumps({"deleted": True, "id": memory_id})
 
 

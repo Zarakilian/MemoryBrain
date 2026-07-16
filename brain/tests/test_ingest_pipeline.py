@@ -11,7 +11,7 @@ async def test_ingest_stores_entry_in_sqlite(tmp_db, mock_ollama):
     long_content = "clickhouse query is slow because the index is missing on the timestamp column " * 6
     entry = MemoryEntry(content=long_content, type="note", project="monitoring")
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.chroma_add"):
+         patch("app.ingest_pipeline.vec_add"):
         result = await ingest(entry)
     assert result.summary == "Short two sentence summary."
     assert result.importance == 3
@@ -26,7 +26,7 @@ async def test_ingest_stores_entry_in_sqlite(tmp_db, mock_ollama):
 async def test_ingest_upserts_project(tmp_db, mock_ollama):
     entry = MemoryEntry(content="grafana panel updated", type="note", project="monitoring")
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.chroma_add"):
+         patch("app.ingest_pipeline.vec_add"):
         await ingest(entry)
 
     from app.storage import get_project
@@ -39,7 +39,7 @@ async def test_ingest_upserts_project(tmp_db, mock_ollama):
 async def test_ingest_calls_chroma_add(tmp_db, mock_ollama):
     entry = MemoryEntry(content="test content", type="note", project="x")
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.chroma_add") as mock_chroma:
+         patch("app.ingest_pipeline.vec_add") as mock_chroma:
         await ingest(entry)
     mock_chroma.assert_called_once()
     call_args = mock_chroma.call_args
