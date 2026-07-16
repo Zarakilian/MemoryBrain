@@ -1,7 +1,12 @@
 # Migrating MemoryBrain v0.5.x → v2.0.0
 
 This guide is for anyone running MemoryBrain v0.5.x who wants to upgrade to
-v2.0.0. The upgrade is designed to be **zero-effort and zero-data-loss**: the
+v2.0.0.
+
+> **Letting an AI assistant do this for you?** Use the strict, model-agnostic
+> prompts in [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) — they
+> work with any assistant (Claude, Gemini, ChatGPT, local models) and bake in
+> the backup-first, stop-on-mismatch discipline this guide expects. The upgrade is designed to be **zero-effort and zero-data-loss**: the
 migration runs automatically the first time the new container starts, and your
 old data is never modified.
 
@@ -21,14 +26,27 @@ Claude Code / Gemini configuration keeps working as-is.
 
 ## Before you start (2 minutes)
 
-1. **Back up your data volume.** Non-negotiable, takes seconds:
+1. **Back up your data volume and config.** Non-negotiable, takes seconds:
 
    ```bash
    docker compose stop brain
    docker run --rm -v memorybrain_brain_data:/data -v "$PWD":/backup alpine \
        tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz /data
+   cp .env .env.backup-$(date +%Y%m%d)
    docker compose start brain
    ```
+
+   Windows PowerShell:
+
+   ```powershell
+   docker compose stop brain
+   docker run --rm -v memorybrain_brain_data:/data -v "${PWD}:/backup" alpine tar czf /backup/brain-backup-$(Get-Date -Format yyyyMMdd).tar.gz /data
+   Copy-Item .env ".env.backup-$(Get-Date -Format yyyyMMdd)"
+   docker compose start brain
+   ```
+
+   Verify the `.tar.gz` exists and isn't tiny before continuing. If your
+   volume has a different name, find it with `docker volume ls`.
 
 2. Note your memory count — you'll verify it after migration:
    open a session and ask the assistant to `list_projects`, or:
@@ -114,10 +132,12 @@ directory to reclaim disk: `docker compose exec brain rm -rf /app/data/chroma`
 - Web UI — **MemoryBrain Atlas**: one continuous workspace at `/ui` with a
   project rail, a command palette (`Ctrl+K`), a sliding inspector, and three
   lenses on the same data — **Stream** (server-rendered daily feed; works with
-  JS disabled), **Constellation** (2D force graph of the memory web), and
-  **Chronicle** (horizontal time axis of sessions/handovers per project,
-  drawn from the `session_chain` edges). Switch lenses with `1/2/3`.
-  Old `/ui/graph` and `/ui/project/{slug}` URLs redirect.
+  JS disabled), **Constellation** (3D orbit view of the memory web by
+  default, remembered 2D switch, automatic 2D fallback), and **Chronicle**
+  (horizontal time axis of sessions/handovers per project, drawn from the
+  `session_chain` edges). Switch lenses with `1/2/3`. Parchment theme and
+  codex-margin ambience toggles live in the rail. Old `/ui/graph` and
+  `/ui/project/{slug}` URLs redirect.
 - UI diagnostics: `GET /api/ui/version` (build stamp baked at image build,
   also in the footer and asset URLs) and `/ui/doctor` (dependency-free
   in-browser checks with a copy-paste report).

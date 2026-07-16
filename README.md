@@ -23,6 +23,12 @@ python3 cli/brain.py setup --auto-detect
 
 Or manually, step by step — see [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for the full setup guide.
 
+**Installing or migrating with an AI assistant?** Paste one of the strict,
+model-agnostic prompts from [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md)
+into any assistant (Claude, Gemini, ChatGPT, a local model) and it will drive
+the install or the v0.5.x → v2.0.0 migration step-by-step with verified
+checkpoints and a mandatory backup.
+
 ## Project detection
 
 Every memory stored in MemoryBrain belongs to a **project**. The project slug is a short label
