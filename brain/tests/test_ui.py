@@ -218,8 +218,9 @@ def test_static_assets_served(ui_client):
                  "/static/js/constellation.js", "/static/js/chronicle.js",
                  "/static/vendor/force-graph.min.js",
                  "/static/vendor/3d-force-graph.min.js",
+                 "/static/js/codex.js",
                  "/static/img/vitruvian.jpg", "/static/img/flowers.jpg",
-                 "/static/img/flying_machine.jpg"):
+                 "/static/img/flying_machine.jpg", "/static/img/tuscan.jpg"):
         assert ui_client.get(path).status_code == 200, path
 
 

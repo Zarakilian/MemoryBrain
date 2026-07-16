@@ -362,6 +362,41 @@ html[data-theme="parchment"] .empty-plate { opacity: .3; }
 #theme-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
 .lens-controls input[type=checkbox] { accent-color: var(--gold); }
 
+/* ---------------------------------------------------- the codex margin
+   Fixed ambient layer built by codex.js: procedurally drawn da Vinci
+   studies + ghosted plates, drifting imperceptibly. It sits under the
+   shell and is pointer-inert by construction — it can never eat a click. */
+#codex-bg {
+  position: fixed; inset: 0; z-index: 0; overflow: hidden;
+  pointer-events: none !important;
+}
+.shell { position: relative; z-index: 1; }
+.codex-piece {
+  position: absolute; pointer-events: none !important;
+  animation: codex-drift ease-in-out infinite alternate;
+  will-change: transform;
+}
+.codex-study { color: #c9a25f; opacity: .1; }
+.codex-plate {
+  background-size: contain; background-repeat: no-repeat;
+  filter: invert(1) grayscale(1) sepia(.35) brightness(.95);
+  mix-blend-mode: screen; opacity: .07;
+}
+html[data-theme="parchment"] .codex-study { color: #6b5a3a; opacity: .14; }
+html[data-theme="parchment"] .codex-plate {
+  filter: sepia(.4) grayscale(.3); mix-blend-mode: multiply; opacity: .12;
+}
+@keyframes codex-drift {
+  from { transform: translate(0, 0) rotate(var(--base-r, 0deg)); }
+  to   { transform: translate(var(--drift-x, 0px), var(--drift-y, 0px))
+                    rotate(calc(var(--base-r, 0deg) + var(--drift-r, 0deg))); }
+}
+#ambience-toggle {
+  background: none; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px; cursor: pointer;
+}
+#ambience-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
+
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }

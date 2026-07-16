@@ -92,9 +92,13 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   switch and automatic 2D fallback — vendored force-graph/3d-force-graph
   builds, no CDN), and **Chronicle** (a horizontal time axis of sessions
   and handovers per project). Keys `1/2/3` switch lenses. A pastel
-  **parchment theme** toggle lives in the rail (da Vinci plates appear as
-  faint engravings in empty states and the inspector). Fully offline,
-  read-only, zero telemetry.
+  **parchment theme** toggle lives in the rail, and the **codex margin** —
+  an ambient background layer of procedurally drawn da Vinci studies
+  (gears, moon phases, an icosahedron, bird-flight studies, star charts,
+  botanical sprigs, water vortices, mirrored script) plus ghosted plates —
+  drifts behind everything. Every visit composes a different folio; it is
+  pointer-inert, goes still under reduced-motion, and can be switched off
+  from the rail. Fully offline, read-only, zero telemetry.
 - **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
   `docker compose build` time; the same stamp appears in the UI footer and in
   static asset URLs (automatic cache-busting — no manual `?v=` bumps).

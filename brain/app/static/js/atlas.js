@@ -299,6 +299,7 @@ function commandsFor(qtext) {
     { kind: "theme", label: "Theme: Parchment (pastel)", run: function () { Atlas.setTheme("parchment"); } },
     { kind: "theme", label: "Theme: Umber (dark)", run: function () { Atlas.setTheme(""); } },
   ];
+  (Atlas.extraCommands || []).forEach(function (c) { cmds.push(c); });
   document.querySelectorAll(".rail-projects a").forEach(function (a) {
     var name = a.querySelector(".pname").textContent;
     cmds.push({ kind: "project", label: name,
