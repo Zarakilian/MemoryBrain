@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name or project.slug }} — MemoryBrain{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1><span class="proj-dot lg" data-project="{{ project.slug }}"></span>{{ project.name or project.slug }}</h1>
+  <a class="btn" href="/ui/graph?project={{ project.slug }}">View graph →</a>
+</div>
+{% if project.one_liner %}<p class="lede">{{ project.one_liner }}</p>{% endif %}
+
+<form class="filters" method="get">
+  <select name="type" onchange="this.form.submit()">
+    <option value="">all types</option>
+    {% for t in ['session','handover','note','fact','file','reference'] %}
+    <option value="{{ t }}" {{ 'selected' if filters.type == t }}>{{ t }}</option>
+    {% endfor %}
+  </select>
+  <select name="min_importance" onchange="this.form.submit()">
+    {% for i in [1,2,3,4,5] %}
+    <option value="{{ i }}" {{ 'selected' if filters.min_importance == i }}>importance ≥ {{ i }}</option>
+    {% endfor %}
+  </select>
+  <select name="sort" onchange="this.form.submit()">
+    <option value="recent" {{ 'selected' if filters.sort == 'recent' }}>newest first</option>
+    <option value="importance" {{ 'selected' if filters.sort == 'importance' }}>importance</option>
+    <option value="degree" {{ 'selected' if filters.sort == 'degree' }}>most linked</option>
+  </select>
+</form>
+
+<section class="panel">
+  {% for m in memories %}
+  <a class="mem-row" href="/ui/memory/{{ m.id }}">
+    <span class="chip type-{{ m.type }}">{{ m.type }}</span>
+    <span class="mem-summary">{{ m.summary or '(no summary)' }}</span>
+    <span class="mem-meta">
+      {% for tag in m.tags[:4] %}<span class="tag">#{{ tag }}</span>{% endfor %}
+      <span class="imp imp-{{ m.importance }}">{{ '●' * (m.importance or 0) }}</span>
+      · <time>{{ (m.timestamp or '')[:16].replace('T',' ') }}</time>
+      {% if m.link_degree > 0 %}· <span class="degree-badge sm">{{ '%.1f' % m.link_degree }}</span>{% endif %}
+    </span>
+  </a>
+  {% else %}<p class="empty">No memories match these filters.</p>{% endfor %}
+</section>
+
+{% endblock %}

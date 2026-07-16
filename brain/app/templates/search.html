@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Search — MemoryBrain{% endblock %}
+{% block content %}
+
+<div class="page-head"><h1>Search</h1></div>
+
+<form class="filters" method="get">
+  <input type="hidden" name="q" value="{{ q }}">
+  <select name="project" onchange="this.form.submit()">
+    <option value="">all projects</option>
+    {% for p in projects %}
+    <option value="{{ p.slug }}" {{ 'selected' if filters.project == p.slug }}>{{ p.name or p.slug }}</option>
+    {% endfor %}
+  </select>
+  <select name="type" onchange="this.form.submit()">
+    <option value="">all types</option>
+    {% for t in ['session','handover','note','fact','file'] %}
+    <option value="{{ t }}" {{ 'selected' if filters.type == t }}>{{ t }}</option>
+    {% endfor %}
+  </select>
+</form>
+
+<section class="panel">
+  {% if not q %}
+  <p class="empty">Type in the search box above — results preview live, Enter lands here.</p>
+  {% else %}
+  {% for r in results %}
+  <a class="mem-row" href="/ui/memory/{{ r.id }}">
+    <span class="chip type-{{ r.type }}">{{ r.type }}</span>
+    <span class="mem-summary">{{ r.summary }}</span>
+    <span class="mem-meta">
+      <span class="proj-dot" data-project="{{ r.project }}"></span>{{ r.project }}
+      · <span class="imp imp-{{ r.importance }}">{{ '●' * r.importance }}</span>
+      · <time>{{ r.timestamp[:16].replace('T',' ') }}</time>
+    </span>
+  </a>
+  {% else %}<p class="empty">No results for “{{ q }}”.</p>{% endfor %}
+  {% endif %}
+</section>
+
+{% endblock %}

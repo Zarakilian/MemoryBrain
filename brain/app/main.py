@@ -51,7 +51,10 @@ async def auth_middleware(request: Request, call_next):
         "/readiness",   # Server readiness check
     }
 
-    if request.url.path in public_paths:
+    # Web UI + static assets + read-only UI JSON: same trust boundary as /sse
+    # (loopback-only binding is the auth; the UI cannot write).
+    ui_prefixes = ("/ui", "/api/ui", "/static")
+    if request.url.path in public_paths or request.url.path.startswith(ui_prefixes):
         return await call_next(request)
 
     try:
@@ -220,3 +223,12 @@ async def rebuild_graph_endpoint():
     derived data. Authenticated via the standard API-key middleware."""
     from .linker import rebuild_graph
     return rebuild_graph()
+
+
+# ── Web UI (v2.0.0) — local, read-only, server-rendered ─────────────────────
+from pathlib import Path as _Path
+from fastapi.staticfiles import StaticFiles
+from .ui import ui_router
+
+app.mount("/static", StaticFiles(directory=str(_Path(__file__).resolve().parent / "static")), name="static")
+app.include_router(ui_router)
