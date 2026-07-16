@@ -114,4 +114,5 @@ def test_ui_connection_is_read_only():
 
 def test_static_assets_served(ui_client):
     assert ui_client.get("/static/css/ui.css").status_code == 200
-    assert ui_client.get("/static/js/graph.js").status_code == 200
+    assert ui_client.get("/static/js/graph3d.js").status_code == 200
+    assert ui_client.get("/static/vendor/three.module.min.js").status_code == 200

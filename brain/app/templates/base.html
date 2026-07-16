@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
-<link rel="stylesheet" href="/static/css/ui.css">
+<link rel="stylesheet" href="/static/css/ui.css?v=3">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
 <body>
@@ -12,10 +12,10 @@
   <a class="brand" href="/ui"><span class="brand-dot"></span>MemoryBrain</a>
   <nav>
     <a href="/ui" class="{{ 'on' if active == 'dashboard' }}">Dashboard</a>
-    <a href="/ui/graph" class="{{ 'on' if active == 'graph' }}">Graph</a>
+    <a href="/ui/graph" class="{{ 'on' if active == 'graph' }}">Night Folio</a>
     <a href="/ui/search" class="{{ 'on' if active == 'search' }}">Search</a>
   </nav>
-  <div class="side-label">Projects</div>
+  <div class="side-label">Folios</div>
   <nav class="projects">
     {% for p in projects %}
     <a href="/ui/project/{{ p.slug }}" class="{{ 'on' if active == p.slug }}">
@@ -30,7 +30,7 @@
 <main>
   <header class="topbar">
     <form class="searchbox" action="/ui/search" method="get" autocomplete="off">
-      <input id="q" name="q" type="search" placeholder="Search memories…  ( / )"
+      <input id="q" name="q" type="search" placeholder="Search the codex…  ( / )"
              value="{{ q if q is defined else '' }}">
       <div id="search-preview" class="search-preview" hidden></div>
     </form>
@@ -40,7 +40,7 @@
   </div>
 </main>
 
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=3"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
