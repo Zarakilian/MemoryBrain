@@ -4,7 +4,7 @@
 "use strict";
 
 (function () {
-  var inited = false, host = null;
+  var inited = false, host = null, lastData = null;
   var LANE_H = 64, LABEL_W = 170, PAD_R = 60, TOP = 34, R = 6;
 
   function init() {
@@ -24,6 +24,7 @@
       host.innerHTML = '<p class="quiet" style="padding:20px">Failed: ' + Atlas.esc(e.message) + "</p>";
       return;
     }
+    lastData = data;
     render(data);
   }
 
@@ -67,8 +68,8 @@
     while (d.getTime() <= t1 && guard++ < 400) {
       var tx = x(d.getTime());
       if (tx >= LABEL_W - 1) {
-        s.push('<line x1="' + tx + '" y1="' + (TOP - 12) + '" x2="' + tx + '" y2="'
-          + (H - 22) + '" stroke="#3b3227" stroke-width="1"/>');
+        s.push('<line class="chron-grid" x1="' + tx + '" y1="' + (TOP - 12) + '" x2="' + tx + '" y2="'
+          + (H - 22) + '" stroke-width="1"/>');
         s.push('<text class="chron-tick" x="' + (tx + 4) + '" y="' + (TOP - 16) + '">'
           + d.toISOString().slice(0, step === "month" ? 7 : 10) + "</text>");
       }
@@ -79,8 +80,8 @@
     // lane baselines + labels
     lanes.forEach(function (l, i) {
       var y = laneY(i);
-      s.push('<line x1="' + LABEL_W + '" y1="' + y + '" x2="' + (W - PAD_R + 20)
-        + '" y2="' + y + '" stroke="#3b3227" stroke-dasharray="1 5"/>');
+      s.push('<line class="chron-grid" x1="' + LABEL_W + '" y1="' + y + '" x2="' + (W - PAD_R + 20)
+        + '" y2="' + y + '" stroke-dasharray="1 5"/>');
       s.push('<text class="chron-lane-label" x="10" y="' + (y + 4) + '">'
         + esc(l.name || l.project) + "</text>");
     });
@@ -90,7 +91,7 @@
       var a = byId[lk.src], b = byId[lk.dst];
       if (!a || !b) return;
       var x1 = x(a._t), y1 = laneY(a._lane), x2 = x(b._t), y2 = laneY(b._lane);
-      var col = "rgba(201,162,95,.5)";
+      var col = Atlas.goldRGBA(0.5);
       if (y1 === y2) {
         s.push('<line x1="' + x1 + '" y1="' + y1 + '" x2="' + x2 + '" y2="' + y2
           + '" stroke="' + col + '" stroke-width="1.6"/>');
@@ -134,11 +135,15 @@
       var prev = host.querySelector(".chron-node[data-selected]");
       if (prev) { prev.removeAttribute("data-selected"); prev.style.filter = ""; }
       n.setAttribute("data-selected", "1");
-      n.style.filter = "drop-shadow(0 0 4px #e0bd7d)";
+      n.style.filter = "drop-shadow(0 0 4px " + Atlas.goldBright() + ")";
       Atlas.inspect(n.dataset.id, null);
     });
     host.scrollLeft = host.scrollWidth;          // land on "now"
   }
+
+  document.addEventListener("atlas:theme", function () {
+    if (inited && lastData) render(lastData);
+  });
 
   if (window.Atlas) Atlas.onLens("chronicle", init);
 })();

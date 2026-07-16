@@ -1,5 +1,10 @@
 # Image credits
 
-- `flying_machine.jpg` — Leonardo da Vinci, design for a flying machine
-  (Codex Atlanticus). Public domain scan. Used once, faintly, in the Atlas
-  empty states.
+Public-domain Leonardo da Vinci scans, used as faint accent engravings only
+(per-lens empty states + inspector watermark), never as page wallpaper.
+
+- `vitruvian.jpg` — Vitruvian Man (Gallerie dell'Accademia, Venice).
+  Constellation empty state; inspector watermark.
+- `flowers.jpg` — botanical study. Stream empty state.
+- `flying_machine.jpg` — design for a flying machine (Codex Atlanticus).
+  Chronicle empty state.

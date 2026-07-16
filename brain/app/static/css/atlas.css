@@ -317,6 +317,51 @@ kbd {
   #pane-stream { padding: 4px 14px 24px; }
 }
 
+/* ----------------------------------------------- parchment (pastel) theme */
+html[data-theme="parchment"] {
+  --bg: #f1e9d7;
+  --bg2: #e8ddc5;
+  --bg3: #dfd2b2;
+  --line: #d2c29c;
+  --ink: #4a3f2c;
+  --ink-dim: #7d6f53;
+  --ink-faint: #a49476;
+  --gold: #a97e3f;
+  --gold-bright: #8a6b31;
+  --cream: #faf4e4;
+  --cream-ink: #33291c;
+  --cream-dim: #8a7b5f;
+  color-scheme: light;
+}
+html[data-theme="parchment"] .pdot { background: hsl(var(--ph, 40) 48% 62%); }
+html[data-theme="parchment"] .badge { filter: saturate(.72) brightness(1.18); }
+html[data-theme="parchment"] .inspector { border-left-color: #cbb98e; }
+html[data-theme="parchment"] .cst-tip,
+html[data-theme="parchment"] .palette-card { box-shadow: 0 10px 40px rgba(74,63,44,.25); }
+html[data-theme="parchment"] .palette { background: rgba(74, 63, 44, .3); }
+html[data-theme="parchment"] .empty-plate { opacity: .3; }
+
+/* --------------------------------------------------- da Vinci accent plates
+   One faint engraving per lens's empty state + an inspector watermark.
+   Accents, never wallpaper. All plates are pointer-events-inert. */
+.empty-plate.plate-anatomy { background-image: url("/static/img/vitruvian.jpg"); }
+.empty-plate.plate-flowers { background-image: url("/static/img/flowers.jpg"); }
+
+.inspector::after {
+  content: ""; position: absolute; top: 6px; right: 8px;
+  width: 110px; height: 150px; pointer-events: none;
+  background: url("/static/img/vitruvian.jpg") center/contain no-repeat;
+  opacity: .055; filter: sepia(.6);
+}
+
+/* theme toggle + 3D switch */
+#theme-toggle {
+  background: none; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px; cursor: pointer;
+}
+#theme-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
+.lens-controls input[type=checkbox] { accent-color: var(--gold); }
+
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }

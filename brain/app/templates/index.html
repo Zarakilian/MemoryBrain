@@ -54,7 +54,8 @@
     {% endif %}
     {% else %}
     {{ empty_state('Nothing here yet',
-                   'Memories appear as your sessions are ingested — or seed one with `brain add`.') }}
+                   'Memories appear as your sessions are ingested — or seed one with `brain add`.',
+                   'plate-flowers') }}
     {% endif %}
   </section>
 
@@ -67,6 +68,7 @@
       <label>max nodes
         <select id="cst-cap"><option>75</option><option selected>150</option><option>300</option><option>500</option></select>
       </label>
+      <label><input type="checkbox" id="cst-3d" checked> 3D</label>
       <span id="cst-status" class="lens-status" aria-live="polite"></span>
     </div>
     <div id="constellation" class="lens-canvas"></div>
@@ -86,6 +88,7 @@
 {% endblock %}
 {% block scripts %}
 <script src="/static/vendor/force-graph.min.js?b={{ build_stamp }}" defer></script>
+<script src="/static/vendor/3d-force-graph.min.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/constellation.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/chronicle.js?b={{ build_stamp }}" defer></script>
 {% endblock %}

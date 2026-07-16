@@ -88,10 +88,13 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   Left rail of projects, `Ctrl+K` command palette, sliding inspector, and
   three lenses on the same data: **Stream** (reverse-chronological daily
   feed, server-rendered, fully usable with JS disabled), **Constellation**
-  (2D force-directed graph of the memory web, powered by a vendored
-  force-graph build — no CDN), and **Chronicle** (a horizontal time axis of
-  sessions and handovers per project). Keys `1/2/3` switch lenses. Fully
-  offline, read-only, zero telemetry.
+  (3D orbit view of the memory web by default, with a remembered 2D
+  switch and automatic 2D fallback — vendored force-graph/3d-force-graph
+  builds, no CDN), and **Chronicle** (a horizontal time axis of sessions
+  and handovers per project). Keys `1/2/3` switch lenses. A pastel
+  **parchment theme** toggle lives in the rail (da Vinci plates appear as
+  faint engravings in empty states and the inspector). Fully offline,
+  read-only, zero telemetry.
 - **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
   `docker compose build` time; the same stamp appears in the UI footer and in
   static asset URLs (automatic cache-busting — no manual `?v=` bumps).

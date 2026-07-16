@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
+<script>/* apply saved theme before first paint */
+try { var _t = localStorage.getItem("atlas-theme");
+      if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}
+</script>
 <link rel="stylesheet" href="/static/css/atlas.css?b={{ build_stamp }}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
@@ -31,6 +35,7 @@
     <div class="rail-foot">
       <a href="/ui/search">Search</a>
       <span class="rail-kbd" hidden data-js>Ctrl K</span>
+      <button id="theme-toggle" hidden data-js type="button"></button>
     </div>
   </aside>
 

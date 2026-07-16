@@ -216,7 +216,10 @@ def test_ui_connection_is_read_only():
 def test_static_assets_served(ui_client):
     for path in ("/static/css/atlas.css", "/static/js/atlas.js",
                  "/static/js/constellation.js", "/static/js/chronicle.js",
-                 "/static/vendor/force-graph.min.js"):
+                 "/static/vendor/force-graph.min.js",
+                 "/static/vendor/3d-force-graph.min.js",
+                 "/static/img/vitruvian.jpg", "/static/img/flowers.jpg",
+                 "/static/img/flying_machine.jpg"):
         assert ui_client.get(path).status_code == 200, path
 
 

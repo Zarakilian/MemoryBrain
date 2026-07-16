@@ -13,8 +13,27 @@ Atlas.hue = function (slug) {
   for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 997;
   return HUES[h % 12];
 };
+function parchment() { return document.documentElement.dataset.theme === "parchment"; }
 Atlas.color = function (slug, l) {
-  return "hsl(" + Atlas.hue(slug) + " 42% " + (l || 58) + "%)";
+  /* pastel-leaning on parchment, deeper on umber */
+  return "hsl(" + Atlas.hue(slug) + (parchment() ? " 46% " : " 42% ")
+    + (l || (parchment() ? 46 : 60)) + "%)";
+};
+Atlas.goldRGBA = function (a) {
+  return (parchment() ? "rgba(138,107,49," : "rgba(201,162,95,") + a + ")";
+};
+Atlas.goldBright = function () { return parchment() ? "#8a6b31" : "#e0bd7d"; };
+
+function updateThemeBtn() {
+  var b = document.getElementById("theme-toggle");
+  if (b) b.textContent = parchment() ? "\u263e umber" : "\u2600 parchment";
+}
+Atlas.setTheme = function (t) {
+  if (t) document.documentElement.dataset.theme = t;
+  else document.documentElement.removeAttribute("data-theme");
+  try { localStorage.setItem("atlas-theme", t || ""); } catch (e) {}
+  updateThemeBtn();
+  document.dispatchEvent(new CustomEvent("atlas:theme"));
 };
 Atlas.esc = function (s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -31,6 +50,11 @@ Atlas.reducedMotion = window.matchMedia
 
 document.querySelectorAll("[data-js]").forEach(function (el) {
   el.removeAttribute("hidden");
+});
+updateThemeBtn();
+var _tb = document.getElementById("theme-toggle");
+if (_tb) _tb.addEventListener("click", function () {
+  Atlas.setTheme(parchment() ? "" : "parchment");
 });
 
 /* -------------------------------------------------------------- lenses */
@@ -272,6 +296,8 @@ function commandsFor(qtext) {
     { kind: "lens", label: "Lens: Chronicle", run: function () { showLens("chronicle", true); } },
     { kind: "go", label: "All memories", run: function () { location.href = "/ui"; } },
     { kind: "go", label: "Doctor (diagnostics)", run: function () { location.href = "/ui/doctor"; } },
+    { kind: "theme", label: "Theme: Parchment (pastel)", run: function () { Atlas.setTheme("parchment"); } },
+    { kind: "theme", label: "Theme: Umber (dark)", run: function () { Atlas.setTheme(""); } },
   ];
   document.querySelectorAll(".rail-projects a").forEach(function (a) {
     var name = a.querySelector(".pname").textContent;

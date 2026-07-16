@@ -13,9 +13,9 @@
 </a>
 {%- endmacro %}
 
-{% macro empty_state(title, hint) -%}
+{% macro empty_state(title, hint, plate='') -%}
 <div class="empty">
-  <div class="empty-plate" aria-hidden="true"></div>
+  <div class="empty-plate {{ plate }}" aria-hidden="true"></div>
   <p class="empty-title">{{ title }}</p>
   <p class="empty-hint">{{ hint }}</p>
 </div>
