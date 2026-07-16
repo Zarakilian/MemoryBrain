@@ -6,10 +6,12 @@ from unittest.mock import patch, MagicMock
 
 def _load_cli():
     """Load cli/brain.py directly to avoid the 'brain' module import issue."""
-    spec = importlib.util.spec_from_file_location(
-        "brain_cli",
-        Path(__file__).parent.parent / "cli" / "brain.py"
-    )
+    # Works in both layouts: docker image (/app/cli) and repo checkout
+    # (repo/cli next to repo/brain).
+    candidates = [Path(__file__).parent.parent / "cli" / "brain.py",
+                  Path(__file__).parent.parent.parent / "cli" / "brain.py"]
+    cli_path = next(c for c in candidates if c.exists())
+    spec = importlib.util.spec_from_file_location("brain_cli", cli_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

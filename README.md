@@ -87,6 +87,14 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 - **Local web UI** at `/ui`: dashboard, project browsing with filters, memory
   detail with related/backlinks, interactive graph view, live hybrid search.
   Server-rendered, zero third-party JS, fully offline.
+- **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
+  `docker compose build` time; the same stamp appears in the UI footer and in
+  static asset URLs (automatic cache-busting — no manual `?v=` bumps).
+  `http://localhost:7741/ui/doctor` is a dependency-free diagnostics page that
+  checks every UI JSON endpoint, canvas/WebGL, pointer events, full-viewport
+  overlays, and captures JS errors — with a copy-paste report button. If the
+  UI ever misbehaves, open the doctor first and check the footer stamp matches
+  the freshly built container.
 - Rollback safety: `MEMORYBRAIN_VECTOR_BACKEND=chroma` switches back to the
   untouched legacy store; `MEMORYBRAIN_GRAPH_ENABLED=false` disables the linker.
 

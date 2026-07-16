@@ -387,7 +387,7 @@ def _setup_gemini_optional():
 
     # Check /readiness
     try:
-        result = _get(f"{BRAIN_URL}/readiness")
+        result = _get_url(f"{BRAIN_URL}/readiness")
         if result.get("ready"):
             print("\u2705 Gemini connection verified \u2014 ready to use!")
         elif result.get("checks", {}).get("gemini_client") == "ok":
@@ -407,8 +407,13 @@ def _setup_gemini_optional():
     print("To learn more: docs/GEMINI_SETUP_GUIDE.md")
 
 
-def _get(url: str) -> dict:
-    """Helper to make GET requests."""
+def _get_url(url: str) -> dict:
+    """GET a full URL, returning {} on any failure.
+
+    Distinct from _get(path) above, which prefixes BRAIN_URL and exits
+    on connection failure. This second helper was previously also named
+    _get and shadowed the first, silently breaking `brain status`.
+    """
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
             return json.loads(resp.read())

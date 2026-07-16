@@ -116,3 +116,41 @@ def test_static_assets_served(ui_client):
     assert ui_client.get("/static/css/ui.css").status_code == 200
     assert ui_client.get("/static/js/graph3d.js").status_code == 200
     assert ui_client.get("/static/vendor/three.module.min.js").status_code == 200
+
+
+# ---------------------------------------------- diagnostics (rebuild protocol)
+
+def test_version_endpoint(ui_client):
+    r = ui_client.get("/api/ui/version")
+    assert r.status_code == 200
+    build = r.json()["build"]
+    assert isinstance(build, str) and build          # "dev" outside a container
+    assert "no-store" in r.headers["cache-control"]  # stamp must always be live
+
+
+def test_doctor_page_dependency_free(ui_client):
+    r = ui_client.get("/ui/doctor")
+    assert r.status_code == 200
+    assert "MemoryBrain Doctor" in r.text
+    assert "no-store" in r.headers["cache-control"]
+    # the baked-in stamp must match the live endpoint's
+    build = ui_client.get("/api/ui/version").json()["build"]
+    assert f"<b id=\"stamp\">{build}</b>" in r.text
+    # deliberately zero external assets: page must render even if /static
+    # or the DB is broken
+    assert "/static/" not in r.text
+    assert "__BUILD__" not in r.text  # placeholder was substituted
+
+
+def test_doctor_and_version_bypass_auth(ui_client, monkeypatch):
+    monkeypatch.setattr("app.auth._API_KEY", "sekrit")
+    assert ui_client.get("/ui/doctor").status_code == 200
+    assert ui_client.get("/api/ui/version").status_code == 200
+
+
+def test_pages_carry_build_stamp(ui_client):
+    r = ui_client.get("/ui")
+    assert r.status_code == 200
+    build = ui_client.get("/api/ui/version").json()["build"]
+    assert f"?b={build}" in r.text     # assets cache-bust on the stamp
+    assert "buildfoot" in r.text       # footer stamp visible

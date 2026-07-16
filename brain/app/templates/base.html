@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
-<link rel="stylesheet" href="/static/css/ui.css?v=4">
+<link rel="stylesheet" href="/static/css/ui.css?b={{ build_stamp }}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 </head>
 <body>
@@ -43,10 +43,13 @@
   <div class="page">
     {% block content %}{% endblock %}
   </div>
+  <footer class="buildfoot" style="padding:10px 24px;font-size:.75rem;opacity:.65">
+    build <code>{{ build_stamp }}</code> &middot; <a href="/ui/doctor">doctor</a>
+  </footer>
 </main>
 
-<script src="/static/js/app.js?v=4"></script>
-<script src="/static/js/ambient.js?v=4"></script>
+<script src="/static/js/app.js?b={{ build_stamp }}"></script>
+<script src="/static/js/ambient.js?b={{ build_stamp }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -11,18 +11,23 @@ import sqlite3
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from ..graph_queries import get_graph, get_related
 from ..search import hybrid_search
 from . import queries as q
+from .build_info import get_build_stamp
+from .doctor import DOCTOR_HTML
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["ui"])
 _TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
+# Available in every template: footer stamp + cache-busting asset URLs
+# (?b={{ build_stamp }}). Fixed for the container's lifetime.
+templates.env.globals["build_stamp"] = get_build_stamp()
 
 
 def db():
@@ -44,6 +49,30 @@ async def _search(conn, text: str, project: str | None, mtype: str | None,
         logger.warning("Hybrid search unavailable — falling back to keyword-only")
         return q.search_fts(conn, text, project=project, mtype=mtype,
                             limit=limit), "keyword"
+
+
+# HTML pages and the version endpoint must never be cached: the build stamp
+# comparison on /ui/doctor relies on both being live. Static assets are the
+# opposite — they carry the stamp in their URL, so caching them is safe.
+_NO_STORE = {"Cache-Control": "no-store, max-age=0"}
+
+
+# ----------------------------------------------------------- diagnostics
+
+@router.get("/api/ui/version")
+def api_version():
+    """Build stamp baked at container build time (brain/Dockerfile).
+    First question in every debugging exchange: what build does this say?"""
+    return JSONResponse({"build": get_build_stamp()}, headers=_NO_STORE)
+
+
+@router.get("/ui/doctor", response_class=HTMLResponse)
+def doctor_page():
+    """Dependency-free in-browser diagnostics. Deliberately takes no DB
+    connection and references no static assets: if FastAPI is up, this
+    page renders, whatever else is broken."""
+    return HTMLResponse(DOCTOR_HTML.replace("__BUILD__", get_build_stamp()),
+                        headers=_NO_STORE)
 
 
 # ------------------------------------------------------------------- pages

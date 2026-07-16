@@ -5,8 +5,13 @@ import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-# Add cli/ to path for import
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "cli"))
+# Add cli/ to path for import. Works in both layouts:
+# repo checkout (repo/cli next to repo/brain) and docker image (/app/cli).
+for _cand in (Path(__file__).parent.parent.parent / "cli",
+              Path(__file__).parent.parent / "cli"):
+    if (_cand / "brain.py").exists():
+        sys.path.insert(0, str(_cand))
+        break
 
 
 def _make_response(status_code: int = 200, body: dict = None):
