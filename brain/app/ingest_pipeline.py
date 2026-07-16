@@ -109,4 +109,13 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
         Project(slug=entry.project, name=entry.project.replace("-", " ").title()),
         db_path=DB_PATH,
     )
+
+    # v2.0.0: derive graph edges. Edges are cache — a linker failure must
+    # never fail the ingest; the graph catches up on /admin/rebuild-graph.
+    try:
+        from .linker import link_new_memory
+        link_new_memory(entry, embedding, superseded_ids=superseded_ids, db_path=DB_PATH)
+    except Exception:
+        logger.warning(f"Linker failed for {entry.id} — run /admin/rebuild-graph", exc_info=True)
+
     return entry

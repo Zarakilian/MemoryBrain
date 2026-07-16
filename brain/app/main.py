@@ -212,3 +212,11 @@ async def sse_endpoint(request: Request):
 @app.post("/messages/")
 async def handle_messages(request: Request):
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+
+
+@app.post("/admin/rebuild-graph")
+async def rebuild_graph_endpoint():
+    """Drop and recompute all memory-graph edges. Safe any time — edges are
+    derived data. Authenticated via the standard API-key middleware."""
+    from .linker import rebuild_graph
+    return rebuild_graph()
