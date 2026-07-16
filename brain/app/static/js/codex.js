@@ -1,14 +1,19 @@
-/* The Codex Margin — Leonardo's notebook, alive behind the Atlas.
-   Procedurally drawn line-engravings (geometry, machines, flight, botany,
-   astronomy, water) plus the scanned plates, drifting very slowly on a
-   fixed layer that can never intercept a pointer. Every visit composes a
-   slightly different folio.
+/* The Codex Room — Leonardo's notebook as a place, not a picture.
+   Procedurally drawn studies (geometry, machines, clockwork, architecture,
+   anatomy, flight, botany, water, stars) float on depth planes behind the
+   Atlas. The room breathes: pieces drift on slow loops, shift in parallax
+   with the pointer, the whole plane tilts a fraction of a degree in
+   perspective, and a warm lantern glow follows the cursor like candlelight
+   over vellum. Inks come from a pastel fable palette. Every visit composes
+   a different folio.
 
-   Safety rails, learned the hard way in this repo:
-   - the layer and every piece are pointer-events:none (CSS, enforced)
-   - z-index 0, beneath .shell; no scroll listeners, no rAF loops —
-     drift is pure CSS transform animation on a handful of elements
-   - prefers-reduced-motion → perfectly still; ambience toggle → gone */
+   Safety rails (this repo's scar tissue):
+   - the layer and everything on it: pointer-events:none !important,
+     z-index 0 under the shell — structurally incapable of eating a click
+   - one pointermove listener; a self-stopping rAF lerp writes exactly
+     four CSS custom properties per frame; all motion is GPU transforms
+   - prefers-reduced-motion → no listener, no drift: a still folio
+   - ambience toggle (rail + palette) removes the room entirely */
 "use strict";
 
 (function () {
@@ -16,14 +21,18 @@
   function enabled() {
     try { return localStorage.getItem(STORE) !== "off"; } catch (e) { return true; }
   }
+  function reduced() {
+    return window.matchMedia
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  }
 
   var R = Math.random;
   function rnd(a, b) { return a + R() * (b - a); }
   function pick(arr) { return arr[Math.floor(R() * arr.length)]; }
 
-  /* ---------------- the studies: each returns SVG inner markup ------------ */
-  /* consistent hand: fill none, stroke currentColor, thin lines, faint
-     cross-hatch — the colour and opacity come from CSS. viewBox 0 0 200 200 */
+  /* ================= the studies — each returns SVG inner markup ========= */
+  /* one hand: fill none, stroke currentColor, thin line, faint hatching.
+     colour comes from an ink class; viewBox 0 0 200 200. */
 
   function gearPath(cx, cy, r, teeth) {
     var d = [], tooth = r * 0.16;
@@ -51,22 +60,127 @@
     return s;
   }
 
+  function escapement() {
+    // anchor escapement over a toothed wheel, pendulum hanging into space
+    var s = '<path d="' + gearPath(100, 62, 30, 15) + '"/>' +
+      '<circle cx="100" cy="62" r="5"/>' +
+      '<path d="M70 40 Q100 8 130 40 L118 52 Q100 34 82 52 Z"/>' +   // anchor
+      '<line x1="100" y1="24" x2="100" y2="14"/>';
+    var swing = rnd(-0.35, 0.35);
+    var bx = 100 + 118 * Math.sin(swing), by = 24 + 118 * Math.cos(swing);
+    s += '<line x1="100" y1="24" x2="' + bx + '" y2="' + by + '"/>' +
+      '<circle cx="' + bx + '" cy="' + by + '" r="9"/>' +
+      '<path d="M60 190 A48 48 0 0 1 140 190" stroke-dasharray="2 6"/>'; // swing arc
+    return s;
+  }
+
+  function gauge() {
+    // steam pressure gauge with rivets, needle, pipe stub
+    var s = '<circle cx="100" cy="90" r="52"/><circle cx="100" cy="90" r="44"/>';
+    for (var i = 0; i <= 10; i++) {
+      var a = Math.PI * (0.75 + 1.5 * i / 10);
+      s += '<line x1="' + (100 + 38 * Math.cos(a)) + '" y1="' + (90 + 38 * Math.sin(a))
+        + '" x2="' + (100 + 44 * Math.cos(a)) + '" y2="' + (90 + 44 * Math.sin(a)) + '"/>';
+    }
+    var na = Math.PI * rnd(0.85, 2.1);
+    s += '<line x1="100" y1="90" x2="' + (100 + 34 * Math.cos(na)) + '" y2="'
+      + (90 + 34 * Math.sin(na)) + '" stroke-width="1.8"/>'
+      + '<circle cx="100" cy="90" r="4" fill="currentColor" fill-opacity=".4"/>';
+    for (var j = 0; j < 6; j++) {
+      var ra = j * Math.PI / 3 + 0.3;
+      s += '<circle cx="' + (100 + 48 * Math.cos(ra)) + '" cy="' + (90 + 48 * Math.sin(ra)) + '" r="2"/>';
+    }
+    return s + '<path d="M92 142 h16 v14 a8 8 0 0 1 -16 0 Z"/>' +
+      '<line x1="100" y1="164" x2="100" y2="184" stroke-dasharray="3 4"/>';
+  }
+
+  function dome() {
+    // Brunelleschi's dome: drum, ribs, lantern
+    var s = '<path d="M40 120 Q40 40 100 34 Q160 40 160 120"/>' +
+      '<path d="M62 120 Q62 52 100 46 Q138 52 138 120" stroke-dasharray="1 4"/>';
+    [-30, -12, 12, 30].forEach(function (dx) {
+      s += '<path d="M100 34 Q' + (100 + dx * 1.9) + ' 66 ' + (100 + dx * 2) + ' 120"/>';
+    });
+    s += '<rect x="92" y="14" width="16" height="20"/><line x1="100" y1="14" x2="100" y2="4"/>' +
+      '<line x1="34" y1="120" x2="166" y2="120"/><line x1="40" y1="132" x2="160" y2="132"/>';
+    for (var i = 0; i < 8; i++) {
+      var x = 48 + i * 14.5;
+      s += '<path d="M' + x + ' 132 v22 a6 6 0 0 1 12 0 v-22" transform="translate(-6 0)"/>';
+    }
+    return s + '<line x1="34" y1="176" x2="166" y2="176"/>';
+  }
+
+  function colonnade() {
+    // arcade of round arches on columns, receding hatch
+    var s = '<line x1="12" y1="160" x2="188" y2="160"/>';
+    for (var i = 0; i < 4; i++) {
+      var x = 24 + i * 44;
+      s += '<line x1="' + x + '" y1="160" x2="' + x + '" y2="86"/>' +
+        '<line x1="' + (x + 36) + '" y1="160" x2="' + (x + 36) + '" y2="86"/>' +
+        '<path d="M' + x + ' 86 A18 18 0 0 1 ' + (x + 36) + ' 86"/>' +
+        '<rect x="' + (x - 3) + '" y="156" width="' + 42 + '" height="6"/>';
+    }
+    s += '<line x1="12" y1="60" x2="188" y2="60"/><line x1="12" y1="68" x2="188" y2="68"/>';
+    for (var h = 0; h < 12; h++) {
+      var hx = 18 + h * 14;
+      s += '<line x1="' + hx + '" y1="172" x2="' + (hx + 8) + '" y2="180" stroke-dasharray="1 3"/>';
+    }
+    return s;
+  }
+
+  function ribcage() {
+    var s = '<line x1="100" y1="20" x2="100" y2="150"/>';
+    for (var i = 0; i < 6; i++) {
+      var y = 36 + i * 18, w = 30 + i * 7 - (i > 3 ? (i - 3) * 9 : 0);
+      s += '<path d="M100 ' + y + " Q" + (100 - w) + " " + (y + 2) + " " + (100 - w * 0.8) + " " + (y + 16) + '"/>' +
+           '<path d="M100 ' + y + " Q" + (100 + w) + " " + (y + 2) + " " + (100 + w * 0.8) + " " + (y + 16) + '"/>';
+    }
+    return s + '<path d="M88 150 Q100 166 112 150" stroke-dasharray="1 4"/>' +
+      '<circle cx="100" cy="24" r="4"/>';
+  }
+
+  function spineStudy() {
+    var s = "", n = 11;
+    for (var i = 0; i < n; i++) {
+      var t = i / (n - 1), y = 18 + t * 160,
+          x = 100 + Math.sin(t * Math.PI * 1.6) * 16,
+          w = 13 - Math.abs(t - 0.5) * 6;
+      s += '<rect x="' + (x - w / 2) + '" y="' + (y - 5) + '" width="' + w + '" height="10" rx="3"/>' +
+        '<line x1="' + (x + w / 2) + '" y1="' + y + '" x2="' + (x + w / 2 + 8) + '" y2="' + (y - 3) + '"/>';
+    }
+    return s;
+  }
+
+  function handBones() {
+    var s = '<ellipse cx="70" cy="150" rx="26" ry="18"/>';
+    for (var f = 0; f < 5; f++) {
+      var a = -1.35 + f * 0.32, len = f === 0 ? 52 : 88 - Math.abs(f - 2.6) * 12;
+      var x = 70 + 24 * Math.cos(a), y = 150 + 16 * Math.sin(a);
+      for (var seg = 0; seg < 3; seg++) {
+        var l = len * (0.45 - seg * 0.11);
+        var nx = x + l * Math.cos(a), ny = y + l * Math.sin(a);
+        s += '<line x1="' + x + '" y1="' + y + '" x2="' + nx + '" y2="' + ny + '"/>' +
+          '<circle cx="' + nx + '" cy="' + ny + '" r="2.4"/>';
+        x = nx; y = ny;
+      }
+    }
+    return s;
+  }
+
   function moons() {
     var s = "", n = 5;
     for (var i = 0; i < n; i++) {
-      var cx = 24 + i * 38, cy = 100, r = 14, k = (i / (n - 1)) * 2 - 1; // -1..1
+      var cx = 24 + i * 38, cy = 100, r = 14, k = (i / (n - 1)) * 2 - 1;
       s += '<circle cx="' + cx + '" cy="' + cy + '" r="' + r + '"/>';
       var rx = Math.abs(k) * r;
       s += '<path d="M' + cx + " " + (cy - r) + " A" + rx + " " + r + " 0 0 "
         + (k < 0 ? 1 : 0) + " " + cx + " " + (cy + r)
         + " A" + r + " " + r + " 0 0 " + (k < 0 ? 0 : 1) + " " + cx + " " + (cy - r) + 'Z" fill="currentColor" fill-opacity=".25" stroke="none"/>';
     }
-    s += '<line x1="10" y1="128" x2="198" y2="128" stroke-dasharray="1 4"/>';
-    return s;
+    return s + '<line x1="10" y1="128" x2="198" y2="128" stroke-dasharray="1 4"/>';
   }
 
   function icosahedron() {
-    // classic vertex set, orthographic projection, slight tumble
     var t = (1 + Math.sqrt(5)) / 2, V = [];
     [[-1,t,0],[1,t,0],[-1,-t,0],[1,-t,0],[0,-1,t],[0,1,t],[0,-1,-t],[0,1,-t],
      [t,0,-1],[t,0,1],[-t,0,-1],[-t,0,1]].forEach(function (v) { V.push(v); });
@@ -88,9 +202,8 @@
   }
 
   function spiral() {
-    // logarithmic (golden-ratio growth) spiral, plus its framing square
-    var d = "", a = 0, r = 2, steps = 90;
-    for (var i = 0; i <= steps; i++) {
+    var d = "", a = 0, r = 2;
+    for (var i = 0; i <= 90; i++) {
       var x = 100 + r * Math.cos(a), y = 100 + r * Math.sin(a);
       d += (i ? " L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
       a += 0.16; r *= Math.pow(1.618, 0.16 / (Math.PI / 2));
@@ -126,8 +239,7 @@
       var a = pick(pts), b = pick(pts);
       s += '<line x1="' + a[0] + '" y1="' + a[1] + '" x2="' + b[0] + '" y2="' + b[1] + '" stroke-dasharray="1 4"/>';
     }
-    s += '<circle cx="100" cy="100" r="92" stroke-dasharray="2 8"/>';
-    return s;
+    return s + '<circle cx="100" cy="100" r="92" stroke-dasharray="2 8"/>';
   }
 
   function sprig() {
@@ -177,7 +289,6 @@
   }
 
   function script() {
-    // rows of mirrored-hand squiggles: his notes, unreadable, unmistakable
     var s = "";
     for (var row = 0; row < 6; row++) {
       var y = 30 + row * 26, d = "M185 " + y, x = 185;
@@ -191,81 +302,152 @@
     return s;
   }
 
-  var STUDIES = [gears, moons, icosahedron, spiral, flight, stars, sprig,
+  var STUDIES = [gears, escapement, gauge, dome, colonnade, ribcage, spineStudy,
+                 handBones, moons, icosahedron, spiral, flight, stars, sprig,
                  vortex, eye, wing, script];
   var PLATES = ["vitruvian.jpg", "flowers.jpg", "flying_machine.jpg", "tuscan.jpg"];
+  var INKS = 6;                       // ink-0 … ink-5, defined per theme in CSS
 
-  /* -------------------- composition: margins first, never the middle ------ */
+  /* ============== composition: margins first, never the middle =========== */
   function slots() {
-    // viewport-percentage regions biased to edges and corners
     var s = [
       [rnd(1, 8), rnd(4, 20)], [rnd(1, 8), rnd(38, 60)], [rnd(2, 10), rnd(72, 88)],
       [rnd(78, 90), rnd(3, 18)], [rnd(80, 92), rnd(36, 58)], [rnd(76, 88), rnd(70, 86)],
       [rnd(25, 40), rnd(78, 90)], [rnd(55, 70), rnd(80, 92)],
       [rnd(28, 44), rnd(2, 8)], [rnd(58, 72), rnd(1, 7)],
+      [rnd(14, 24), rnd(20, 40)], [rnd(66, 78), rnd(22, 44)],
     ];
-    // shuffle
     for (var i = s.length - 1; i > 0; i--) {
       var j = Math.floor(R() * (i + 1)), t = s[i]; s[i] = s[j]; s[j] = t;
     }
     return s;
   }
 
+  function decorate(el, xPct, yPct, size, depth) {
+    el.style.left = xPct + "vw";
+    el.style.top = yPct + "vh";
+    el.style.width = size + "px";
+    el.style.height = size + "px";
+    el.style.setProperty("--depth", depth.toFixed(2));
+    var inner = el.firstChild;
+    inner.style.setProperty("--drift-x", rnd(-16, 16).toFixed(1) + "px");
+    inner.style.setProperty("--drift-y", rnd(-12, 12).toFixed(1) + "px");
+    inner.style.setProperty("--drift-r", rnd(-4, 4).toFixed(2) + "deg");
+    inner.style.setProperty("--base-r", rnd(-9, 9).toFixed(1) + "deg");
+    inner.style.setProperty("--breathe", rnd(1.01, 1.035).toFixed(3));
+    inner.style.animationDuration = rnd(40, 100).toFixed(0) + "s";
+    inner.style.animationDelay = "-" + rnd(0, 60).toFixed(0) + "s";
+  }
+
   function build() {
     var old = document.getElementById("codex-bg");
     if (old) old.remove();
+    stopEngine();
     if (!enabled()) return;
 
     var layer = document.createElement("div");
     layer.id = "codex-bg";
     layer.setAttribute("aria-hidden", "true");
 
+    var lantern = document.createElement("div");
+    lantern.id = "codex-lantern";
+    layer.appendChild(lantern);
+
+    var room = document.createElement("div");
+    room.id = "codex-room";
+    layer.appendChild(room);
+
+    var vignette = document.createElement("div");
+    vignette.id = "codex-vignette";
+    layer.appendChild(vignette);
+
     var pos = slots(), n = 0;
 
-    // two scanned plates in far corners, large and ghostly
+    // two scanned plates, deep in the room (small depth = far away)
     var plates = PLATES.slice();
     [[rnd(-4, 2), rnd(55, 70)], [rnd(72, 84), rnd(-2, 10)]].forEach(function (p) {
-      var img = document.createElement("div");
-      img.className = "codex-piece codex-plate";
+      var piece = document.createElement("div");
+      piece.className = "codex-piece codex-plate";
+      var inner = document.createElement("div");
+      inner.className = "codex-drift";
       var plate = plates.splice(Math.floor(R() * plates.length), 1)[0];
-      img.style.backgroundImage = "url(/static/img/" + plate + ")";
-      place(img, p[0], p[1], rnd(220, 320));
-      layer.appendChild(img);
+      inner.style.backgroundImage = "url(/static/img/" + plate + ")";
+      piece.appendChild(inner);
+      decorate(piece, p[0], p[1], rnd(230, 330), rnd(0.15, 0.3));
+      room.appendChild(piece);
     });
 
-    // six to eight line studies in the margins
+    // eight to ten studies across the depth planes
     var deck = STUDIES.slice();
-    var count = 6 + Math.floor(R() * 3);
+    var count = 8 + Math.floor(R() * 3);
     for (var i = 0; i < count && deck.length; i++) {
       var fn = deck.splice(Math.floor(R() * deck.length), 1)[0];
-      var d = document.createElement("div");
-      d.className = "codex-piece codex-study";
-      var size = rnd(120, 210);
-      d.innerHTML = '<svg viewBox="0 0 200 200" width="' + size + '" height="' + size
+      var piece = document.createElement("div");
+      var depth = rnd(0.25, 1);
+      piece.className = "codex-piece codex-study ink-" + Math.floor(R() * INKS);
+      var size = rnd(110, 150) + depth * rnd(50, 90);   // nearer = larger
+      var inner = document.createElement("div");
+      inner.className = "codex-drift";
+      inner.innerHTML = '<svg viewBox="0 0 200 200" width="' + Math.round(size)
+        + '" height="' + Math.round(size)
         + '" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round">'
         + fn() + "</svg>";
+      piece.appendChild(inner);
       var p = pos[n++ % pos.length];
-      place(d, p[0], p[1], size);
-      layer.appendChild(d);
+      decorate(piece, p[0], p[1], size, depth);
+      room.appendChild(piece);
     }
 
     document.body.prepend(layer);
+    if (!reduced()) startEngine(layer);
   }
 
-  function place(el, xPct, yPct, size) {
-    el.style.left = xPct + "vw";
-    el.style.top = yPct + "vh";
-    el.style.width = size + "px";
-    el.style.height = size + "px";
-    el.style.setProperty("--drift-x", rnd(-18, 18).toFixed(1) + "px");
-    el.style.setProperty("--drift-y", rnd(-14, 14).toFixed(1) + "px");
-    el.style.setProperty("--drift-r", rnd(-4, 4).toFixed(2) + "deg");
-    el.style.setProperty("--base-r", rnd(-9, 9).toFixed(1) + "deg");
-    el.style.animationDuration = rnd(45, 110).toFixed(0) + "s";
-    el.style.animationDelay = "-" + rnd(0, 60).toFixed(0) + "s";
+  /* ================= the engine: one listener, one lerp =================== */
+  var engine = { raf: 0, layer: null, tx: 0, ty: 0, x: 0, y: 0,
+                 lx: 0, ly: 0, tlx: 0, tly: 0, onMove: null };
+
+  function startEngine(layer) {
+    engine.layer = layer;
+    engine.tlx = engine.lx = window.innerWidth / 2;
+    engine.tly = engine.ly = window.innerHeight / 3;
+    engine.onMove = function (ev) {
+      engine.tx = (ev.clientX / window.innerWidth - 0.5);   // -0.5 … 0.5
+      engine.ty = (ev.clientY / window.innerHeight - 0.5);
+      engine.tlx = ev.clientX;
+      engine.tly = ev.clientY;
+      if (!engine.raf) engine.raf = requestAnimationFrame(tick);
+    };
+    window.addEventListener("pointermove", engine.onMove, { passive: true });
   }
 
-  /* ------------------------------- toggle -------------------------------- */
+  function stopEngine() {
+    if (engine.onMove) window.removeEventListener("pointermove", engine.onMove);
+    if (engine.raf) cancelAnimationFrame(engine.raf);
+    engine.raf = 0; engine.onMove = null; engine.layer = null;
+  }
+
+  function tick() {
+    engine.raf = 0;
+    var k = 0.07;
+    engine.x += (engine.tx - engine.x) * k;
+    engine.y += (engine.ty - engine.y) * k;
+    engine.lx += (engine.tlx - engine.lx) * k;
+    engine.ly += (engine.tly - engine.ly) * k;
+    var st = engine.layer.style;
+    st.setProperty("--mx", (engine.x * -26).toFixed(2) + "px");   // parallax shift
+    st.setProperty("--my", (engine.y * -20).toFixed(2) + "px");
+    st.setProperty("--tiltx", (engine.y * 1.6).toFixed(3) + "deg");
+    st.setProperty("--tilty", (engine.x * -1.6).toFixed(3) + "deg");
+    st.setProperty("--lx", engine.lx.toFixed(1) + "px");
+    st.setProperty("--ly", engine.ly.toFixed(1) + "px");
+    var settled = Math.abs(engine.tx - engine.x) < 0.0005
+      && Math.abs(engine.ty - engine.y) < 0.0005
+      && Math.abs(engine.tlx - engine.lx) < 0.5
+      && Math.abs(engine.tly - engine.ly) < 0.5;
+    if (!settled) engine.raf = requestAnimationFrame(tick);
+  }
+
+  /* ================================ toggle ================================ */
   function updateBtn() {
     var b = document.getElementById("ambience-toggle");
     if (b) b.textContent = enabled() ? "✦ ambience on" : "✧ ambience off";

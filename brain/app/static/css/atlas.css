@@ -362,40 +362,122 @@ html[data-theme="parchment"] .empty-plate { opacity: .3; }
 #theme-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
 .lens-controls input[type=checkbox] { accent-color: var(--gold); }
 
-/* ---------------------------------------------------- the codex margin
-   Fixed ambient layer built by codex.js: procedurally drawn da Vinci
-   studies + ghosted plates, drifting imperceptibly. It sits under the
-   shell and is pointer-inert by construction — it can never eat a click. */
+/* ------------------------------------------------------- the codex room
+   Ambient layer built by codex.js: procedurally drawn studies on depth
+   planes, ghosted plates, a cursor lantern, all inside a gently tilting
+   perspective. Structurally pointer-inert; still under reduced motion. */
 #codex-bg {
   position: fixed; inset: 0; z-index: 0; overflow: hidden;
   pointer-events: none !important;
 }
 .shell { position: relative; z-index: 1; }
+
+#codex-room {
+  position: absolute; inset: -4vh -4vw;
+  transform: perspective(1200px) rotateX(var(--tiltx, 0deg)) rotateY(var(--tilty, 0deg));
+  transform-style: preserve-3d;
+  will-change: transform;
+}
 .codex-piece {
   position: absolute; pointer-events: none !important;
+  /* parallax: nearer pieces (depth→1) shift more with the pointer */
+  transform: translate3d(calc(var(--mx, 0px) * var(--depth, .5)),
+                         calc(var(--my, 0px) * var(--depth, .5)), 0);
+  will-change: transform;
+}
+.codex-drift {
+  width: 100%; height: 100%;
   animation: codex-drift ease-in-out infinite alternate;
   will-change: transform;
 }
-.codex-study { color: #c9a25f; opacity: .1; }
-.codex-plate {
+.codex-plate .codex-drift {
+  width: 100%; height: 100%;
   background-size: contain; background-repeat: no-repeat;
+}
+@keyframes codex-drift {
+  from { transform: translate(0, 0) rotate(var(--base-r, 0deg)) scale(1); }
+  to   { transform: translate(var(--drift-x, 0px), var(--drift-y, 0px))
+                    rotate(calc(var(--base-r, 0deg) + var(--drift-r, 0deg)))
+                    scale(var(--breathe, 1.02)); }
+}
+
+/* the lantern: warm light following the cursor over the vellum */
+#codex-lantern {
+  position: absolute; left: 0; top: 0; width: 90vmax; height: 90vmax;
+  transform: translate3d(calc(var(--lx, 50vw) - 45vmax), calc(var(--ly, 30vh) - 45vmax), 0);
+  background: radial-gradient(circle at center,
+    rgba(224, 189, 125, .085) 0%, rgba(224, 189, 125, .035) 26%, transparent 55%);
+  will-change: transform;
+}
+#codex-vignette {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 38%, transparent 55%, rgba(10, 7, 4, .32) 100%);
+}
+
+/* fable pastel inks — umber theme */
+.codex-study { opacity: .13; }
+.ink-0 { color: #e8967e; }   /* coral    */
+.ink-1 { color: #ecc39a; }   /* peach    */
+.ink-2 { color: #a9c4a2; }   /* sage     */
+.ink-3 { color: #9fbcd4; }   /* sky      */
+.ink-4 { color: #baa9d4; }   /* lavender */
+.ink-5 { color: #c9a25f; }   /* brass    */
+.codex-plate {
   filter: invert(1) grayscale(1) sepia(.35) brightness(.95);
   mix-blend-mode: screen; opacity: .07;
 }
-html[data-theme="parchment"] .codex-study { color: #6b5a3a; opacity: .14; }
+.codex-plate .codex-drift { filter: none; }
+
+/* fable pastel inks — parchment theme (deeper, ink-like) */
+html[data-theme="parchment"] .codex-study { opacity: .16; }
+html[data-theme="parchment"] .ink-0 { color: #b05f45; }
+html[data-theme="parchment"] .ink-1 { color: #a97e3f; }
+html[data-theme="parchment"] .ink-2 { color: #5f7d58; }
+html[data-theme="parchment"] .ink-3 { color: #4f7391; }
+html[data-theme="parchment"] .ink-4 { color: #6f5f91; }
+html[data-theme="parchment"] .ink-5 { color: #8a6b31; }
 html[data-theme="parchment"] .codex-plate {
   filter: sepia(.4) grayscale(.3); mix-blend-mode: multiply; opacity: .12;
 }
-@keyframes codex-drift {
-  from { transform: translate(0, 0) rotate(var(--base-r, 0deg)); }
-  to   { transform: translate(var(--drift-x, 0px), var(--drift-y, 0px))
-                    rotate(calc(var(--base-r, 0deg) + var(--drift-r, 0deg))); }
+html[data-theme="parchment"] #codex-lantern {
+  background: radial-gradient(circle at center,
+    rgba(176, 95, 69, .07) 0%, rgba(176, 95, 69, .03) 26%, transparent 55%);
 }
+html[data-theme="parchment"] #codex-vignette {
+  background: radial-gradient(ellipse at 50% 38%, transparent 58%, rgba(74, 63, 44, .18) 100%);
+}
+
 #ambience-toggle {
   background: none; border: 1px solid var(--line); border-radius: 6px;
   color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px; cursor: pointer;
 }
 #ambience-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
+
+/* --------------------------------------------------- micro-life (feedback)
+   Small, fast, interruptible transitions so the instrument answers the hand.
+   The global reduced-motion rule silences all of it. */
+.mem, .rail-nav a, .rail-projects a, .lens-tab, .more, .pal-item, .tag,
+.searchform button, #theme-toggle, #ambience-toggle {
+  transition: background-color .14s ease-out, color .14s ease-out,
+              border-color .14s ease-out, transform .14s ease-out,
+              box-shadow .14s ease-out;
+}
+.mem:hover { transform: translateX(3px); }
+.lens-tab:hover { transform: translateY(-1px); }
+.rail-projects a:hover .pdot, .rail-nav a:hover .pdot { box-shadow: 0 0 6px currentColor; }
+.mem:hover .badge { box-shadow: 0 0 8px -2px currentColor; }
+
+/* fable hairline: a pastel thread under the stage head */
+.stagehead { position: relative; }
+.stagehead::after {
+  content: ""; position: absolute; left: 22px; right: 22px; bottom: -1px; height: 1px;
+  background: linear-gradient(90deg, #e8967e, #ecc39a, #a9c4a2, #9fbcd4, #baa9d4, transparent);
+  opacity: .35; pointer-events: none;
+}
+.brand em {
+  background: linear-gradient(105deg, var(--gold-bright), #e8967e 70%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
 
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
