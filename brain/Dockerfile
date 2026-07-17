@@ -3,6 +3,7 @@ WORKDIR /app
 COPY brain/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY brain/app/ app/
+COPY brain/stdio_server.py stdio_server.py
 COPY brain/tests/ tests/
 
 # Build stamp (served at /api/ui/version, shown in the UI footer):
