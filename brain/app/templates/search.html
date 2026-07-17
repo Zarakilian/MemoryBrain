@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_macros.html" import mem_row, empty_state %}
+{% block title %}Search — MemoryBrain{% endblock %}
+{% block stage %}
+<div class="search-page">
+  <form class="searchform" method="get" action="/ui/search">
+    <input name="q" type="search" value="{{ q }}" placeholder="Search the atlas…" autofocus>
+    <button type="submit">Search</button>
+  </form>
+  {% if q %}
+  <p class="quiet">{{ results | length }} result{{ '' if results|length == 1 else 's' }}
+    &middot; {{ search_mode }} mode{% if search_mode == 'keyword' %} (embedding provider down — keyword only){% endif %}</p>
+  <div class="day-rows">
+    {% for m in results %}{{ mem_row(m) }}{% else %}
+    {{ empty_state('No results for “' ~ q ~ '”', 'Try fewer or different words.') }}
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

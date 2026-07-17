@@ -170,11 +170,11 @@ def cmd_setup(auto_detect: bool = False):
 
     # 5. Register MCP server with Claude Code
     try:
-        # On Windows, we might need to look for claude.cmd or use shell=True
+        # On Windows, we might need claude.cmd or the full path from PATH
         claude_cmd = "claude"
         if sys.platform == "win32":
             claude_cmd = shutil.which("claude") or "claude.cmd"
-        
+
         mcp_list = _run([claude_cmd, "mcp", "list"])
         if "memorybrain" not in mcp_list.stdout:
             _run([claude_cmd, "mcp", "add", "-s", "user", "--transport", "sse",
@@ -184,6 +184,20 @@ def cmd_setup(auto_detect: bool = False):
             print("\u23ed\ufe0f  MCP server for Claude \u2014 already registered")
     except (FileNotFoundError, subprocess.CalledProcessError):
         print("\u23ed\ufe0f  Claude CLI not found or error \u2014 skipping Claude MCP registration")
+
+    # 5a. Remind about Grok MCP (configured in ~/.grok/config.toml — not via CLI)
+    grok_cfg = Path.home() / ".grok" / "config.toml"
+    if grok_cfg.exists():
+        try:
+            text = grok_cfg.read_text(encoding="utf-8")
+            if "mcp_servers.memorybrain" in text or "[mcp_servers.memorybrain]" in text:
+                print("\u23ed\ufe0f  Grok MCP memorybrain \u2014 already present in ~/.grok/config.toml")
+            else:
+                print("\u26a0\ufe0f  Grok config found but no [mcp_servers.memorybrain] — see GROK.md")
+        except OSError:
+            pass
+    else:
+        print("\u23ed\ufe0f  ~/.grok/config.toml not found \u2014 skipping Grok MCP check")
 
     # 5b. Register MCP server with Gemini (Antigravity)
     gemini_config_path = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
@@ -302,6 +316,128 @@ def cmd_setup(auto_detect: bool = False):
         print("~/.claude.json not found \u2014 add MCP servers to Claude Code and re-run setup.")
     except Exception:
         pass
+
+    # 10. Optional Gemini setup
+    print()
+    _setup_gemini_optional()
+
+
+def _setup_gemini_optional():
+    """Optionally guide user through Gemini API key setup."""
+    env_path = MEMORYBRAIN_DIR / ".env"
+    env_content = env_path.read_text()
+
+    # Check if GOOGLE_API_KEY is already set
+    has_key = "GOOGLE_API_KEY=" in env_content and not env_content.split("GOOGLE_API_KEY=")[1].split("\n")[0].strip() == ""
+
+    if has_key:
+        print("\u2705 Gemini API key already configured")
+        return
+
+    print("AI Provider Setup")
+    print("\u2500" * 45)
+    print("MemoryBrain defaults to Ollama (local, private, free).")
+    print()
+    print("Optional: Use Gemini (Google AI) for faster, cloud-based processing.")
+    print("  \u2022 Free tier: 15,000 requests/month")
+    print("  \u2022 No credit card needed")
+    print("  \u2022 Higher quality embeddings")
+    print()
+
+    response = input("Would you like to set up Gemini? (y/N): ").strip().lower()
+
+    if response != "y":
+        print("\u23ed\ufe0f  Skipping Gemini setup (you can add it later)")
+        return
+
+    print()
+    print("Getting your Gemini API Key (1 minute)...")
+    print("\u2500" * 45)
+    print()
+    print("1\ufe0f\u20e3  Opening: https://aistudio.google.com/app/apikey")
+    print("   (A new browser tab will open)")
+    print()
+
+    # Try to open the URL
+    try:
+        import webbrowser
+        webbrowser.open("https://aistudio.google.com/app/apikey")
+        print("\u2705 Browser opened")
+    except Exception:
+        print("\u26a0\ufe0f  Could not auto-open browser. Visit manually:")
+        print("   https://aistudio.google.com/app/apikey")
+
+    print()
+    print("2\ufe0f\u20e3  In the browser:")
+    print("   \u2022 Click 'Create API Key'")
+    print("   \u2022 Click 'Create new API key in new project'")
+    print("   \u2022 Copy the key (starts with 'sk-proj-')")
+    print()
+
+    api_key = input("3\ufe0f\u20e3  Paste your API key here: ").strip()
+
+    if not api_key:
+        print("\u274c No key provided. Skipping Gemini setup.")
+        return
+
+    if not api_key.startswith("sk-proj-"):
+        print("\u26a0\ufe0f  Warning: Key doesn't look like a valid Google API key (should start with 'sk-proj-')")
+        confirm = input("Continue anyway? (y/N): ").strip().lower()
+        if confirm != "y":
+            return
+
+    # Update .env with the API key
+    new_content = env_content.replace(
+        "GOOGLE_API_KEY=",
+        f"GOOGLE_API_KEY={api_key}"
+    )
+    env_path.write_text(new_content)
+    print()
+    print("\u2705 API key saved to .env")
+
+    # Restart brain container
+    print()
+    print("Testing connection...")
+    compose_cmd = ["docker", "compose", "-f", str(MEMORYBRAIN_DIR / "docker-compose.yml")]
+    _run(compose_cmd + ["restart", "brain"], check=False)
+
+    import time
+    time.sleep(3)  # Wait for container to restart
+
+    # Check /readiness
+    try:
+        result = _get_url(f"{BRAIN_URL}/readiness")
+        if result.get("ready"):
+            print("\u2705 Gemini connection verified \u2014 ready to use!")
+        elif result.get("checks", {}).get("gemini_client") == "ok":
+            print("\u2705 Gemini API key is valid and working")
+        else:
+            error = result.get("checks", {}).get("gemini_client", "unknown error")
+            print(f"\u26a0\ufe0f  Gemini verification failed: {error}")
+            print("   Check your API key at: https://aistudio.google.com/app/apikey")
+    except Exception as e:
+        print(f"\u26a0\ufe0f  Could not verify (container may still be starting): {e}")
+        print("   Try again in 10 seconds: curl http://localhost:7741/readiness | jq")
+
+    print()
+    print("Gemini setup complete!")
+    print("MemoryBrain will now use Gemini for embeddings & summaries.")
+    print()
+    print("To learn more: docs/GEMINI_SETUP_GUIDE.md")
+
+
+def _get_url(url: str) -> dict:
+    """GET a full URL, returning {} on any failure.
+
+    Distinct from _get(path) above, which prefixes BRAIN_URL and exits
+    on connection failure. This second helper was previously also named
+    _get and shadowed the first, silently breaking `brain status`.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return {}
 
 
 def cmd_update():

@@ -37,7 +37,7 @@ async def test_hybrid_search_returns_summaries_not_content(tmp_db, mock_ollama):
     add_memory(e, db_path=tmp_db)
 
     with patch("app.search.DB_PATH", tmp_db), \
-         patch("app.search.chroma_search", return_value=[
+         patch("app.search.vec_search", return_value=[
              {"id": e.id, "metadata": {}, "distance": 0.1}
          ]):
         results = await hybrid_search("grafana clickhouse", limit=5)

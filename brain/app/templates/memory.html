@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% from "_macros.html" import mem_row %}
+{% block title %}{{ (m.summary or m.id)[:60] }} — MemoryBrain{% endblock %}
+{% block stage %}
+<article class="memory-page">
+  <header class="mem-head">
+    <nav class="crumbs">
+      <a href="/ui">Atlas</a> /
+      {% if m.project %}<a href="/ui?project={{ m.project }}">{{ m.project }}</a> /{% endif %}
+      <span class="crumb-id">{{ m.id[:8] }}</span>
+    </nav>
+    <h1 class="mem-title">{{ m.summary or '(no summary)' }}</h1>
+    <div class="mem-meta">
+      <span class="badge t-{{ m.type }}">{{ m.type }}</span>
+      <span class="pdot" style="--ph:{{ m.project|phue }}"></span>
+      <time datetime="{{ m.timestamp }}">{{ m.timestamp }}</time>
+      <span class="imp" data-imp="{{ m.importance or 1 }}" title="importance {{ m.importance or 1 }}/5"></span>
+      {% if m.status != 'active' %}<span class="badge archived">{{ m.status }}</span>{% endif %}
+    </div>
+    {% if m.tags %}<div class="tags">{% for t in m.tags %}<span class="tag">{{ t }}</span>{% endfor %}</div>{% endif %}
+  </header>
+
+  <section class="mem-content"><pre>{{ m.content }}</pre></section>
+
+  <dl class="mem-facts">
+    {% if m.source %}<dt>source</dt><dd>{{ m.source }}</dd>{% endif %}
+    <dt>link degree</dt><dd>{{ '%.1f' | format(m.link_degree or 0) }}</dd>
+    {% if m.supersedes %}<dt>supersedes</dt>
+      <dd><a href="/ui/memory/{{ m.supersedes }}">{{ m.supersedes[:8] }}</a></dd>{% endif %}
+    {% if m.superseded_by %}<dt>superseded by</dt>
+      <dd><a href="/ui/memory/{{ m.superseded_by }}">{{ m.superseded_by[:8] }}</a></dd>{% endif %}
+  </dl>
+
+  <section class="mem-related">
+    <h2>Related</h2>
+    {% for r in related %}
+    <div class="rel">
+      {{ mem_row(r) }}
+      <div class="rel-why">
+        {% for e in r.explanations %}<span class="why k-{{ e.kind }}">{{ e.kind }}
+          {{ '←' if e.direction == 'in' else '→' }} {{ '%.2f' | format(e.weight) }}</span>{% endfor %}
+      </div>
+    </div>
+    {% else %}<p class="quiet">No links above the weight floor.</p>{% endfor %}
+  </section>
+
+  {% if backlinks %}
+  <section class="mem-related">
+    <h2>Backlinks</h2>
+    {% for r in backlinks %}{{ mem_row(r) }}{% endfor %}
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

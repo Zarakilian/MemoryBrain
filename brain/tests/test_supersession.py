@@ -41,7 +41,7 @@ async def test_high_similarity_returns_superseded():
     # distance 0.05 → similarity 0.95 → above note auto threshold 0.90
     candidates = [_make_candidate(0.05)]
     mock_get = MagicMock(return_value=MagicMock(summary="old note"))
-    with patch("app.ingest_pipeline.chroma_search", return_value=candidates), \
+    with patch("app.ingest_pipeline.vec_search", return_value=candidates), \
          patch("app.ingest_pipeline.get_memory", mock_get):
         superseded, potential = await _check_supersession(entry, [0.1])
     assert "old-id" in superseded
@@ -54,7 +54,7 @@ async def test_medium_similarity_returns_potential():
     # distance 0.15 → similarity 0.85 → above warn (0.75) but below auto (0.90)
     candidates = [_make_candidate(0.15)]
     mock_get = MagicMock(return_value=MagicMock(summary="old note"))
-    with patch("app.ingest_pipeline.chroma_search", return_value=candidates), \
+    with patch("app.ingest_pipeline.vec_search", return_value=candidates), \
          patch("app.ingest_pipeline.get_memory", mock_get):
         superseded, potential = await _check_supersession(entry, [0.1])
     assert superseded == []
@@ -68,7 +68,7 @@ async def test_low_similarity_returns_nothing():
     entry = _entry(type_="note")
     # distance 0.40 → similarity 0.60 → below warn (0.75)
     candidates = [_make_candidate(0.40)]
-    with patch("app.ingest_pipeline.chroma_search", return_value=candidates), \
+    with patch("app.ingest_pipeline.vec_search", return_value=candidates), \
          patch("app.ingest_pipeline.get_memory", MagicMock(return_value=None)):
         superseded, potential = await _check_supersession(entry, [0.1])
     assert superseded == []
@@ -81,7 +81,7 @@ async def test_reference_type_never_auto_archives():
     # distance 0.01 → similarity 0.99 — very high, but reference never auto-archives
     candidates = [_make_candidate(0.01)]
     mock_get = MagicMock(return_value=MagicMock(summary="ref"))
-    with patch("app.ingest_pipeline.chroma_search", return_value=candidates), \
+    with patch("app.ingest_pipeline.vec_search", return_value=candidates), \
          patch("app.ingest_pipeline.get_memory", mock_get):
         superseded, potential = await _check_supersession(entry, [0.1])
     assert superseded == []  # reference: auto is None — never archived
@@ -94,7 +94,7 @@ async def test_session_type_lower_threshold():
     # distance 0.15 → similarity 0.85 → above session auto threshold 0.80
     candidates = [_make_candidate(0.15)]
     mock_get = MagicMock(return_value=MagicMock(summary="old session"))
-    with patch("app.ingest_pipeline.chroma_search", return_value=candidates), \
+    with patch("app.ingest_pipeline.vec_search", return_value=candidates), \
          patch("app.ingest_pipeline.get_memory", mock_get):
         superseded, potential = await _check_supersession(entry, [0.1])
     assert "old-id" in superseded

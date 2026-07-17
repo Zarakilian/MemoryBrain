@@ -2,8 +2,9 @@
 
 Persistent searchable memory service for AI assistants (Claude Code, Gemini/Antigravity) via MCP.
 
-Replaces flat MEMORY.md files with a FastAPI + SQLite FTS5 + ChromaDB + Ollama service
-that gives your AI assistant automatic context on every new session, with on-demand semantic search.
+Replaces flat MEMORY.md files with a FastAPI + SQLite (FTS5 + sqlite-vec) + Ollama service
+that gives your AI assistant automatic context on every new session, with on-demand semantic search,
+an automatic memory graph, and a local web UI at http://localhost:7741/ui.
 
 MemoryBrain natively supports **SSE transport** for Claude Code and **stdio transport** (via a Docker wrapper) for Gemini.
 
@@ -21,6 +22,12 @@ python3 cli/brain.py setup --auto-detect
 ```
 
 Or manually, step by step — see [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for the full setup guide.
+
+**Installing or migrating with an AI assistant?** Paste one of the strict,
+model-agnostic prompts from [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md)
+into any assistant (Claude, Gemini, ChatGPT, a local model) and it will drive
+the install or the v0.5.x → v2.0.0 migration step-by-step with verified
+checkpoints and a mandatory backup.
 
 ## Project detection
 
@@ -66,13 +73,59 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 | `get_recent_context` | Recent entries by project |
 | `list_projects` | All projects + last activity |
 | `get_startup_summary` | Compact session-start injection |
-| `delete_memory` | Hard delete a memory by ID |
 
 > **Session start rule:** At session start, Claude checks the auto-loaded `MEMORY.md` for a
 > `**MemoryBrain Last Active:**` timestamp. If fresh (< 7 days), it calls `get_startup_summary`
 > then `get_recent_context` — and then **stops**. No project files are read. The timestamp is
 > written by the session-start hook every time MemoryBrain is confirmed healthy, giving Claude an
 > explicit signal to trust MemoryBrain over stale file-based memory. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
+
+## What's New in v2.0.0
+
+- **One database file.** Embeddings moved from embedded ChromaDB into `brain.db`
+  (sqlite-vec): exact cosine KNN, one transaction boundary, `cp` is a backup.
+  Auto-migrates existing data at first startup — see [MIGRATION.md](MIGRATION.md).
+- **Automatic memory graph.** Semantic, tag (IDF-weighted), reference
+  (supersession / shared source / UUID mentions) and session-chain edges,
+  derived at ingest, fully rebuildable via `POST /admin/rebuild-graph`.
+- **2 new MCP tools** (9 total): `get_related_memories`, `get_memory_graph`.
+  The existing 7 contracts are unchanged.
+- **Local web UI — MemoryBrain Atlas** at `/ui`: one continuous workspace.
+  Left rail of projects, `Ctrl+K` command palette, sliding inspector, and
+  three lenses on the same data: **Stream** (reverse-chronological daily
+  feed, server-rendered, fully usable with JS disabled), **Constellation**
+  (3D orbit view of the memory web by default, with a remembered 2D
+  switch and automatic 2D fallback — vendored force-graph/3d-force-graph
+  builds, no CDN), and **Chronicle** (a horizontal time axis of sessions
+  and handovers per project). Keys `1/2/3` switch lenses. A pastel
+  **parchment theme** toggle lives in the rail, and the **codex margin** —
+  an ambient background layer of procedurally drawn da Vinci studies
+  (gears, moon phases, an icosahedron, bird-flight studies, star charts,
+  botanical sprigs, water vortices, mirrored script) plus ghosted plates —
+  drifts behind everything. Every visit composes a different folio; it is
+  pointer-inert, goes still under reduced-motion, and can be switched off
+  from the rail. Fully offline, zero telemetry; every read path stays
+  on query-only connections.
+- **Editing from the UI.** The Atlas can now add, edit, archive and delete
+  memories and projects: "+ note" in the stage head (notes, facts,
+  references, or a text-file upload), "+ new project" in the rail, and
+  Edit / Archive / Delete actions in the inspector. All writes go through
+  `/api/ui/edit/*`, which — unlike the read-only UI endpoints — enforces
+  `X-Brain-Key` whenever `BRAIN_API_KEY` is set (the UI asks once and
+  remembers it in your browser). Guardrails: archive is the default,
+  reversible "remove"; hard delete demands typing the memory id's first 8
+  characters; a project cannot be deleted while it still holds memories.
+  Reads everywhere else remain on query-only connections.
+- **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
+  `docker compose build` time; the same stamp appears in the UI footer and in
+  static asset URLs (automatic cache-busting — no manual `?v=` bumps).
+  `http://localhost:7741/ui/doctor` is a dependency-free diagnostics page that
+  checks every UI JSON endpoint, canvas/WebGL, pointer events, full-viewport
+  overlays, and captures JS errors — with a copy-paste report button. If the
+  UI ever misbehaves, open the doctor first and check the footer stamp matches
+  the freshly built container.
+- Rollback safety: `MEMORYBRAIN_VECTOR_BACKEND=chroma` switches back to the
+  untouched legacy store; `MEMORYBRAIN_GRAPH_ENABLED=false` disables the linker.
 
 ## What's New in v0.5.0
 
@@ -84,6 +137,24 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 - **`brain update` command** — One-step upgrade: pulls latest, rebuilds Docker, reinstalls hooks and skills.
 - **`delete_memory` MCP tool** — Hard delete for wrong entries (vs. supersession for stale ones).
 - **Per-project session context** — `get_startup_summary` now shows the most recent memory for each project.
+
+## AI Provider — Ollama, Gemini, or OpenAI?
+
+MemoryBrain **defaults to Ollama** (local, private, no keys needed). You can optionally switch:
+
+| Provider | Key needed? | Speed | Cost | Privacy | Setup time |
+|---|---|---|---|---|---|
+| **Ollama** (default) | ❌ No | Medium | Free | 100% local | Auto-downloads models |
+| **Gemini** | ✅ Yes (free) | ⚡ Fast | Free tier (15k/mo) | Cloud | 5 minutes |
+| **OpenAI** | ✅ Yes (paid) | ⚡ Fast | Pay per use | Cloud | 5 minutes |
+
+**Want to use Gemini?** The setup wizard will guide you through getting a free Google API key:
+```bash
+python3 cli/brain.py setup
+# Interactive prompt: "Would you like to set up Gemini? (y/N)"
+```
+
+See **[GEMINI_SETUP_GUIDE.md](docs/GEMINI_SETUP_GUIDE.md)** for detailed walkthrough, why you might want it, and troubleshooting.
 
 ## Architecture
 

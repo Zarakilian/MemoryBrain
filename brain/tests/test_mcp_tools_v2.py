@@ -2,6 +2,7 @@ import json
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.mcp.tools import handle_add_memory, handle_delete_memory, handle_get_startup_summary
+from app.storage import DB_PATH
 
 
 @pytest.mark.asyncio
@@ -52,13 +53,13 @@ async def test_handle_delete_memory_success():
     fake_entry = MemoryEntry(content="x", type="note", project="p")
     with patch("app.mcp.tools.get_memory", return_value=fake_entry), \
          patch("app.mcp.tools.delete_memory") as mock_del, \
-         patch("app.mcp.tools.chroma_delete") as mock_cdel:
+         patch("app.mcp.tools.vec_delete") as mock_cdel:
         result = await handle_delete_memory(fake_entry.id)
         data = json.loads(result)
         assert data["deleted"] is True
         assert data["id"] == fake_entry.id
         mock_del.assert_called_once()
-        mock_cdel.assert_called_once_with(fake_entry.id)
+        mock_cdel.assert_called_once_with(fake_entry.id, db_path=DB_PATH)
 
 
 @pytest.mark.asyncio

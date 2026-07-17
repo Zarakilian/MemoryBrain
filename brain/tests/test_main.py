@@ -44,9 +44,9 @@ def test_readiness_all_ok(tmp_db):
     with patch("app.main.DB_PATH", tmp_db), \
          patch("app.storage.DB_PATH", tmp_db), \
          patch("app.main.ollama_client") as mock_oc, \
-         patch("app.main.get_chroma_client") as mock_chroma:
+         patch("app.main.vec_ready") as mock_vec:
         mock_oc.list = mock_list
-        mock_chroma.return_value.get_or_create_collection.return_value = MagicMock()
+        mock_vec.return_value = True
         resp = client.get("/readiness")
     assert resp.status_code == 200
     data = resp.json()
@@ -63,9 +63,9 @@ def test_readiness_ollama_down(tmp_db):
     with patch("app.main.DB_PATH", tmp_db), \
          patch("app.storage.DB_PATH", tmp_db), \
          patch("app.main.ollama_client") as mock_oc, \
-         patch("app.main.get_chroma_client") as mock_chroma:
+         patch("app.main.vec_ready") as mock_vec:
         mock_oc.list = mock_list
-        mock_chroma.return_value.get_or_create_collection.return_value = MagicMock()
+        mock_vec.return_value = True
         resp = client.get("/readiness")
     assert resp.status_code == 200
     data = resp.json()
@@ -82,9 +82,9 @@ def test_readiness_models_missing(tmp_db):
     with patch("app.main.DB_PATH", tmp_db), \
          patch("app.storage.DB_PATH", tmp_db), \
          patch("app.main.ollama_client") as mock_oc, \
-         patch("app.main.get_chroma_client") as mock_chroma:
+         patch("app.main.vec_ready") as mock_vec:
         mock_oc.list = mock_list
-        mock_chroma.return_value.get_or_create_collection.return_value = MagicMock()
+        mock_vec.return_value = True
         resp = client.get("/readiness")
     assert resp.status_code == 200
     data = resp.json()
@@ -101,9 +101,9 @@ def test_readiness_chromadb_down(tmp_db):
     with patch("app.main.DB_PATH", tmp_db), \
          patch("app.storage.DB_PATH", tmp_db), \
          patch("app.main.ollama_client") as mock_oc, \
-         patch("app.main.get_chroma_client") as mock_chroma:
+         patch("app.main.vec_ready") as mock_vec:
         mock_oc.list = mock_list
-        mock_chroma.side_effect = Exception("ChromaDB unavailable")
+        mock_vec.return_value = False
         resp = client.get("/readiness")
     assert resp.status_code == 200
     data = resp.json()

@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from .models import MemoryEntry, Project, validate_entry
 from .storage import add_memory, delete_memory, upsert_project, archive_memory, set_supersedes, get_memory, DB_PATH
-from .chroma import chroma_add, chroma_search, chroma_update_metadata, build_where
+from .vector import vec_add, vec_search, vec_update_metadata
 from .summarise import embed, summarise, score_importance
 
 logger = logging.getLogger(__name__)
@@ -31,9 +31,10 @@ async def _check_supersession(
     warn_threshold = thresholds["warn"]
     auto_threshold = thresholds["auto"]  # None for reference
 
-    candidates = chroma_search(
+    candidates = vec_search(
         embedding, n_results=5,
-        where=build_where({"project": entry.project, "status": "active"}),
+        filters={"project": entry.project, "status": "active"},
+        db_path=DB_PATH,
     )
 
     superseded: list[str] = []
@@ -80,13 +81,14 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     # Persist new memory
     add_memory(entry, db_path=DB_PATH)
     try:
-        chroma_add(
+        vec_add(
             memory_id=entry.id,
             embedding=embedding,
             metadata={"project": entry.project, "type": entry.type, "status": "active"},
+            db_path=DB_PATH,
         )
     except Exception:
-        logger.error(f"ChromaDB write failed for {entry.id} — rolling back SQLite entry")
+        logger.error(f"Vector store write failed for {entry.id} — rolling back SQLite entry")
         delete_memory(entry.id, db_path=DB_PATH)
         raise
 
@@ -94,9 +96,9 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     for old_id in superseded_ids:
         archive_memory(old_id, superseded_by=entry.id, db_path=DB_PATH)
         try:
-            chroma_update_metadata(old_id, {"status": "archived"})
+            vec_update_metadata(old_id, {"status": "archived"})
         except Exception:
-            logger.warning(f"Could not update ChromaDB status for archived {old_id}")
+            logger.warning(f"Could not update vector-store status for archived {old_id}")
 
     # Set back-reference on the new memory if it superseded something
     if superseded_ids:
@@ -107,4 +109,13 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
         Project(slug=entry.project, name=entry.project.replace("-", " ").title()),
         db_path=DB_PATH,
     )
+
+    # v2.0.0: derive graph edges. Edges are cache — a linker failure must
+    # never fail the ingest; the graph catches up on /admin/rebuild-graph.
+    try:
+        from .linker import link_new_memory
+        link_new_memory(entry, embedding, superseded_ids=superseded_ids, db_path=DB_PATH)
+    except Exception:
+        logger.warning(f"Linker failed for {entry.id} — run /admin/rebuild-graph", exc_info=True)
+
     return entry

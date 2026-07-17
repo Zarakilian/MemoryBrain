@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 from .storage import keyword_search, get_memory, DB_PATH
-from .chroma import chroma_search, build_where
+from .vector import vec_search
 from .summarise import embed
 
 RECENCY_DECAY_RATE = float(os.getenv("RECENCY_DECAY_RATE", "0.02"))
@@ -65,19 +65,15 @@ async def hybrid_search(
 
     embedding = await embed(query)
 
-    # Build ChromaDB where filters — use build_where() for correct 1.5.x syntax
-    chroma_filters: dict = {}
+    vec_filters: dict = {}
     if not include_history:
-        chroma_filters["status"] = "active"
+        vec_filters["status"] = "active"
     if project:
-        chroma_filters["project"] = project
+        vec_filters["project"] = project
     if type_filter:
-        chroma_filters["type"] = type_filter
+        vec_filters["type"] = type_filter
 
-    sem_results = chroma_search(
-        embedding, n_results=20,
-        where=build_where(chroma_filters),
-    )
+    sem_results = vec_search(embedding, n_results=20, filters=vec_filters, db_path=DB_PATH)
 
     merged_ids = reciprocal_rank_fusion(kw_results, sem_results)[:limit]
 

@@ -11,7 +11,7 @@ async def test_sqlite_cleaned_up_on_chroma_failure(tmp_db, mock_ollama):
     entry = MemoryEntry(content="orphan test content", type="note", project="test")
 
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.chroma_add", side_effect=RuntimeError("ChromaDB down")):
+         patch("app.ingest_pipeline.vec_add", side_effect=RuntimeError("ChromaDB down")):
         with pytest.raises(RuntimeError, match="ChromaDB down"):
             await ingest(entry)
 
@@ -26,7 +26,7 @@ async def test_successful_ingest_stores_both(tmp_db, mock_ollama):
     entry = MemoryEntry(content="both stores test", type="note", project="test")
 
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.chroma_add") as mock_chroma:
+         patch("app.ingest_pipeline.vec_add") as mock_chroma:
         await ingest(entry)
 
     from app.storage import get_memory

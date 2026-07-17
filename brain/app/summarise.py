@@ -66,41 +66,42 @@ class OllamaProvider(SummariseProvider):
 
 class GeminiProvider(SummariseProvider):
     def __init__(self):
-        import google.generativeai as genai
-        genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-        self._genai = genai
+        from google import genai
+        self._client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         self._embed_model = os.getenv("GEMINI_EMBED_MODEL", "models/text-embedding-004")
         self._summarise_model = os.getenv("GEMINI_SUMMARISE_MODEL", "gemini-2.0-flash")
 
     async def embed(self, text: str) -> list[float]:
         import asyncio
         result = await asyncio.to_thread(
-            self._genai.embed_content, model=self._embed_model, content=text
+            self._client.models.embed_content, model=self._embed_model, contents=text
         )
-        return result["embedding"]
+        return result.embedding
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:
         verbatim = self._verbatim_if_short(content)
         if verbatim is not None:
             return verbatim
         import asyncio
-        model = self._genai.GenerativeModel(self._summarise_model)
         prompt = (
             f"Summarise the following in {max_sentences} sentences. "
             f"Be specific — include key facts, names, and numbers:\n\n{content[:4000]}"
         )
-        response = await asyncio.to_thread(model.generate_content, prompt)
+        response = await asyncio.to_thread(
+            self._client.models.generate_content, model=self._summarise_model, contents=prompt
+        )
         return response.text.strip()
 
     async def score_importance(self, content: str) -> int:
         import asyncio
-        model = self._genai.GenerativeModel(self._summarise_model)
         prompt = (
             "Rate the importance of this note from 1 to 5. "
             "1=trivial, 2=minor, 3=useful, 4=important, 5=critical. "
             f"Reply with ONLY the digit:\n\n{content[:500]}"
         )
-        response = await asyncio.to_thread(model.generate_content, prompt)
+        response = await asyncio.to_thread(
+            self._client.models.generate_content, model=self._summarise_model, contents=prompt
+        )
         try:
             return int(response.text.strip()[0])
         except (ValueError, IndexError):

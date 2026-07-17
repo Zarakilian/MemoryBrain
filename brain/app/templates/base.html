@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}MemoryBrain{% endblock %}</title>
+<script>/* apply saved theme before first paint */
+try { var _t = localStorage.getItem("atlas-theme");
+      if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}
+</script>
+<link rel="stylesheet" href="/static/css/atlas.css?b={{ build_stamp }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+</head>
+<body>
+<div class="shell">
+
+  <aside class="rail">
+    <a class="brand" href="/ui">Memory<em>Brain</em></a>
+    <nav class="rail-nav" aria-label="Scope">
+      <a href="/ui" class="{{ 'on' if not current else '' }}">
+        <span class="pdot all"></span><span class="pname">All memories</span>
+        <span class="count">{{ stats.total }}</span></a>
+    </nav>
+    <div class="rail-label">Projects</div>
+    <nav class="rail-projects" aria-label="Projects">
+      {% for p in projects %}
+      <a href="/ui?project={{ p.slug }}"
+         class="{{ 'on' if current and current.slug == p.slug else '' }}">
+        <span class="pdot" style="--ph:{{ p.slug|phue }}"></span>
+        <span class="pname">{{ p.name or p.slug }}</span>
+        <span class="count">{{ p.memory_count }}</span>
+      </a>
+      {% endfor %}
+    </nav>
+    <button id="new-project-btn" class="rail-add" hidden data-js type="button">+ new project</button>
+    <div class="rail-foot">
+      <a class="rail-search" href="/ui/search">Search <span class="rail-kbd" hidden data-js>Ctrl K</span></a>
+      <button id="theme-toggle" hidden data-js type="button"></button>
+      <button id="ambience-toggle" hidden data-js type="button"></button>
+      <button id="familiar-toggle" hidden data-js type="button"></button>
+    </div>
+  </aside>
+
+  <main class="stage">
+    {% block stage %}{% endblock %}
+    <footer class="buildfoot">
+      build <code>{{ build_stamp }}</code> &middot; <a href="/ui/doctor">doctor</a>
+      &middot; {{ stats.projects }} projects &middot; {{ stats.edges }} links
+    </footer>
+  </main>
+
+  <aside id="inspector" class="inspector" hidden aria-label="Memory inspector">
+    <div class="insp-body" id="insp-body"></div>
+  </aside>
+
+</div>
+
+{# Palette: hidden until atlas.js opens it. The backdrop only accepts pointer
+   events while open — [hidden]{display:none!important} in atlas.css makes the
+   hidden state unbeatable by any display rule (the old click-eater lesson). #}
+<div id="palette" class="palette" hidden role="dialog" aria-label="Command palette">
+  <div class="palette-card">
+    <input id="palette-input" type="search" placeholder="Search memories, jump to project, switch lens…" autocomplete="off">
+    <div id="palette-results" class="palette-results"></div>
+  </div>
+</div>
+
+<script src="/static/js/atlas.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/editor.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/codex.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/familiar.js?b={{ build_stamp }}" defer></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
