@@ -567,12 +567,18 @@ is cached as `link_degree` ("gravity"). Edges are cache, not truth: a linker
 failure never fails an ingest, and `POST /admin/rebuild-graph` recomputes the
 whole graph from scratch.
 
-**The web UI** (`http://localhost:7741/ui`) is server-rendered Jinja2 with
-vanilla JS — no build step, no CDN, works fully offline. It is strictly
-read-only (`PRAGMA query_only`): the assistant remains the only writer.
-The graph view is a custom canvas force-layout; search uses the same hybrid
-pipeline as the `search_memory` MCP tool, falling back to keyword-only FTS5
-when the embedding provider is down.
+**The web UI — MemoryBrain Atlas** (`http://localhost:7741/ui`) is
+server-rendered Jinja2 with vanilla JS — no build step, no CDN, fully
+offline. Three lenses on the same data (Stream / Constellation / Chronicle),
+a `Ctrl+K` palette, and a sliding inspector. Every read path runs on
+`PRAGMA query_only` connections; search uses the same hybrid pipeline as
+the `search_memory` MCP tool, falling back to keyword-only FTS5 when the
+embedding provider is down. The UI can also write — add, edit, archive,
+delete for memories and projects — but only through `/api/ui/edit/*`,
+which enforces `X-Brain-Key` (when set) exactly like `/ingest/*`, uses the
+same storage/ingest layer as the MCP tools, and carries server-side
+guardrails (archive as the reversible default, typed confirmation for hard
+delete, no deleting projects that still hold memories).
 
 **MCP surface** grows from 7 to 9 tools with `get_related_memories` (ranked
 neighbours with per-kind explanations, direction included — backlinks are the

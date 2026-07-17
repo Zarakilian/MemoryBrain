@@ -104,7 +104,8 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   botanical sprigs, water vortices, mirrored script) plus ghosted plates —
   drifts behind everything. Every visit composes a different folio; it is
   pointer-inert, goes still under reduced-motion, and can be switched off
-  from the rail. Fully offline, read-only, zero telemetry.
+  from the rail. Fully offline, zero telemetry; every read path stays
+  on query-only connections.
 - **Editing from the UI.** The Atlas can now add, edit, archive and delete
   memories and projects: "+ note" in the stage head (notes, facts,
   references, or a text-file upload), "+ new project" in the rail, and

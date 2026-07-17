@@ -101,9 +101,11 @@ provider: `curl -X POST localhost:7741/admin/backfill-vectors`. Requires
 Ollama (or your configured provider) to be up.
 
 **If you set `BRAIN_API_KEY`:** the admin endpoints require the
-`X-Brain-Key` header. The read-only UI (`/ui`, `/api/ui/*`, `/static`)
-deliberately does not — the loopback-only port binding is the trust
-boundary, exactly as it already is for `/sse`.
+`X-Brain-Key` header. The UI's read paths (`/ui`, `/api/ui/*`, `/static`)
+deliberately do not — the loopback-only port binding is the trust
+boundary, exactly as it already is for `/sse`. The UI's *write* surface
+(`/api/ui/edit/*`) is the exception: it enforces the key exactly like
+`/ingest/*`; the Atlas prompts for it once and remembers it per browser.
 
 ## Rollback
 
@@ -138,6 +140,11 @@ directory to reclaim disk: `docker compose exec brain rm -rf /app/data/chroma`
   `session_chain` edges). Switch lenses with `1/2/3`. Parchment theme and
   codex-margin ambience toggles live in the rail. Old `/ui/graph` and
   `/ui/project/{slug}` URLs redirect.
+- Editing from the Atlas: add notes/facts/references (or upload a ≤1 MB
+  text file), create/edit projects, and Edit / Archive / Delete from the
+  inspector. Guardrails: archive is the reversible default; hard delete
+  requires typing the memory id's first 8 characters; a project cannot be
+  deleted while it still holds memories.
 - UI diagnostics: `GET /api/ui/version` (build stamp baked at image build,
   also in the footer and asset URLs) and `/ui/doctor` (dependency-free
   in-browser checks with a copy-paste report).
