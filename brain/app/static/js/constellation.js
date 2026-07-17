@@ -224,14 +224,12 @@
     var c = document.createElement("canvas");
     c.width = W; c.height = H;
     var g = c.getContext("2d");
-    var parch = document.documentElement.dataset.theme === "parchment";
-    // vertical gradient → identical left/right edges → seamless wrap
-    var grad = g.createLinearGradient(0, 0, 0, H);
-    if (parch) { grad.addColorStop(0, "#efe4c8"); grad.addColorStop(1, "#d9c493"); }
-    else { grad.addColorStop(0, "#3a2f20"); grad.addColorStop(1, "#211a12"); }
-    g.fillStyle = grad;
-    g.fillRect(0, 0, W, H);
-    g.fillStyle = parch ? "rgba(74,58,32,.85)" : "rgba(224,196,138,.8)";
+    // fully transparent ground: the writing floats on glass, the blurred
+    // constellation glows through from behind
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = "rgba(240, 214, 166, .95)";
+    g.shadowColor = "rgba(224, 189, 125, .6)";
+    g.shadowBlur = 10;                       // a soft glow keeps it readable
     g.font = 'italic 52px Georgia, "Iowan Old Style", serif';
     var words = ((mem.summary || "") + ".  " + (mem.content || "")).split(/\s+/);
     if (!words.length || (words.length === 1 && !words[0])) words = ["(no", "content)"];
@@ -276,15 +274,25 @@
     scene.add(sun);
 
     var tex = new THREE.CanvasTexture(orbCanvas(mem));
+    // the writing: an unlit transparent shell — glass, not parchment.
+    // DoubleSide lets the far side's script drift by behind the front's.
     var mesh = new THREE.Mesh(
       new THREE.SphereGeometry(1.16, 56, 40),
-      new THREE.MeshLambertMaterial({ map: tex })
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true,
+                                    side: THREE.DoubleSide, depthWrite: false })
     );
     mesh.rotation.y = Math.PI * 0.15;
     scene.add(mesh);
+    // the faintest inner globe so the sphere has presence
+    var glass = new THREE.Mesh(
+      new THREE.SphereGeometry(1.06, 40, 28),
+      new THREE.MeshLambertMaterial({ color: 0xe8c58a, transparent: true,
+                                      opacity: 0.07, depthWrite: false })
+    );
+    scene.add(glass);
 
     orb3 = { renderer: renderer, scene: scene, camera: camera, mesh: mesh,
-             tex: tex, raf: 0, dragging: false, vx: 0 };
+             glass: glass, tex: tex, raf: 0, dragging: false, vx: 0 };
 
     var lastX = 0, lastY = 0;
     var el = renderer.domElement;
@@ -329,6 +337,8 @@
     orb3.tex.dispose();
     orb3.mesh.geometry.dispose();
     orb3.mesh.material.dispose();
+    orb3.glass.geometry.dispose();
+    orb3.glass.material.dispose();
     orb3.renderer.dispose();
     orb3 = null;
   }
@@ -372,7 +382,7 @@
       ctx.drawImage(flat, 0, 0); ctx.drawImage(flat, 1200, 0);
       var fig = document.createElement("figure");
       fig.className = "orb";
-      fig.style.backgroundImage = "url(" + two.toDataURL("image/jpeg", 0.85) + ")";
+      fig.style.backgroundImage = "url(" + two.toDataURL("image/png") + ")";
       stage.appendChild(fig);
     }
 

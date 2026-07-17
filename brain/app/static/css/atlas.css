@@ -379,7 +379,10 @@ html[data-theme="parchment"] .empty-plate { opacity: .3; }
   position: fixed; inset: 0; z-index: 0; overflow: hidden;
   pointer-events: none !important;
 }
-.shell { position: relative; z-index: 1; }
+/* NOTE: no z-index here — it would create a stacking context that traps
+   the inspector's z-index inside the shell, letting the orb veil paint
+   over it. DOM order alone keeps the shell above #codex-bg (z 0). */
+.shell { position: relative; }
 
 #codex-room {
   position: absolute; inset: -4vh -4vw;
@@ -515,10 +518,11 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 .orb {
   width: min(62vmin, 560px); height: min(62vmin, 560px);
   border-radius: 50%; margin: 0; position: relative; overflow: hidden;
+  background-color: rgba(232, 197, 138, .05);       /* glass, not parchment */
   background-size: 200% 100%; background-repeat: repeat-x;
   animation: orb-spin 44s linear infinite;
-  box-shadow: inset -34px -30px 70px rgba(0, 0, 0, .55),
-              inset 18px 16px 50px rgba(255, 244, 214, .12),
+  box-shadow: inset -34px -30px 70px rgba(0, 0, 0, .35),
+              inset 18px 16px 50px rgba(255, 244, 214, .10),
               0 24px 90px rgba(0, 0, 0, .5);
   transform: scale(.6);
   transition: transform .3s cubic-bezier(.2, .9, .3, 1.15);
