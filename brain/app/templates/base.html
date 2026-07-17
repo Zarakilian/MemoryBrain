@@ -32,6 +32,7 @@ try { var _t = localStorage.getItem("atlas-theme");
       </a>
       {% endfor %}
     </nav>
+    <button id="new-project-btn" class="rail-add" hidden data-js type="button">+ new project</button>
     <div class="rail-foot">
       <a class="rail-search" href="/ui/search">Search <span class="rail-kbd" hidden data-js>Ctrl K</span></a>
       <button id="theme-toggle" hidden data-js type="button"></button>
@@ -65,6 +66,7 @@ try { var _t = localStorage.getItem("atlas-theme");
 </div>
 
 <script src="/static/js/atlas.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/editor.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/codex.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/familiar.js?b={{ build_stamp }}" defer></script>
 {% block scripts %}{% endblock %}

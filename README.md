@@ -105,6 +105,16 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   drifts behind everything. Every visit composes a different folio; it is
   pointer-inert, goes still under reduced-motion, and can be switched off
   from the rail. Fully offline, read-only, zero telemetry.
+- **Editing from the UI.** The Atlas can now add, edit, archive and delete
+  memories and projects: "+ note" in the stage head (notes, facts,
+  references, or a text-file upload), "+ new project" in the rail, and
+  Edit / Archive / Delete actions in the inspector. All writes go through
+  `/api/ui/edit/*`, which — unlike the read-only UI endpoints — enforces
+  `X-Brain-Key` whenever `BRAIN_API_KEY` is set (the UI asks once and
+  remembers it in your browser). Guardrails: archive is the default,
+  reversible "remove"; hard delete demands typing the memory id's first 8
+  characters; a project cannot be deleted while it still holds memories.
+  Reads everywhere else remain on query-only connections.
 - **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
   `docker compose build` time; the same stamp appears in the UI footer and in
   static asset URLs (automatic cache-busting — no manual `?v=` bumps).

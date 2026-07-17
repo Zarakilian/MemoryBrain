@@ -15,6 +15,12 @@
        class="lens-tab {{ 'on' if lens == 'chronicle' else '' }}"
        href="/ui?lens=chronicle{% if filters.project %}&project={{ filters.project }}{% endif %}">Chronicle <kbd>3</kbd></a>
   </nav>
+  <button id="add-note-btn" class="stage-add" hidden data-js type="button">+ note</button>
+  {% if current %}
+  <button id="edit-project-btn" class="stage-add" hidden data-js type="button"
+          data-slug="{{ current.slug }}" data-name="{{ current.name or current.slug }}"
+          data-line="{{ current.one_liner or '' }}">✎ project</button>
+  {% endif %}
   <form class="filters" method="get" action="/ui" id="stream-filters">
     {% if filters.project %}<input type="hidden" name="project" value="{{ filters.project }}">{% endif %}
     <label>type

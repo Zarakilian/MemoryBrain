@@ -598,6 +598,60 @@ html[data-theme="parchment"] .fam-print { color: rgba(58, 46, 30, .4); }
 }
 #familiar-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
 
+/* ------------------------------------------------------------ the editor
+   Modal forms for the UI's write side. Deliberately interactive overlays:
+   they exist to be filled in and dismissed (Esc / backdrop / Cancel). */
+.modal-veil {
+  position: fixed; inset: 0; z-index: 52;
+  display: grid; place-items: center;
+  background: rgba(15, 11, 7, .6); backdrop-filter: blur(2px);
+}
+.modal-card {
+  width: 560px; max-width: 94vw; max-height: 86vh; overflow-y: auto;
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 12px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .55); padding: 20px 22px;
+}
+.modal-card h2 { font: 700 17px var(--serif); margin: 0 0 14px; color: var(--ink); }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px;
+         font: 600 10px var(--sans); text-transform: uppercase;
+         letter-spacing: .08em; color: var(--ink-faint); }
+.field-row { display: flex; gap: 12px; }
+.field-row .field { flex: 1; }
+.field input, .field textarea, .field select {
+  background: var(--bg); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 7px; padding: 8px 10px; font: 13px var(--sans);
+  letter-spacing: normal; text-transform: none;
+}
+.field textarea { resize: vertical; font: 12.5px/1.55 var(--mono); }
+.field input[readonly] { opacity: .55; }
+.modal-actions { display: flex; gap: 10px; align-items: center;
+                 justify-content: flex-end; margin-top: 6px; }
+.modal-actions button {
+  background: var(--bg3); color: var(--ink); border: 1px solid var(--line);
+  border-radius: 7px; padding: 8px 16px; font: 13px var(--sans); cursor: pointer;
+}
+.modal-actions button.primary { border-color: var(--gold); color: var(--gold-bright); }
+.modal-actions button.danger { border-color: #a05548; color: #d98a7a; }
+.modal-actions button:hover { background: var(--bg); }
+.modal-err { margin-right: auto; color: #d98a7a; font-size: 12px; max-width: 55%; }
+.modal-card code { font-family: var(--mono); color: var(--gold-bright); }
+
+.rail-add, .stage-add {
+  background: none; border: 1px dashed var(--line); border-radius: 6px;
+  color: var(--ink-faint); font: 12px var(--sans); padding: 5px 10px;
+  cursor: pointer; text-align: left;
+}
+.rail-add { margin: 6px 8px 0; }
+.rail-add:hover, .stage-add:hover { color: var(--gold-bright); border-color: var(--gold); }
+
+.insp-actions { display: flex; gap: 8px; margin-top: 22px; flex-wrap: wrap; }
+.insp-actions button {
+  background: #e6dbc2; color: var(--cream-ink); border: 1px solid #cbb98e;
+  border-radius: 7px; padding: 6px 12px; font: 12px var(--sans); cursor: pointer;
+}
+.insp-actions button:hover { border-color: #8a6b31; }
+.insp-actions button.danger { color: #8f3d2e; border-color: #c09a8b; }
+
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }

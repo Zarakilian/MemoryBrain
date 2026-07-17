@@ -180,6 +180,7 @@ function renderInspector(m, related) {
     h.push('<h2>Related</h2><p class="quiet">No links above the weight floor.</p>');
   }
   inspBody.innerHTML = h.join("");
+  document.dispatchEvent(new CustomEvent("atlas:inspected", { detail: m }));
 }
 
 inspector && inspector.addEventListener("click", function (ev) {

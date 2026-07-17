@@ -52,9 +52,13 @@ async def auth_middleware(request: Request, call_next):
     }
 
     # Web UI + static assets + read-only UI JSON: same trust boundary as /sse
-    # (loopback-only binding is the auth; the UI cannot write).
+    # (loopback-only binding is the auth; these paths cannot write).
+    # /api/ui/edit/* is the deliberate exception: UI writes are enforced
+    # exactly like /ingest/* — X-Brain-Key required whenever a key is set.
     ui_prefixes = ("/ui", "/api/ui", "/static")
-    if request.url.path in public_paths or request.url.path.startswith(ui_prefixes):
+    if (not request.url.path.startswith("/api/ui/edit")
+            and (request.url.path in public_paths
+                 or request.url.path.startswith(ui_prefixes))):
         return await call_next(request)
 
     try:
@@ -229,6 +233,8 @@ async def rebuild_graph_endpoint():
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles
 from .ui import ui_router
+from .ui.editor import router as ui_editor_router
 
 app.mount("/static", StaticFiles(directory=str(_Path(__file__).resolve().parent / "static")), name="static")
 app.include_router(ui_router)
+app.include_router(ui_editor_router)
