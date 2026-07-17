@@ -497,13 +497,21 @@ html[data-theme="parchment"] #codex-vignette {
    click the veil to fly back out. The veil is deliberately interactive —
    it exists to be dismissed. */
 .orb-veil {
-  position: fixed; inset: 0; z-index: 48;
+  position: fixed; inset: 0; z-index: 28;   /* below the inspector (30): the
+                                               right-hand panel stays visible
+                                               and fully interactive */
   display: grid; place-items: center; align-content: center; gap: 18px;
   background: rgba(15, 11, 7, .62);
   backdrop-filter: blur(3px);
   opacity: 0; transition: opacity .24s ease-out;
 }
 .orb-veil.open { opacity: 1; }
+/* when the inspector is open, the sphere centres in the remaining space */
+body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
+.orb-stage { display: grid; place-items: center; }
+.orb-canvas { cursor: grab; border-radius: 50%;
+              filter: drop-shadow(0 24px 90px rgba(0, 0, 0, .5)); }
+.orb-canvas.grabbing { cursor: grabbing; }
 .orb {
   width: min(62vmin, 560px); height: min(62vmin, 560px);
   border-radius: 50%; margin: 0; position: relative; overflow: hidden;

@@ -218,6 +218,7 @@ def test_static_assets_served(ui_client):
                  "/static/js/constellation.js", "/static/js/chronicle.js",
                  "/static/vendor/force-graph.min.js",
                  "/static/vendor/3d-force-graph.min.js",
+                 "/static/vendor/three.min.js",
                  "/static/js/codex.js", "/static/js/familiar.js",
                  "/static/img/parchment_grain.jpg", "/static/img/umber_grain.jpg",
                  "/static/img/vitruvian.jpg", "/static/img/flowers.jpg",

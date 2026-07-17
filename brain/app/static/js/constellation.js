@@ -207,49 +207,130 @@
     load();
   }
 
-  /* ---------------- the orb: fly into a memory, read its sphere ----------
-     Click an orb → the camera flies to it and the memory itself appears as
-     a slowly turning sphere wrapped in its own writing. Scroll (or Esc, or
-     click the veil) to fly back out to the graph. Works in 3D and 2D. */
+  /* ---------------- the orb: fly into a memory, hold it, turn it --------
+     Click an orb → the camera flies to it and the memory appears as a real
+     three.js sphere wrapped in its own writing, floating on the blurred
+     veil. Drag the sphere to turn it; it also turns slowly on its own.
+     Scroll, Esc, or click the veil to fly back out. The inspector stays
+     above the veil, visible and fully interactive. Falls back to a CSS
+     sphere when THREE is unavailable. */
   var orbVeil = null, savedCam = null;
+  var orb3 = null;   // { renderer, scene, camera, mesh, tex, raf, dragging }
 
   function orbDur(ms) { return Atlas.reducedMotion ? 0 : ms; }
 
-  function orbCanvas(mem) {
-    var W = 1200, H = 600;
+  function orbCanvas(mem, W, H) {
+    W = W || 2048; H = H || 1024;
     var c = document.createElement("canvas");
-    c.width = W * 2; c.height = H;
+    c.width = W; c.height = H;
     var g = c.getContext("2d");
     var parch = document.documentElement.dataset.theme === "parchment";
-    var draw = function (ox) {
-      var grad = g.createLinearGradient(ox, 0, ox + W, H);
-      if (parch) { grad.addColorStop(0, "#efe4c8"); grad.addColorStop(1, "#dcc99e"); }
-      else { grad.addColorStop(0, "#33291c"); grad.addColorStop(1, "#211a12"); }
-      g.fillStyle = grad;
-      g.fillRect(ox, 0, W, H);
-      g.fillStyle = parch ? "rgba(74,58,32,.85)" : "rgba(224,196,138,.8)";
-      g.font = 'italic 30px Georgia, "Iowan Old Style", serif';
-      var words = ((mem.summary || "") + ".  " + (mem.content || "")).split(/\s+/);
-      if (!words.length || (words.length === 1 && !words[0])) words = ["(no", "content)"];
-      var x = ox + 60, y = 70, wi = 0, lh = 44;
-      while (y < H - 40) {
-        var line = "";
-        while (wi < words.length) {
-          var t = line ? line + " " + words[wi] : words[wi];
-          if (g.measureText(t).width > W - 120) break;
-          line = t; wi++;
-        }
-        if (wi >= words.length) wi = 0;             // wrap the text around the sphere
-        g.save();
-        g.translate(x, y);
-        g.rotate((Math.random() - 0.5) * 0.012);    // a living hand, not a printer
-        g.fillText(line, 0, 0);
-        g.restore();
-        y += lh;
+    // vertical gradient → identical left/right edges → seamless wrap
+    var grad = g.createLinearGradient(0, 0, 0, H);
+    if (parch) { grad.addColorStop(0, "#efe4c8"); grad.addColorStop(1, "#d9c493"); }
+    else { grad.addColorStop(0, "#3a2f20"); grad.addColorStop(1, "#211a12"); }
+    g.fillStyle = grad;
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = parch ? "rgba(74,58,32,.85)" : "rgba(224,196,138,.8)";
+    g.font = 'italic 52px Georgia, "Iowan Old Style", serif';
+    var words = ((mem.summary || "") + ".  " + (mem.content || "")).split(/\s+/);
+    if (!words.length || (words.length === 1 && !words[0])) words = ["(no", "content)"];
+    var margin = 130, lh = 78, wi = 0;
+    var y = H * 0.16;                       // stay off the poles
+    while (y < H * 0.86) {
+      var line = "";
+      while (wi < words.length) {
+        var t = line ? line + " " + words[wi] : words[wi];
+        if (g.measureText(t).width > W - margin * 2) break;
+        line = t; wi++;
       }
-    };
-    draw(0); draw(W);                               // duplicated → seamless rotation
-    return c.toDataURL("image/jpeg", 0.85);
+      if (wi >= words.length) wi = 0;       // the text wraps the sphere forever
+      g.save();
+      g.translate(margin, y);
+      g.rotate((Math.random() - 0.5) * 0.01);
+      g.fillText(line, 0, 0);
+      g.restore();
+      y += lh;
+    }
+    return c;
+  }
+
+  function buildOrb3(mem, host) {
+    if (typeof THREE === "undefined") return false;
+    var size = Math.min(Math.min(window.innerWidth, window.innerHeight) * 0.62, 560);
+    var renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    } catch (e) { return false; }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(size, size);
+    renderer.domElement.className = "orb-canvas";
+    host.appendChild(renderer.domElement);
+
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 10);
+    camera.position.z = 3.1;
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    var sun = new THREE.DirectionalLight(0xfff2d8, 0.65);
+    sun.position.set(-2, 2.4, 3);
+    scene.add(sun);
+
+    var tex = new THREE.CanvasTexture(orbCanvas(mem));
+    var mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(1.16, 56, 40),
+      new THREE.MeshLambertMaterial({ map: tex })
+    );
+    mesh.rotation.y = Math.PI * 0.15;
+    scene.add(mesh);
+
+    orb3 = { renderer: renderer, scene: scene, camera: camera, mesh: mesh,
+             tex: tex, raf: 0, dragging: false, vx: 0 };
+
+    var lastX = 0, lastY = 0;
+    var el = renderer.domElement;
+    el.addEventListener("pointerdown", function (ev) {
+      ev.stopPropagation();
+      orb3.dragging = true;
+      lastX = ev.clientX; lastY = ev.clientY;
+      el.setPointerCapture(ev.pointerId);
+      el.classList.add("grabbing");
+    });
+    el.addEventListener("pointermove", function (ev) {
+      if (!orb3 || !orb3.dragging) return;
+      var dx = ev.clientX - lastX, dy = ev.clientY - lastY;
+      lastX = ev.clientX; lastY = ev.clientY;
+      mesh.rotation.y += dx * 0.006;
+      mesh.rotation.x = Math.max(-0.9, Math.min(0.9, mesh.rotation.x + dy * 0.004));
+      orb3.vx = dx * 0.006;                  // fling momentum
+    });
+    el.addEventListener("pointerup", function () {
+      if (orb3) orb3.dragging = false;
+      el.classList.remove("grabbing");
+    });
+    el.addEventListener("click", function (ev) { ev.stopPropagation(); });
+
+    (function frame() {
+      if (!orb3) return;
+      if (!orb3.dragging) {
+        orb3.vx *= 0.96;                     // momentum decays into…
+        mesh.rotation.y += Atlas.reducedMotion
+          ? orb3.vx
+          : Math.max(orb3.vx, 0.0016);       // …the idle turn
+      }
+      renderer.render(scene, camera);
+      orb3.raf = requestAnimationFrame(frame);
+    })();
+    return true;
+  }
+
+  function destroyOrb3() {
+    if (!orb3) return;
+    cancelAnimationFrame(orb3.raf);
+    orb3.tex.dispose();
+    orb3.mesh.geometry.dispose();
+    orb3.mesh.material.dispose();
+    orb3.renderer.dispose();
+    orb3 = null;
   }
 
   async function openOrb(n) {
@@ -272,11 +353,29 @@
 
     orbVeil = document.createElement("div");
     orbVeil.className = "orb-veil";
-    orbVeil.innerHTML =
-      '<figure class="orb" style="background-image:url(' + orbCanvas(mem) + ')"></figure>' +
-      '<figcaption class="orb-caption"><strong>' + Atlas.esc(mem.summary || mem.id)
-      + '</strong><span>scroll to return · Esc</span></figcaption>';
+    var stage = document.createElement("div");
+    stage.className = "orb-stage";
+    orbVeil.appendChild(stage);
+    var cap = document.createElement("figcaption");
+    cap.className = "orb-caption";
+    cap.innerHTML = "<strong>" + Atlas.esc(mem.summary || mem.id)
+      + "</strong><span>drag to turn · scroll to return · Esc</span>";
+    orbVeil.appendChild(cap);
     document.body.appendChild(orbVeil);
+
+    if (!buildOrb3(mem, stage)) {
+      // CSS fallback: shaded circle with the sliding texture
+      var flat = orbCanvas(mem, 1200, 600);
+      var two = document.createElement("canvas");
+      two.width = 2400; two.height = 600;
+      var ctx = two.getContext("2d");
+      ctx.drawImage(flat, 0, 0); ctx.drawImage(flat, 1200, 0);
+      var fig = document.createElement("figure");
+      fig.className = "orb";
+      fig.style.backgroundImage = "url(" + two.toDataURL("image/jpeg", 0.85) + ")";
+      stage.appendChild(fig);
+    }
+
     requestAnimationFrame(function () { requestAnimationFrame(function () {
       orbVeil && orbVeil.classList.add("open");
     }); });
@@ -286,7 +385,7 @@
       closeOrb();
     }, { passive: false });
     orbVeil.addEventListener("click", function (ev) {
-      if (!ev.target.closest(".orb")) closeOrb();
+      if (!ev.target.closest(".orb-stage")) closeOrb();
     });
     document.addEventListener("keydown", orbKey, true);
   }
@@ -300,6 +399,7 @@
     var veil = orbVeil;
     orbVeil = null;
     document.removeEventListener("keydown", orbKey, true);
+    destroyOrb3();
     veil.classList.remove("open");
     setTimeout(function () { veil.remove(); }, instant ? 0 : 260);
     if (!savedCam || !graph) return;
