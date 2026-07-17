@@ -81,6 +81,16 @@ http://localhost:7741/sse
   (timestamp → `get_startup_summary` → `get_recent_context` → stop)
 - Skills under `C:\Users\Miguel\.claude\skills\` (log-everything, handover, map-project-files)
 
+### Codex (OpenAI)
+
+- **Transport:** stdio (not SSE) — `docker exec -i memorybrain-brain-1 python stdio_server.py`
+- Config: `C:\Users\Miguel\.codex\config.toml` → `[mcp_servers.memorybrain]`
+- Global protocol: `C:\Users\Miguel\.codex\AGENTS.md`
+- Skill: `C:\Users\Miguel\.codex\skills\log-everything\SKILL.md`
+- Project guide: [`CODEX.md`](CODEX.md)
+- Verify: `codex mcp get memorybrain` → `transport: stdio`
+- Restart Codex after config changes. HTTP fallback still needs `X-Brain-Key` when set.
+
 ### Gemini / Antigravity
 
 - MCP tool descriptors: `C:\Users\Miguel\.gemini\antigravity\mcp\memorybrain\`  
