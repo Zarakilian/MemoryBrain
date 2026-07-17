@@ -42,8 +42,8 @@ It replaces flat `MEMORY.md` files with searchable, project-scoped, durable memo
 | Status | `GET http://localhost:7741/status` |
 | Readiness | `GET http://localhost:7741/readiness` |
 
-Branch tracked for v2 work: **`feature/memorybrain-2.0`** (VERSION `2.0.0`).  
-Older production was **v0.5.0** on `master` until the 2026-07-17 migration.
+**GitHub `master` is now v2.0.0** (merge commit `f2a4a35`, 2026-07-17).  
+Historical feature branch: `feature/memorybrain-2.0`. Pre-merge production was **v0.5.0**.
 
 ---
 
@@ -55,18 +55,28 @@ MemoryBrain is already wired for Miguel’s AIs. MCP endpoint is the same for al
 http://localhost:7741/sse
 ```
 
-### Grok
+### Grok (tight wiring — 2026-07-17)
 
-- Config: `C:\Users\Miguel\.grok\config.toml`
-- Server: `[mcp_servers.memorybrain]` → `url = "http://localhost:7741/sse"`, `enabled = true`
-- Improved skill (keep this): `C:\Users\Miguel\.grok\skills\log-everything\SKILL.md`
-- Skill backup from pre-v2: `C:\Users\Miguel\memorybrain-backups\...\grok-log-everything\`
+| Piece | Path / value |
+|-------|----------------|
+| Config | `C:\Users\Miguel\.grok\config.toml` |
+| MCP | `[mcp_servers.memorybrain]` → SSE `http://localhost:7741/sse` |
+| MCP auth | `headers = { "X-Brain-Key" = "…" }` (matches live `.env` `BRAIN_API_KEY`) |
+| Timeouts | `startup_timeout_sec = 30`, `tool_timeout_sec = 180` |
+| Global rule | `C:\Users\Miguel\.grok\rules\memorybrain-session.md` (session protocol for **all** projects) |
+| SessionStart hook | `C:\Users\Miguel\.grok\hooks\memorybrain.json` → `scripts\memorybrain-session-start.ps1` |
+| PreCompact hook | same JSON → `scripts\memorybrain-precompact.ps1` |
+| Hook output | `C:\Users\Miguel\.grok\memorybrain\startup-context.md` + `last-active.txt` |
+| Log skill | `C:\Users\Miguel\.grok\skills\log-everything\SKILL.md` (**keep** improved Grok version) |
+| Project rules | this repo’s `AGENTS.md` + `GROK.md` |
+
+**Restart Grok** after MCP/header changes so SSE reconnects with the API key.
 
 ### Claude Code
 
-- Session-start hook: `~/.claude/hooks/session-start-memory.sh`  
-  (`MEMORYBRAIN_DIR=/c/Users/Miguel/memorybrain` in `settings.json`)
-- Pre-compact ingest: `pre-compact-auto-handover.py`
+- Session-start: `~/.claude/hooks/session-start-memory-wrapper.sh` (loads `BRAIN_API_KEY` from live `.env`, then real hook)
+- Real hook: `session-start-memory.sh` (`MEMORYBRAIN_DIR=/c/Users/Miguel/memorybrain`)
+- Pre-compact: `pre-compact-auto-handover.py` / `pre-compact-ingest.py` (auto-load key from live `.env`)
 - Session protocol: `C:\Users\Miguel\.claude\Claude.md` / `CLAUDE.md`  
   (timestamp → `get_startup_summary` → `get_recent_context` → stop)
 - Skills under `C:\Users\Miguel\.claude\skills\` (log-everything, handover, map-project-files)
@@ -320,9 +330,16 @@ Live `.env` lives only under `C:\Users\Miguel\memorybrain\.env` (gitignored).
 |-------|--------|
 | `version` | `2.0.0` |
 | `/readiness` | `ready: true`, `vector_store: ok`, ollama/embed/summary ok |
-| memories | **309** (unchanged) |
-| vectors | **309** |
+| memories | **309** at migrate; **310** after auth smoke test |
+| vectors | equal to memories |
 | projects | 8 (same breakdown) |
 | graph rebuild | 255 memories linked, 1692 edges |
 | Atlas UI | HTTP 200 at `/ui` |
-| build stamp | `19dc0c02c640.20260717-0610` |
+| build stamp | `19dc0c02c640.20260717-0610` (rebuilds change stamp) |
+| GitHub | `master` @ `f2a4a35` merge 2.0 |
+
+### Auth note
+
+`BRAIN_API_KEY` is set on the live install. All write/admin (and currently status) paths need `X-Brain-Key`.  
+Clients that must send it: Grok MCP headers, Grok hooks (read `.env`), Claude wrapper + pre-compact loaders.  
+**Never commit the key.** Rotate by editing live `.env`, restarting brain, and updating Grok `config.toml` headers.
