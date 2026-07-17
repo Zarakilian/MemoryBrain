@@ -558,6 +558,28 @@ html[data-theme="parchment"] .fam {
 }
 html[data-theme="parchment"] .fam-print { color: rgba(58, 46, 30, .4); }
 @keyframes fam-print { 0% { opacity: .55; } 65% { opacity: .35; } 100% { opacity: 0; } }
+.fam.walking svg { animation: fam-waddle .34s ease-in-out infinite alternate; }
+@keyframes fam-waddle {
+  from { transform: translateY(0) rotate(-2deg); }
+  to   { transform: translateY(-2.5px) rotate(2deg); }
+}
+.fam.hovering svg { animation: fam-hoverbob 1.7s ease-in-out infinite alternate; }
+@keyframes fam-hoverbob { from { transform: translateY(0); } to { transform: translateY(-7px); } }
+.fam .fam-tail {
+  transform-origin: 16px 50px;
+  animation: fam-tailflick 3.4s ease-in-out infinite;
+}
+@keyframes fam-tailflick {
+  0%, 68% { transform: rotate(0deg); }
+  78%     { transform: rotate(-16deg); }
+  88%     { transform: rotate(7deg); }
+  100%    { transform: rotate(0deg); }
+}
+#familiar-toggle {
+  background: none; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px; cursor: pointer;
+}
+#familiar-toggle:hover { color: var(--gold-bright); border-color: var(--gold); }
 
 /* ------------------------------------------------------- reduced motion */
 @media (prefers-reduced-motion: reduce) {
