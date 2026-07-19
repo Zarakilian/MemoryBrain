@@ -2,10 +2,16 @@ import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
+from typing import Callable
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.sse import SseServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.transport_security import TransportSecuritySettings
+
 from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
@@ -24,6 +30,47 @@ from .vector import get_backend, vec_ready, startup_backfill, reembed_missing
 
 logger = logging.getLogger(__name__)
 
+# Loopback-only MCP + health surfaces. Bound to 127.0.0.1 in compose; no
+# remote network exposure. Classic SSE clients use /sse + /messages/; Grok and
+# other streamable-HTTP clients use /mcp.
+MCP_PUBLIC_PATHS = {
+    "/sse",
+    "/messages/",
+    "/mcp",
+    "/health",
+    "/readiness",
+}
+MCP_PUBLIC_PREFIXES = ("/mcp/", "/messages", "/ui", "/api/ui", "/static")
+
+# Single process-wide streamable HTTP manager (required by the MCP SDK).
+# stateless=True: each request is independent — ideal for local single-user tools.
+# DNS-rebinding protection allows only loopback Host headers.
+_streamable_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=[
+        "localhost",
+        "localhost:*",
+        "127.0.0.1",
+        "127.0.0.1:*",
+        "[::1]",
+        "[::1]:*",
+    ],
+    allowed_origins=[
+        "http://localhost",
+        "http://localhost:*",
+        "http://127.0.0.1",
+        "http://127.0.0.1:*",
+        "http://[::1]",
+        "http://[::1]:*",
+    ],
+)
+streamable_session_manager = StreamableHTTPSessionManager(
+    app=mcp_server,
+    json_response=False,
+    stateless=True,
+    security_settings=_streamable_security,
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -34,38 +81,70 @@ async def lifespan(app: FastAPI):
     if not report.get("skipped") and report.get("missing_before"):
         logger.info(f"Vector backfill report: {report}")
     logger.info(f"Brain started (vector backend: {get_backend()})")
-    yield
+    # StreamableHTTPSessionManager.run() owns the request task group for /mcp.
+    async with streamable_session_manager.run():
+        logger.info("Streamable HTTP MCP session manager started at /mcp")
+        yield
+    logger.info("Streamable HTTP MCP session manager stopped")
+
+
+class PureASGIAuthMiddleware:
+    """API-key gate that does not wrap the response body.
+
+    FastAPI/Starlette `@app.middleware("http")` uses BaseHTTPMiddleware, which
+    buffers/rewrites the response stream and breaks Server-Sent Events used by
+    classic MCP SSE (`GET /sse`) and can corrupt streamable HTTP. This pure
+    ASGI middleware only inspects the request and then passes through the raw
+    ASGI app — safe for long-lived streaming transports.
+    """
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        path = scope.get("path", "") or ""
+        # Public MCP/health/UI surfaces (loopback trust boundary).
+        if path in MCP_PUBLIC_PATHS or any(path.startswith(p) for p in MCP_PUBLIC_PREFIXES):
+            # UI write endpoints still require a key when configured.
+            if not path.startswith("/api/ui/edit"):
+                await self.app(scope, receive, send)
+                return
+
+        api_key = os.getenv("BRAIN_API_KEY")
+        if not api_key:
+            await self.app(scope, receive, send)
+            return
+
+        headers = {
+            k.decode("latin-1").lower(): v.decode("latin-1")
+            for k, v in scope.get("headers", [])
+        }
+        presented = headers.get("x-brain-key", "")
+        if presented != api_key:
+            body = b'{"detail":"Invalid or missing API key"}'
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+
+        await self.app(scope, receive, send)
 
 
 app = FastAPI(title="MemoryBrain", version="2.0.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
-
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    # Skip auth for public endpoints needed for MCP transport and health checks
-    public_paths = {
-        "/sse",         # SSE connection
-        "/messages/",   # SSE message post handler
-        "/health",      # Server health check
-        "/readiness",   # Server readiness check
-    }
-
-    # Web UI + static assets + read-only UI JSON: same trust boundary as /sse
-    # (loopback-only binding is the auth; these paths cannot write).
-    # /api/ui/edit/* is the deliberate exception: UI writes are enforced
-    # exactly like /ingest/* — X-Brain-Key required whenever a key is set.
-    ui_prefixes = ("/ui", "/api/ui", "/static")
-    if (not request.url.path.startswith("/api/ui/edit")
-            and (request.url.path in public_paths
-                 or request.url.path.startswith(ui_prefixes))):
-        return await call_next(request)
-
-    try:
-        await require_api_key(request)
-    except HTTPException as exc:
-        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-    return await call_next(request)
+# Pure ASGI middleware first so it wraps the whole stack without body buffering.
+app.add_middleware(PureASGIAuthMiddleware)
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -182,6 +261,12 @@ async def status():
     return {
         "version": "2.0.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
+        "mcp": {
+            "sse": "/sse",
+            "sse_messages": "/messages/",
+            "streamable_http": "/mcp",
+            "stdio": "docker exec -i memorybrain-brain-1 python stdio_server.py",
+        },
     }
 
 
@@ -208,6 +293,7 @@ async def next_session(project: str = ""):
 
 @app.get("/sse")
 async def sse_endpoint(request: Request):
+    """Classic MCP SSE transport (GET open stream; posts go to /messages/)."""
     async with sse_transport.connect_sse(
         request.scope, request.receive, request._send
     ) as streams:
@@ -219,6 +305,22 @@ async def sse_endpoint(request: Request):
 @app.post("/messages/")
 async def handle_messages(request: Request):
     await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+
+
+async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
+    """ASGI entry for MCP streamable HTTP (Grok --transport http)."""
+    await streamable_session_manager.handle_request(scope, receive, send)
+
+
+# Mount streamable HTTP under /mcp so Grok can use:
+#   url = "http://localhost:7741/mcp"  with transport http
+# The mount strips the prefix; the session manager receives the remaining path.
+from starlette.routing import Mount
+
+app.router.routes.insert(
+    0,
+    Mount("/mcp", app=handle_streamable_http),
+)
 
 
 @app.post("/admin/rebuild-graph")

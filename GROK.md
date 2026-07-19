@@ -55,22 +55,47 @@ MemoryBrain is already wired for Miguel’s AIs. MCP endpoint is the same for al
 http://localhost:7741/sse
 ```
 
-### Grok (tight wiring — 2026-07-17)
+### Grok (tight wiring — 2026-07-19 update)
 
 | Piece | Path / value |
 |-------|----------------|
 | Config | `C:\Users\Miguel\.grok\config.toml` |
-| MCP | `[mcp_servers.memorybrain]` → SSE `http://localhost:7741/sse` |
-| MCP auth | `headers = { "X-Brain-Key" = "…" }` (matches live `.env` `BRAIN_API_KEY`) |
-| Timeouts | `startup_timeout_sec = 30`, `tool_timeout_sec = 180` |
-| Global rule | `C:\Users\Miguel\.grok\rules\memorybrain-session.md` (session protocol for **all** projects) |
-| SessionStart hook | `C:\Users\Miguel\.grok\hooks\memorybrain.json` → `scripts\memorybrain-session-start.ps1` |
-| PreCompact hook | same JSON → `scripts\memorybrain-precompact.ps1` |
+| **Preferred MCP (Grok)** | **Streamable HTTP** `url = "http://localhost:7741/mcp"` with `type = "http"` (or omit type if Grok treats `url` as HTTP) |
+| Fallback MCP | **stdio** `docker exec -i memorybrain-brain-1 python stdio_server.py` (same as Codex; always works) |
+| Classic SSE | `GET http://localhost:7741/sse` + `POST /messages/` — for Claude; **do not** point Grok here (Grok POSTs initialize to `/sse` → 405) |
+| MCP auth | Loopback MCP paths are public; HTTP ingest/status still use `X-Brain-Key` when set |
+| Timeouts | `startup_timeout_sec = 45`, `tool_timeout_sec = 180` |
+| Global rule | `C:\Users\Miguel\.grok\rules\memorybrain-session.md` |
+| SessionStart / PreCompact hooks | `C:\Users\Miguel\.grok\hooks\memorybrain.json` |
 | Hook output | `C:\Users\Miguel\.grok\memorybrain\startup-context.md` + `last-active.txt` |
-| Log skill | `C:\Users\Miguel\.grok\skills\log-everything\SKILL.md` (**keep** improved Grok version) |
-| Project rules | this repo’s `AGENTS.md` + `GROK.md` |
+| Log skill | `C:\Users\Miguel\.grok\skills\log-everything\SKILL.md` |
 
-**Restart Grok** after MCP/header changes so SSE reconnects with the API key.
+**Verify:** `grok mcp doctor memorybrain` → handshake OK + tools discovered.  
+**Restart Grok** after MCP config changes so the agent reloads tools.
+
+#### Grok config examples
+
+Streamable HTTP (preferred after 2026-07-19):
+
+```toml
+[mcp_servers.memorybrain]
+url = "http://localhost:7741/mcp"
+type = "http"
+enabled = true
+startup_timeout_sec = 45
+tool_timeout_sec = 180
+```
+
+Stdio fallback:
+
+```toml
+[mcp_servers.memorybrain]
+command = "docker"
+args = ["exec", "-i", "memorybrain-brain-1", "python", "stdio_server.py"]
+enabled = true
+startup_timeout_sec = 45
+tool_timeout_sec = 180
+```
 
 ### Claude Code
 

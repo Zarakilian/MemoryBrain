@@ -1,4 +1,3 @@
-version: "3.9"
 services:
   brain:
     build:
@@ -13,7 +12,8 @@ services:
       - OLLAMA_URL=http://ollama:11434
     depends_on:
       - ollama
-    restart: unless-stopped
+    # Survive Docker Desktop restarts and host reboots so MCP clients stay up.
+    restart: always
 
   ollama:
     image: ollama/ollama:latest
@@ -21,7 +21,8 @@ services:
       - ollama_data:/root/.ollama
       # Mount host CA certs so Ollama can verify TLS through corporate proxy
       - /etc/ssl/certs:/etc/ssl/certs:ro
-    restart: unless-stopped
+    # Embedding/summary provider for Brain; must stay up for readiness=true.
+    restart: always
 
 volumes:
   brain_data:
