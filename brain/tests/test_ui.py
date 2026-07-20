@@ -215,15 +215,28 @@ def test_ui_connection_is_read_only():
 
 def test_static_assets_served(ui_client):
     for path in ("/static/css/atlas.css", "/static/js/atlas.js",
+                 "/static/js/nebula.js",
                  "/static/js/constellation.js", "/static/js/chronicle.js",
+                 "/static/js/editor.js", "/static/js/familiar.js",
                  "/static/vendor/force-graph.min.js",
-                 "/static/vendor/3d-force-graph.min.js",
-                 "/static/vendor/three.min.js",
-                 "/static/js/codex.js", "/static/js/familiar.js",
-                 "/static/img/parchment_grain.jpg", "/static/img/umber_grain.jpg",
-                 "/static/img/vitruvian.jpg", "/static/img/flowers.jpg",
-                 "/static/img/flying_machine.jpg", "/static/img/tuscan.jpg"):
+                 "/static/vendor/three.module.min.js",
+                 "/static/vendor/OrbitControls.js",
+                 "/static/vendor/d3-force-3d.bundle.min.js"):
         assert ui_client.get(path).status_code == 200, path
+
+
+def test_world_and_importmap_present(ui_client):
+    """The Nebula: one full-screen scene host + the import map that resolves
+    the single modern three build (no build pipeline, no CDN)."""
+    r = ui_client.get("/ui")
+    assert 'id="world"' in r.text
+    assert "importmap" in r.text
+    assert "/static/vendor/three.module.min.js" in r.text
+    assert "/static/js/nebula.js" in r.text
+    # retired eras must stay retired
+    assert "codex.js" not in r.text
+    assert "3d-force-graph.min.js" not in r.text
+    assert "parchment" not in r.text.lower()
 
 
 # ------------------------------------------------------------- empty DB

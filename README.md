@@ -6,7 +6,10 @@ Replaces flat MEMORY.md files with a FastAPI + SQLite (FTS5 + sqlite-vec) + Olla
 that gives your AI assistant automatic context on every new session, with on-demand semantic search,
 an automatic memory graph, and a local web UI at http://localhost:7741/ui.
 
-MemoryBrain natively supports **SSE transport** for Claude Code and **stdio transport** (via a Docker wrapper) for Gemini.
+MemoryBrain works with **any AI assistant**: MCP over SSE (Claude Code),
+MCP over stdio (Gemini, Codex, Kimi, Grok, Cline — any MCP client, via a
+one-line Docker command), or plain REST for assistants without MCP.
+See [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md).
 
 MemoryBrain is a **passive store** — it stores what your assistant saves via `add_memory`. No polling,
 no plugin credentials. Works identically on any machine with any MCP tools registered.
@@ -90,23 +93,25 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   derived at ingest, fully rebuildable via `POST /admin/rebuild-graph`.
 - **2 new MCP tools** (9 total): `get_related_memories`, `get_memory_graph`.
   The existing 7 contracts are unchanged.
-- **Local web UI — MemoryBrain Atlas** at `/ui`: one continuous workspace.
-  Left rail of projects, `Ctrl+K` command palette, sliding inspector, and
-  three lenses on the same data: **Stream** (reverse-chronological daily
-  feed, server-rendered, fully usable with JS disabled), **Constellation**
-  (3D orbit view of the memory web by default, with a remembered 2D
-  switch and automatic 2D fallback — vendored force-graph/3d-force-graph
-  builds, no CDN), and **Chronicle** (a horizontal time axis of sessions
-  and handovers per project). Keys `1/2/3` switch lenses. A pastel
-  **parchment theme** toggle lives in the rail, and the **codex margin** —
-  an ambient background layer of procedurally drawn da Vinci studies
-  (gears, moon phases, an icosahedron, bird-flight studies, star charts,
-  botanical sprigs, water vortices, mirrored script) plus ghosted plates —
-  drifts behind everything. Every visit composes a different folio; it is
-  pointer-inert, goes still under reduced-motion, and can be switched off
-  from the rail. Fully offline, zero telemetry; every read path stays
-  on query-only connections.
-- **Editing from the UI.** The Atlas can now add, edit, archive and delete
+- **Local web UI — the MemoryBrain Nebula** at `/ui`: one living world.
+  A single full-screen three.js scene (vendored r170 module, no CDN)
+  breathes behind the whole interface — deep space, slow gas clouds,
+  cursor-parallax star dust — and the UI floats inside it as translucent
+  glass: left project rail, `Ctrl+K` command palette, sliding glass
+  inspector, and three lenses on the same data. **Stream** (reverse-
+  chronological daily feed, server-rendered, fully usable with JS
+  disabled), **Constellation** (the memories as luminous stars joined by
+  weighted filaments, laid out in 3D by d3-force-3d *inside the world
+  itself*; click a star and the camera flies into a slowly turning glass
+  orb wrapped in the memory's own text; remembered 2D switch plus
+  automatic 2D fallback via the vendored force-graph canvas build), and
+  **Chronicle** (a horizontal time axis of sessions and handovers per
+  project). Keys `1/2/3` switch lenses. Ambience and the cursor familiar
+  each have remembered toggles in the rail; everything ambient is
+  pointer-inert, stands still under reduced-motion, and the constellation
+  keeps breathing dimly behind the other lenses. Fully offline, zero
+  telemetry; every read path stays on query-only connections.
+- **Editing from the UI.** The Nebula can add, edit, archive and delete
   memories and projects: "+ note" in the stage head (notes, facts,
   references, or a text-file upload), "+ new project" in the rail, and
   Edit / Archive / Delete actions in the inspector. All writes go through

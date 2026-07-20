@@ -105,7 +105,7 @@ Ollama (or your configured provider) to be up.
 deliberately do not — the loopback-only port binding is the trust
 boundary, exactly as it already is for `/sse`. The UI's *write* surface
 (`/api/ui/edit/*`) is the exception: it enforces the key exactly like
-`/ingest/*`; the Atlas prompts for it once and remembers it per browser.
+`/ingest/*`; the UI prompts for it once and remembers it per browser.
 
 ## Rollback
 
@@ -131,16 +131,16 @@ directory to reclaim disk: `docker compose exec brain rm -rf /app/data/chroma`
   payload.
 - HTTP: `POST /admin/rebuild-graph`, `POST /admin/backfill-vectors`,
   `GET /api/ui/graph`, `GET /api/ui/search`, `GET /api/ui/stats`.
-- Web UI — **MemoryBrain Atlas**: one continuous workspace at `/ui` with a
+- Web UI — the **MemoryBrain Nebula**: one living world at `/ui` with a
   project rail, a command palette (`Ctrl+K`), a sliding inspector, and three
   lenses on the same data — **Stream** (server-rendered daily feed; works with
-  JS disabled), **Constellation** (3D orbit view of the memory web by
-  default, remembered 2D switch, automatic 2D fallback), and **Chronicle**
-  (horizontal time axis of sessions/handovers per project, drawn from the
-  `session_chain` edges). Switch lenses with `1/2/3`. Parchment theme and
-  codex-margin ambience toggles live in the rail. Old `/ui/graph` and
-  `/ui/project/{slug}` URLs redirect.
-- Editing from the Atlas: add notes/facts/references (or upload a ≤1 MB
+  JS disabled), **Constellation** (the memories as luminous stars inside a
+  full-screen living nebula scene; remembered 2D switch, automatic 2D
+  fallback), and **Chronicle** (horizontal time axis of sessions/handovers
+  per project, drawn from the `session_chain` edges). Switch lenses with
+  `1/2/3`. World-ambience and cursor-familiar toggles live in the rail.
+  Old `/ui/graph` and `/ui/project/{slug}` URLs redirect.
+- Editing from the Nebula: add notes/facts/references (or upload a ≤1 MB
   text file), create/edit projects, and Edit / Archive / Delete from the
   inspector. Guardrails: archive is the reversible default; hard delete
   requires typing the memory id's first 8 characters; a project cannot be

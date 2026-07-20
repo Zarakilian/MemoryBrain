@@ -4,14 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
-<script>/* apply saved theme before first paint */
-try { var _t = localStorage.getItem("atlas-theme");
-      if (_t) document.documentElement.dataset.theme = _t; } catch (e) {}
-</script>
 <link rel="stylesheet" href="/static/css/atlas.css?b={{ build_stamp }}">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+{# One modern three build owns the whole world (design rule 5). No build
+   pipeline: the import map is the module resolver, served as-is. #}
+<script type="importmap">
+{ "imports": {
+    "three": "/static/vendor/three.module.min.js?b={{ build_stamp }}",
+    "orbitcontrols": "/static/vendor/OrbitControls.js?b={{ build_stamp }}"
+} }
+</script>
 </head>
-<body>
+<body data-lens="{{ lens|default('stream') }}">
+
+{# The world: a single full-screen scene behind the glass. pointer-events
+   are granted by CSS only while the Constellation lens is active — it can
+   never eat a click from a floating pane. #}
+<div id="world" aria-hidden="true"></div>
+
 <div class="shell">
 
   <aside class="rail">
@@ -35,7 +45,6 @@ try { var _t = localStorage.getItem("atlas-theme");
     <button id="new-project-btn" class="rail-add" hidden data-js type="button">+ new project</button>
     <div class="rail-foot">
       <a class="rail-search" href="/ui/search">Search <span class="rail-kbd" hidden data-js>Ctrl K</span></a>
-      <button id="theme-toggle" hidden data-js type="button"></button>
       <button id="ambience-toggle" hidden data-js type="button"></button>
       <button id="familiar-toggle" hidden data-js type="button"></button>
     </div>
@@ -67,8 +76,8 @@ try { var _t = localStorage.getItem("atlas-theme");
 
 <script src="/static/js/atlas.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/editor.js?b={{ build_stamp }}" defer></script>
-<script src="/static/js/codex.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/familiar.js?b={{ build_stamp }}" defer></script>
+<script type="module" src="/static/js/nebula.js?b={{ build_stamp }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

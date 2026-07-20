@@ -347,3 +347,24 @@ cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
 ### Known followup (v0.5.1)
 - Migrate `GeminiProvider` from deprecated `google-generativeai` to `google-genai` package
   (all support for `google-generativeai` has ended upstream)
+
+## UI — THE NEBULA rebuild — 2026-07-20
+
+### Shipped
+- Complete visual rebuild of `/ui` around one concept: a single living
+  world. One full-screen three.js scene (vendored r170 module + import
+  map, no build pipeline, no CDN) renders deep space, breathing gas
+  clouds, cursor-parallax star dust — and the Constellation itself:
+  memories as luminous instanced stars, weighted filaments, d3-force-3d
+  layout, native hover/click/drag, camera flight into the glass orb.
+- The whole shell is one translucent glass material floating in the
+  world; Stream and Chronicle are panes inside it; the constellation
+  breathes dimly behind every lens. Parchment theme, codex room and the
+  da Vinci plates honourably retired; the familiar is starlight now.
+- Same behaviours, same guardrails: three lenses on one dataset, Ctrl+K
+  palette, glass inspector, editing with typed-confirm delete, API-key
+  prompt on 401, server-rendered no-JS Stream, legacy redirects, doctor
+  page untouched, `?b=` cache-busting intact.
+- 2D/no-WebGL fallback stays on the vendored force-graph canvas build —
+  never mixed with the world's three (the r128 lesson, honoured).
+- Tests: 236 passing (asset list updated; new nebula/importmap check).

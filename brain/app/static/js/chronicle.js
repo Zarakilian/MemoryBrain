@@ -1,6 +1,7 @@
 /* Chronicle lens — how the work actually flowed. A horizontal time axis of
    sessions and handovers per project, with session_chain edges drawn as each
-   project's spine. Plain SVG: no physics, nothing to go wrong. */
+   project's spine. Plain SVG floating on glass inside the world: no physics,
+   nothing to go wrong. */
 "use strict";
 
 (function () {
@@ -108,7 +109,7 @@
       l.items.forEach(function (m) {
         var cx = x(m._t), cy = laneY(i);
         var hue = Atlas.hue(l.project);
-        var fill = "hsl(" + hue + " 42% 60%)";
+        var fill = "hsl(" + hue + " 70% 66%)";   // luminous: same law as the stars
         var r = R + (m.importance >= 4 ? 2 : 0);
         var shape;
         if (m.type === "handover") {
@@ -140,10 +141,6 @@
     });
     host.scrollLeft = host.scrollWidth;          // land on "now"
   }
-
-  document.addEventListener("atlas:theme", function () {
-    if (inited && lastData) render(lastData);
-  });
 
   if (window.Atlas) Atlas.onLens("chronicle", init);
 })();
