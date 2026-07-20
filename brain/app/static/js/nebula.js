@@ -559,6 +559,8 @@ if (renderer) {
     graph.group.add(graph.pulses);
 
     startSim();
+    updateBuffers();     // matrices valid IMMEDIATELY — a star that has not
+                         // simulated yet must still render and pick
     paintLinks();
     N.requestRender();
   };
@@ -618,6 +620,13 @@ if (renderer) {
     var m = new THREE.Matrix4(), q = new THREE.Quaternion(),
         s = new THREE.Vector3(), p = new THREE.Vector3();
     graph.nodes.forEach(function (n, i) {
+      /* NaN is contagious: one bad position would silently make the whole
+         constellation unpickable (NaN bounding sphere). Quarantine it. */
+      if (!isFinite(n.x) || !isFinite(n.y) || !isFinite(n.z)) {
+        n.x = n.y = n.z = 0;
+        n.vx = n.vy = n.vz = 0;
+        N.lastError = "NaN position quarantined on " + n.id;
+      }
       var r = n._r * (n.id === graph.selected ? 1.25 :
                       n.id === graph.hoverId ? 1.12 : 1);
       p.set(n.x || 0, n.y || 0, n.z || 0);
@@ -1072,11 +1081,25 @@ if (renderer) {
     if (t >= 1) { flight = null; if (f.done) f.done(); }
   }
 
-  var lastNow = 0, fitCounter = 0;
+  var lastNow = 0, fitCounter = 0, animErrors = 0;
   var docStyle = document.documentElement.style;
   function animate(now) {
     requestAnimationFrame(animate);
     if (document.hidden) { lastNow = now; return; }
+    /* self-healing: one bad frame must never freeze the world into an
+       unclickable still image. Log the first few, keep rendering. */
+    try {
+      animateBody(now);
+    } catch (e) {
+      if (++animErrors <= 3) {
+        N.lastError = String(e && e.stack || e);
+        console.error("Nebula animate error (frame kept alive):", e);
+      }
+      try { controls.update(); renderer.render(scene, camera); } catch (e2) {}
+    }
+  }
+
+  function animateBody(now) {
     var dt = Math.min((now - lastNow) / 1000 || 0.016, 0.05);
     lastNow = now;
     clockTime = now * 0.001;
@@ -1164,6 +1187,25 @@ if (renderer) {
 
   if (!reduced) requestAnimationFrame(animate);
   else still();
+
+  /* one honest answer for "why doesn't it work": paste Nebula.debug()
+     into the console (or ask the doctor page) */
+  N.debug = function () {
+    return {
+      focus: focus, reduced: reduced, ambience: ambient.visible,
+      nodes: graph.nodes.length, links: graph.links.length,
+      selected: graph.selected, hover: graph.hoverId,
+      simAlpha: graph.sim ? graph.sim.alpha() : null,
+      spaceR: SPACE.r,
+      camera: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+      controlsEnabled: controls.enabled,
+      orbOpen: !!orb.veil,
+      animErrors: animErrors,
+      lastError: N.lastError || null,
+      samplePos: graph.nodes[0]
+        ? { x: graph.nodes[0].x, y: graph.nodes[0].y, z: graph.nodes[0].z } : null,
+    };
+  };
 
   window.addEventListener("resize", function () {
     camera.aspect = window.innerWidth / window.innerHeight;

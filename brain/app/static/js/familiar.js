@@ -1,17 +1,23 @@
 /* The Familiar — a small companion of starlight that follows the cursor
-   through the Nebula. It cycles between forms every few seconds, and each
-   creature moves like itself:
+   through the Nebula. It cycles between forms every so often, each with
+   its own movement personality — and every creature FACES where it is
+   going, and chases with real lag, so it feels like pursuit, not glue:
 
      footprints — stamped along your path, stride varies
-     bird       — swoops with banked turns, hovers with a bob when you stop
-     moth       — darts erratically, drawn to the pointer like a lamp
-     cat        — stalks in bursts: waits, trots when you pull away,
-                  sits and flicks its tail when you stay still
+     butterfly  — chaotic darts and drifting loops; flutters harder the
+                  faster it flies; trails well behind a quick hand
+     solar      — the nine planets of our solar system in tilted orbits
+                  around the cursor: the mouse is the sun
+     spider     — scuttles after the pointer in bursts, sometimes jumps,
+                  and sometimes fires a silk line AT the cursor, swings
+                  from it like a pendulum while you move, then climbs
+                  back up the thread and resumes the chase
 
    It has its own switch (rail button + palette, remembered), independent
    of the world's ambience. Same safety rails as everything ambient here:
-   pointer-events:none !important layer, one pointermove listener, a
-   self-stopping rAF loop, transforms only, absent under reduced motion. */
+   pointer-events:none !important layer, one pointermove listener, one
+   rAF loop (self-stopping when nothing needs to move), transforms only,
+   absent under reduced motion. */
 "use strict";
 
 (function () {
@@ -29,43 +35,59 @@
   var R = Math.random;
   function rnd(a, b) { return a + R() * (b - a); }
 
-  /* ------------------------------ the forms ------------------------------ */
+  /* ------------------------------ the forms ------------------------------
+     All creatures are drawn FACING RIGHT (+x) so one heading rotation
+     orients them along their motion. */
   var SVG_OPEN = '<svg viewBox="0 0 60 60" width="46" height="46" fill="currentColor" stroke="none">';
 
-  var FORMS = {
-    bird: {
-      offset: [26, -34],
-      svg: SVG_OPEN
-        + '<path d="M14 32 C20 26 30 24 38 27 C43 29 50 28 55 24 C51 33 43 37 34 36 C26 35 18 36 12 33 L4 38 L8 32 L4 27 L12 31 Z"/>'
-        + '<path class="fam-wing" d="M28 28 C24 14 36 6 47 9 C39 13 34 20 32 28 Z"/>'
-        + "</svg>",
-    },
-    moth: {
-      offset: [10, -14],
-      svg: SVG_OPEN
-        + '<ellipse cx="30" cy="32" rx="3.4" ry="11"/>'
-        + '<path d="M30 24 Q26 14 22 12" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-        + '<path d="M30 24 Q34 14 38 12" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-        + '<g class="fam-wing-l"><ellipse cx="18" cy="27" rx="12" ry="8" transform="rotate(-24 18 27)"/>'
-        + '<ellipse cx="20" cy="39" rx="9" ry="6" transform="rotate(18 20 39)"/></g>'
-        + '<g class="fam-wing-r"><ellipse cx="42" cy="27" rx="12" ry="8" transform="rotate(24 42 27)"/>'
-        + '<ellipse cx="40" cy="39" rx="9" ry="6" transform="rotate(-18 40 39)"/></g>'
-        + "</svg>",
-    },
-    cat: {
-      offset: [-46, -18],
-      svg: SVG_OPEN
-        + '<path d="M8 42 C10 34 18 30 26 31 L40 32 C46 26 45 20 43 16 L47 10 L49 17 L54 15 L52 22 C54 27 51 33 45 35 L44 42 L40 42 L39 36 L22 36 L20 42 L16 42 L15 37 C11 38 9 40 8 42 Z"/>'
-        + '<path d="M8 42 C2 38 2 30 7 27" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>'
-        + "</svg>",
-      svgSit: SVG_OPEN
-        + '<path d="M30 12 L26 4 L31 9 L36 4 L34 12 C40 14 42 20 40 26 C46 32 48 42 44 50 L16 50 C14 42 17 34 24 30 C21 24 23 15 30 12 Z"/>'
-        + '<path class="fam-tail" d="M16 50 C8 48 6 40 11 36" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/>'
-        + "</svg>",
-    },
-    paws: { prints: true },
-  };
-  var ORDER = ["paws", "bird", "moth", "cat"];
+  var BUTTERFLY_SVG = SVG_OPEN
+    // body along +x, head right
+    + '<ellipse cx="31" cy="30" rx="10" ry="3"/>'
+    + '<circle cx="41" cy="30" r="2.6"/>'
+    + '<path d="M43 29 Q49 24 52 23" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+    + '<path d="M43 31 Q49 36 52 37" fill="none" stroke="currentColor" stroke-width="1.4"/>'
+    // upper wing pair (fore), lower pair (hind); groups flutter in CSS
+    + '<g class="fam-wing-l">'
+    + '<path d="M30 28 Q18 8 8 12 Q4 22 16 28 Q24 30 30 28 Z"/>'
+    + '<circle cx="15" cy="17" r="2.4" fill="rgba(8,12,24,.55)"/>'
+    + '<path d="M28 30 Q16 40 12 48 Q20 52 26 42 Q29 35 28 30 Z"/>'
+    + "</g>"
+    + '<g class="fam-wing-r">'
+    + '<path d="M32 28 Q44 8 54 12 Q58 22 46 28 Q38 30 32 28 Z" transform="translate(-8 0) scale(.9 1)"/>'
+    + "</g>"
+    + "</svg>";
+
+  var SPIDER_SVG = SVG_OPEN
+    // abdomen left, head right — running along +x
+    + '<ellipse cx="24" cy="30" rx="8.5" ry="6.5"/>'
+    + '<circle cx="35" cy="30" r="4.6"/>'
+    + '<circle cx="37.5" cy="28.4" r="1" fill="rgba(8,12,24,.6)"/>'
+    + '<circle cx="37.5" cy="31.6" r="1" fill="rgba(8,12,24,.6)"/>'
+    + '<g class="fam-legs-a" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">'
+    + '<path d="M30 26 Q36 14 46 10"/><path d="M28 25 Q28 12 20 6"/>'
+    + '<path d="M30 34 Q36 46 46 50"/><path d="M28 35 Q28 48 20 54"/>'
+    + "</g>"
+    + '<g class="fam-legs-b" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">'
+    + '<path d="M33 27 Q42 18 52 16"/><path d="M25 25 Q18 14 8 12"/>'
+    + '<path d="M33 33 Q42 42 52 44"/><path d="M25 35 Q18 46 8 48"/>'
+    + "</g>"
+    + "</svg>";
+
+  /* the nine worlds: [orbit radius px, size px, colour, period s, ring?] */
+  var PLANETS = [
+    [16, 3.0, "#c9b8a8", 2.4],
+    [23, 5.0, "#e8c9a0", 3.8],
+    [31, 5.5, "#7fb4e6", 5.4],
+    [39, 4.2, "#e08a6a", 7.6],
+    [50, 9.5, "#d9b08a", 11],
+    [63, 8.0, "#e6cf9f", 15, true],
+    [75, 6.5, "#9fd4d9", 20],
+    [86, 6.0, "#6f8fe0", 26],
+    [96, 2.6, "#c9b8d4", 33],
+  ];
+
+  var FORMS = { paws: {}, butterfly: {}, solar: {}, spider: {} };
+  var ORDER = ["paws", "butterfly", "solar", "spider"];
 
   var PRINT_SVG = '<svg viewBox="0 0 20 34" width="13" height="22" fill="currentColor">'
     + '<path d="M10 1 C15 1 17 6 16 13 C15.3 18 14 20.5 12.6 21.5 L7.4 21.5 C6 20.5 4.7 18 4 13 C3 6 5 1 10 1 Z"/>'
@@ -78,19 +100,29 @@
   var body = document.createElement("div");
   body.className = "fam";
   layer.appendChild(body);
+  var web = document.createElement("div");        // the spider's silk line
+  web.className = "fam-web";
+  web.style.display = "none";
+  layer.appendChild(web);
   document.body.appendChild(layer);
 
   var st = {
     form: null, raf: 0,
     x: innerWidth / 2, y: innerHeight / 2,
     tx: innerWidth / 2, ty: innerHeight / 2,
+    vx: 0, vy: 0,                       // measured velocity (for facing)
+    heading: 0, headingOff: 0,          // smoothed facing, per-form offset
     lastMove: 0, lastX: 0, lastY: 0, dist: 0, stride: 44,
-    facing: 1, bank: 0, sitting: false,
-    // moth impulses
-    mothGoal: [0, 0], mothLerp: 0.16, mothNext: 0,
-    // cat stalking
-    catState: "wait",
-    printFlip: false, prints: [], t: 0,
+    lastT: 0,
+    // butterfly impulses
+    bGoal: [0, 0], bLerp: 0.05, bNext: 0, bLoop: 0,
+    // spider
+    sState: "chase",                    // chase | jump | hang | climb
+    sNext: 0, sJumpT: 0, sTheta: 0, sOmega: 0, sLen: 0,
+    sAnchorVX: 0, sPrevTX: 0,
+    // solar
+    planets: null, sunT: 0,
+    printFlip: false, prints: [],
   };
 
   function applyEnabled() {
@@ -101,19 +133,40 @@
   function setEnabled(on) {
     try { localStorage.setItem(STORE, on ? "on" : "off"); } catch (e) {}
     applyEnabled();
-    if (on && !st.raf) st.raf = requestAnimationFrame(tick);
+    if (on) wake();
+  }
+
+  function clearForm() {
+    body.innerHTML = "";
+    body.className = "fam";
+    body.style.transform = "";
+    web.style.display = "none";
+    st.planets = null;
   }
 
   function setForm(name) {
     st.form = name;
-    st.sitting = false;
-    body.classList.remove("walking", "hovering");
-    var f = FORMS[name];
     body.classList.add("morph");
     setTimeout(function () {
-      body.innerHTML = f.svg || "";
-      body.classList.toggle("hidden-form", !!f.prints);
-      body.classList.remove("morph");
+      clearForm();
+      body.classList.add("morph");
+      if (name === "butterfly") {
+        body.innerHTML = BUTTERFLY_SVG;
+        st.headingOff = 0;
+        st.x = st.tx + 40; st.y = st.ty + 40;
+      } else if (name === "spider") {
+        body.innerHTML = SPIDER_SVG;
+        st.headingOff = 0;
+        st.sState = "chase";
+        st.sNext = performance.now() + rnd(2500, 5000);
+        st.x = st.tx - 120; st.y = st.ty + 80;
+      } else if (name === "solar") {
+        buildSolar();
+      } else {
+        body.classList.add("hidden-form");     // paws: prints only
+      }
+      requestAnimationFrame(function () { body.classList.remove("morph"); });
+      wake();
     }, 180);
   }
 
@@ -122,9 +175,26 @@
       var i = (ORDER.indexOf(st.form) + 1) % ORDER.length;
       setForm(ORDER[i]);
       scheduleMorph();
-    }, rnd(7000, 14000));
+    }, rnd(12000, 22000));
   }
 
+  /* ------------------------------- solar -------------------------------- */
+  function buildSolar() {
+    var sun = document.createElement("div");
+    sun.className = "fam-sun";
+    body.appendChild(sun);
+    st.planets = PLANETS.map(function (p, i) {
+      var el = document.createElement("div");
+      el.className = "fam-planet" + (p[4] ? " ringed" : "");
+      el.style.width = el.style.height = p[1] + "px";
+      el.style.background = "radial-gradient(circle at 34% 30%, #fff8, " + p[2] + " 55%, #0006)";
+      el.style.color = p[2];
+      body.appendChild(el);
+      return { el: el, r: p[0], size: p[1], period: p[3], a: rnd(0, Math.PI * 2) };
+    });
+  }
+
+  /* ------------------------------ footprints ----------------------------- */
   function stamp(x, y, angle) {
     var d = document.createElement("div");
     d.className = "fam-print";
@@ -141,96 +211,212 @@
     setTimeout(function () { d.remove(); }, 1800);
   }
 
+  /* ------------------------------- helpers ------------------------------- */
+  function face(target) {
+    // shortest-path smoothing so the creature turns, never snaps
+    var d = target - st.heading;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    st.heading += d * 0.18;
+  }
+  function place(scale) {
+    body.style.transform = "translate3d(" + st.x.toFixed(1) + "px,"
+      + st.y.toFixed(1) + "px,0) translate(-50%,-50%) rotate("
+      + ((st.heading + st.headingOff) * 180 / Math.PI).toFixed(1) + "deg)"
+      + (scale && scale !== 1 ? " scale(" + scale.toFixed(3) + ")" : "");
+  }
+  function drawWeb(x1, y1, x2, y2) {
+    var dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+    web.style.display = "";
+    web.style.left = x1 + "px";
+    web.style.top = y1 + "px";
+    web.style.width = len + "px";
+    web.style.transform = "rotate(" + Math.atan2(dy, dx) + "rad)";
+  }
+
   /* ------------------------- per-creature movement ------------------------ */
   function tick(now) {
     st.raf = 0;
     if (!enabled()) return;
-    st.t = now || performance.now();
-    var f = FORMS[st.form] || {};
-    var idleFor = performance.now() - st.lastMove;
+    now = now || performance.now();
+    var dt = Math.min((now - (st.lastT || now)) / 1000 || 0.016, 0.05);
+    st.lastT = now;
+    var idleFor = now - st.lastMove;
     var idle = idleFor > 1400;
     var keep = false;
+    var px = st.x, py = st.y;
 
-    if (f.prints) {
-      if (!idle) keep = true;                       // stamps happen in the handler
-    } else {
-      var goalX, goalY, k;
+    if (st.form === "paws") {
+      if (!idle) keep = true;                    // stamps happen in the handler
 
-      if (st.form === "bird") {
-        // swooping pursuit with banked turns; lazy hover-bob circle when idle
-        if (idle) {
-          goalX = st.tx + f.offset[0] * st.facing + Math.cos(st.t * 0.0011) * 16;
-          goalY = st.ty + f.offset[1] + Math.sin(st.t * 0.0017) * 8;
-          k = 0.04;
-          body.classList.add("hovering");
+    } else if (st.form === "butterfly") {
+      /* chaotic darts: frequent impulses, changing speed — and real lag:
+         the further behind it is, the harder it flies to catch up, but it
+         never teleports. Sometimes it forgets you and loops. */
+      if (now > st.bNext) {
+        st.bNext = now + rnd(160, 520);
+        st.bGoal = [rnd(-52, 52), rnd(-44, 30)];
+        st.bLerp = rnd(0.028, 0.085);
+        if (R() < 0.09) st.bLoop = now + rnd(500, 900);   // a distracted loop
+      }
+      var gx, gy;
+      if (now < st.bLoop) {                       // loop-the-loop
+        var la = now * 0.012;
+        gx = st.x + Math.cos(la) * 40 - 20;
+        gy = st.y + Math.sin(la) * 40;
+      } else {
+        gx = st.tx + st.bGoal[0];
+        gy = st.ty + st.bGoal[1] + Math.sin(now * 0.006) * 9;
+      }
+      var ddx = gx - st.x, ddy = gy - st.y;
+      st.x += ddx * st.bLerp;
+      st.y += ddy * st.bLerp;
+      keep = true;                                 // a butterfly never rests
+
+    } else if (st.form === "solar") {
+      /* the cursor is the sun: the system drifts onto it with weight */
+      st.x += (st.tx - st.x) * 0.16;
+      st.y += (st.ty - st.y) * 0.16;
+      if (st.planets) {
+        st.planets.forEach(function (p) {
+          p.a += (Math.PI * 2 / p.period) * dt;
+          var ex = Math.cos(p.a) * p.r, ey = Math.sin(p.a) * p.r * 0.42;
+          var behind = Math.sin(p.a) < 0;
+          // tilt the whole plane a little
+          var tx2 = ex * 0.978 - ey * 0.208, ty2 = ex * 0.208 + ey * 0.978;
+          p.el.style.transform = "translate(" + (tx2 - p.size / 2)
+            + "px," + (ty2 - p.size / 2) + "px)"
+            + (behind ? " scale(.86)" : "");
+          p.el.style.opacity = behind ? 0.55 : 1;
+        });
+      }
+      st.heading = 0;
+      body.style.transform = "translate3d(" + st.x.toFixed(1) + "px,"
+        + st.y.toFixed(1) + "px,0)";
+      st.raf = requestAnimationFrame(tick);        // orbits never stand still
+      return;                                      // (custom transform above)
+
+    } else if (st.form === "spider") {
+      var S = st.sState;
+      if (S === "chase" || S === "jump") {
+        /* scuttle in bursts with lag; face the run */
+        var gap = Math.hypot(st.tx - st.x, st.ty - st.y);
+        var k = gap > 220 ? 0.075 : gap > 60 ? 0.05 : 0.012;
+        st.x += (st.tx - st.x) * k;
+        st.y += (st.ty - st.y) * k;
+        body.classList.toggle("scuttle", gap > 26 && !idle);
+
+        var jumpScale = 1, jumpLift = 0;
+        if (S === "jump") {
+          var jt = (now - st.sJumpT) / 380;        // 0..1
+          if (jt >= 1) { st.sState = "chase"; }
+          else {
+            var arc = 4 * jt * (1 - jt);           // parabola
+            jumpLift = arc * 30;
+            jumpScale = 1 + arc * 0.18;
+          }
+        } else if (now > st.sNext) {
+          if (gap > 120 && gap < 460 && R() < 0.45) {
+            /* fire silk AT the cursor and swing from it */
+            st.sState = "hang";
+            st.sLen = Math.min(Math.max(gap * 0.7, 80), 190);
+            var ang = Math.atan2(st.x - st.tx, st.y - st.ty);  // from vertical
+            st.sTheta = Math.max(-1.2, Math.min(1.2, ang));
+            st.sOmega = 0;
+            st.sPrevTX = st.tx;
+            st.sNext = now + rnd(2600, 4600);      // how long it hangs
+          } else {
+            st.sState = "jump";
+            st.sJumpT = now;
+            st.sNext = now + rnd(2800, 6500);
+          }
+        }
+        st.y -= jumpLift;
+        keep = true;
+        // face the run
+        var mvx = st.x - px, mvy = (st.y - py);
+        if (Math.hypot(mvx, mvy) > 0.35) face(Math.atan2(mvy, mvx));
+        place(jumpScale);
+        st.vx = mvx / dt; st.vy = mvy / dt;
+        if (keep) st.raf = requestAnimationFrame(tick);
+        return;
+
+      } else if (S === "hang") {
+        /* a real pendulum from the LIVE cursor: moving the mouse whips
+           the anchor and the spider swings; damped, weighty */
+        var anchorVX = (st.tx - st.sPrevTX) / dt;
+        var dvx = anchorVX - st.sAnchorVX;
+        st.sAnchorVX = anchorVX;
+        st.sPrevTX = st.tx;
+        var g = 2600;
+        st.sOmega += (-(g / st.sLen) * Math.sin(st.sTheta)) * dt
+                   - (dvx / st.sLen) * Math.cos(st.sTheta) * 0.9
+                   - st.sOmega * 1.1 * dt;
+        st.sTheta += st.sOmega * dt;
+        st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
+        st.y = st.ty + Math.cos(st.sTheta) * st.sLen;
+        drawWeb(st.tx, st.ty, st.x, st.y);
+        body.classList.remove("scuttle");
+        face(Math.atan2(st.ty - st.y, st.tx - st.x));   // head up the thread
+        place(1);
+        if (now > st.sNext) { st.sState = "climb"; }
+        st.raf = requestAnimationFrame(tick);
+        return;
+
+      } else if (S === "climb") {
+        /* hand over hand back up the silk, then resume the chase */
+        st.sLen -= 240 * dt;
+        st.sOmega *= (1 - 1.5 * dt);
+        st.sTheta += st.sOmega * dt;
+        if (st.sLen <= 14) {
+          st.sState = "chase";
+          st.sNext = now + rnd(3200, 7000);
+          web.style.display = "none";
         } else {
-          goalX = st.tx + f.offset[0] * st.facing;
-          goalY = st.ty + f.offset[1] + Math.sin(st.t * 0.004) * 11;   // swoop
-          k = 0.09;
-          body.classList.remove("hovering");
-        }
-      } else if (st.form === "moth") {
-        // erratic darts: new impulse every 250–650ms, speed changes each time
-        if (st.t > st.mothNext) {
-          st.mothNext = st.t + rnd(250, 650);
-          st.mothGoal = [rnd(-38, 38), rnd(-30, 22)];
-          st.mothLerp = rnd(0.1, 0.3);
-        }
-        goalX = st.tx + f.offset[0] + st.mothGoal[0];
-        goalY = st.ty + f.offset[1] + st.mothGoal[1];
-        k = st.mothLerp;
-        keep = true;                                 // a moth never quite rests
-      } else {                                       // cat: stalk in bursts
-        goalX = st.tx + f.offset[0] * st.facing;
-        goalY = st.ty + f.offset[1];
-        var gap = Math.hypot(goalX - st.x, goalY - st.y);
-        if (st.catState === "wait" && gap > 150) st.catState = "trot";
-        if (st.catState === "trot" && gap < 60) st.catState = "wait";
-        k = st.catState === "trot" ? 0.085 : 0.015;
-        body.classList.toggle("walking", st.catState === "trot" && !idle);
-        if (idle !== st.sitting) {
-          st.sitting = idle;
-          body.innerHTML = idle ? FORMS.cat.svgSit : FORMS.cat.svg;
-          body.classList.remove("walking");
+          st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
+          st.y = st.ty + Math.cos(st.sTheta) * st.sLen;
+          drawWeb(st.tx, st.ty, st.x, st.y);
+          face(Math.atan2(st.ty - st.y, st.tx - st.x));
+          place(1);
+          st.raf = requestAnimationFrame(tick);
+          return;
         }
       }
+    }
 
-      var dx = goalX - st.x, dy = goalY - st.y;
-      st.x += dx * k;
-      st.y += dy * k;
-      if (Math.abs(dx) > 12) st.facing = dx < 0 ? -1 : 1;
-
-      // bird banks into vertical motion
-      var bankTarget = st.form === "bird" ? Math.max(-22, Math.min(22, dy * k * 14)) : 0;
-      st.bank += (bankTarget - st.bank) * 0.15;
-
-      body.style.transform = "translate3d(" + st.x.toFixed(1) + "px," + st.y.toFixed(1)
-        + "px,0) translate(-50%,-50%) scaleX(" + (st.facing < 0 ? -1 : 1)
-        + ") rotate(" + st.bank.toFixed(1) + "deg)";
-
-      if (Math.abs(dx) > 0.4 || Math.abs(dy) > 0.4 || Math.abs(st.bank) > 0.5
-          || (st.form === "bird" && !idle)) keep = true;
-      if (st.form === "bird" && idle) keep = true;   // hover circle keeps breathing
+    /* shared facing + place for butterfly (and any straggler) */
+    if (st.form === "butterfly") {
+      var vx = (st.x - px) / dt, vy = (st.y - py) / dt;
+      var sp = Math.hypot(vx, vy);
+      if (sp > 14) face(Math.atan2(vy, vx));
+      /* flutter harder the faster it flies */
+      var wings = body.querySelectorAll(".fam-wing-l, .fam-wing-r");
+      var durMs = Math.max(70, 240 - sp * 0.35);
+      wings.forEach(function (w) { w.style.animationDuration = (durMs / 1000) + "s"; });
+      place(1);
     }
 
     if (keep) st.raf = requestAnimationFrame(tick);
   }
 
+  function wake() {
+    if (enabled() && !st.raf) { st.lastT = 0; st.raf = requestAnimationFrame(tick); }
+  }
+
   window.addEventListener("pointermove", function (ev) {
     st.tx = ev.clientX; st.ty = ev.clientY;
     st.lastMove = performance.now();
-    var f = FORMS[st.form] || {};
-    if (enabled() && f.prints) {
+    if (enabled() && st.form === "paws") {
       st.dist += Math.hypot(ev.clientX - st.lastX, ev.clientY - st.lastY);
       if (st.dist > st.stride) {
         st.dist = 0;
-        st.stride = rnd(36, 56);                     // stride varies, like a walk
+        st.stride = rnd(36, 56);                   // stride varies, like a walk
         stamp(ev.clientX, ev.clientY,
               Math.atan2(ev.clientY - st.lastY, ev.clientX - st.lastX));
       }
     }
     st.lastX = ev.clientX; st.lastY = ev.clientY;
-    if (enabled() && !st.raf) st.raf = requestAnimationFrame(tick);
+    wake();
   }, { passive: true });
 
   /* ------------------------------- switches ------------------------------ */
