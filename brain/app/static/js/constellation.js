@@ -37,8 +37,73 @@
     return n.id === selectedId ? SELECT_COL
       : "hsl(" + Atlas.hue(n.project) + " 70% 66%)";
   }
+  function nodeShade(n) { return "hsl(" + Atlas.hue(n.project) + " 68% 38%)"; }
   function nodeSize(n) {
     return 3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8;
+  }
+
+  /* ---- 3D celestial bodies: emissive core + additive halo sprite ---- */
+  var nodeObjs = {}, haloCache = {}, pulseRaf = 0;
+
+  function haloTexture(col) {
+    if (haloCache[col]) return haloCache[col];
+    var c = document.createElement("canvas");
+    c.width = c.height = 128;
+    var g = c.getContext("2d");
+    var grad = g.createRadialGradient(64, 64, 4, 64, 64, 62);
+    grad.addColorStop(0, "rgba(255,252,238,.9)");
+    grad.addColorStop(0.3, col);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    var tex = new THREE.CanvasTexture(c);
+    haloCache[col] = tex;
+    return tex;
+  }
+
+  function make3DNode(n) {
+    var col = nodeCol(n), r = 4 * Math.cbrt(nodeSize(n));
+    var group = new THREE.Group();
+    var core = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 24, 16),
+      new THREE.MeshPhongMaterial({
+        color: col, shininess: 70,
+        emissive: new THREE.Color(col).multiplyScalar(0.5),
+      }));
+    group.add(core);
+    var halo = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTexture("hsl(" + Atlas.hue(n.project) + " 70% 60%)"),
+      transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, opacity: 0.5,
+    }));
+    halo.scale.set(r * 5, r * 5, 1);
+    group.add(halo);
+    group.userData = { halo: halo, core: core, r: r, col: col,
+                       phase: Math.random() * 6.28, id: n.id };
+    nodeObjs[n.id] = group;
+    return group;
+  }
+
+  function startPulse() {
+    stopPulse();
+    if (Atlas.reducedMotion) return;
+    (function loop(t) {
+      pulseRaf = requestAnimationFrame(loop);
+      for (var id in nodeObjs) {
+        var u = nodeObjs[id].userData;
+        var sel = id === selectedId;
+        var breathe = 1 + 0.07 * Math.sin((t || 0) * 0.0012 + u.phase);
+        var sc = u.r * (sel ? 7.5 : 5) * breathe;
+        u.halo.scale.set(sc, sc, 1);
+        u.halo.material.opacity = sel ? 0.95 : 0.42 + 0.12 * Math.sin((t || 0) * 0.0012 + u.phase);
+        u.core.material.emissive = new THREE.Color(sel ? SELECT_COL : u.col)
+          .multiplyScalar(sel ? 0.8 : 0.5);
+      }
+    })(0);
+  }
+  function stopPulse() {
+    if (pulseRaf) cancelAnimationFrame(pulseRaf);
+    pulseRaf = 0;
   }
 
   function nodeOnSelection(l) {
@@ -87,26 +152,44 @@
       g.nodeOpacity(1);              // the library default (.75) buries the orbs
       if (g.nodeResolution) g.nodeResolution(14);
       if (g.showNavInfo) g.showNavInfo(false);
+      if (typeof THREE !== "undefined" && g.nodeThreeObject) {
+        g.nodeThreeObject(make3DNode);   // emissive core + breathing halo
+      }
     } else {
       g.linkWidth(function (l) { return 0.4 + (l.w || 0) * 2.2; });
-      // rim + glow so every orb reads as a body, not a dot
-      g.nodeCanvasObjectMode(function () { return "after"; })
+      // glass beads: specular highlight, depth-shaded edge, type-coded ring
+      g.nodeCanvasObjectMode(function () { return "replace"; })
         .nodeCanvasObject(function (n, ctx) {
           var r = 4 * Math.sqrt(nodeSize(n));         // nodeRelSize default = 4
+          var sel = n.id === selectedId;
+          var col = nodeCol(n);
           ctx.save();
-          if (n.id === selectedId) {
-            ctx.shadowColor = SELECT_COL;
-            ctx.shadowBlur = 18;
-            ctx.strokeStyle = SELECT_COL;
-            ctx.lineWidth = 1.6;
-          } else {
-            ctx.strokeStyle = "rgba(255, 246, 224, .35)";
-            ctx.lineWidth = 0.7;
-          }
+          ctx.shadowColor = sel ? SELECT_COL : col;
+          ctx.shadowBlur = sel ? 24 : (n.importance >= 4 ? 15 : 8);
+          var grad = ctx.createRadialGradient(
+            n.x - r * 0.35, n.y - r * 0.4, r * 0.1, n.x, n.y, r);
+          grad.addColorStop(0, "rgba(255,252,240,.95)");
+          grad.addColorStop(0.35, col);
+          grad.addColorStop(1, nodeShade(n));
+          ctx.fillStyle = grad;
           ctx.beginPath();
-          ctx.arc(n.x, n.y, r + 0.8, 0, 2 * Math.PI);
+          ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          if (n.type === "fact" || n.type === "reference") ctx.setLineDash([2.5, 2.5]);
+          ctx.strokeStyle = sel ? SELECT_COL : "rgba(255,246,224,.45)";
+          ctx.lineWidth = sel ? 1.8 : 0.8;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r + 1.4, 0, 2 * Math.PI);
           ctx.stroke();
           ctx.restore();
+        })
+        .nodePointerAreaPaint(function (n, color, ctx) {
+          var r = 4 * Math.sqrt(nodeSize(n)) + 2;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+          ctx.fill();
         });
     }
     return g;
@@ -120,6 +203,8 @@
   }
 
   function build(newMode) {
+    stopPulse();
+    nodeObjs = {};
     if (graph && graph._destructor) { try { graph._destructor(); } catch (e) {} }
     el.innerHTML = "";
     mode = newMode;
@@ -128,6 +213,7 @@
     fit();
     var box = document.getElementById("cst-3d");
     if (box) box.checked = is3d;
+    if (is3d && typeof THREE !== "undefined") startPulse();
     if (lastGraph) setData(lastGraph);
   }
 
@@ -156,6 +242,7 @@
   }
 
   function setData(data) {
+    nodeObjs = {};                      // fresh bodies for fresh data
     var nodes = data.nodes.map(function (n) { return Object.assign({}, n); });
     var ids = {};
     nodes.forEach(function (n) { ids[n.id] = true; });
