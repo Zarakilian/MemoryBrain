@@ -1,6 +1,6 @@
-/* The Familiar — a small shadow companion that follows the cursor across
-   the Atlas, Marauder's-Map style. It cycles between forms every few
-   seconds, and each creature moves like itself:
+/* The Familiar — a small companion of starlight that follows the cursor
+   through the Nebula. It cycles between forms every few seconds, and each
+   creature moves like itself:
 
      footprints — stamped along your path, stride varies
      bird       — swoops with banked turns, hovers with a bob when you stop
@@ -9,7 +9,7 @@
                   sits and flicks its tail when you stay still
 
    It has its own switch (rail button + palette, remembered), independent
-   of the codex ambience. Same safety rails as everything ambient here:
+   of the world's ambience. Same safety rails as everything ambient here:
    pointer-events:none !important layer, one pointermove listener, a
    self-stopping rAF loop, transforms only, absent under reduced motion. */
 "use strict";

@@ -464,8 +464,8 @@ if (renderer) {
     pointer.nx = (ev.clientX / window.innerWidth) * 2 - 1;
     pointer.ny = -(ev.clientY / window.innerHeight) * 2 + 1;
     if (drag.node) { dragMove(); return; }
-    if (!hoverPending && focus && !reduced) {
-      hoverPending = true;
+    if (!hoverPending && focus) {       // hover is feedback, not animation:
+      hoverPending = true;              // it works under reduced motion too
       requestAnimationFrame(onHoverCheck);
     }
     N.requestRender();

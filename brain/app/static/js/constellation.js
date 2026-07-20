@@ -197,6 +197,14 @@
     var box = document.getElementById("cst-3d");
     if (box) box.checked = m === "3d";
     if (lastGraph) apply(lastGraph);
+    syncFocus();
+  }
+
+  /* the world holds the pointer only when the lens is on AND we are 3D */
+  function syncFocus() {
+    var neb = nebula();
+    if (neb) neb.setFocus(document.body.dataset.lens === "constellation"
+                          && mode === "3d");
   }
 
   function params() {
@@ -322,11 +330,10 @@
 
     document.addEventListener("atlas:deselect", deselect);
     document.addEventListener("atlas:lens", function (ev) {
-      var on = ev.detail.lens === "constellation";
-      var neb2 = nebula();
-      if (neb2) neb2.setFocus(on && mode === "3d");
-      if (on && mode === "2d") fit2d();
+      syncFocus();
+      if (ev.detail.lens === "constellation" && mode === "2d") fit2d();
     });
+    syncFocus();   // nebula assumed 3D at its own init; correct for 2D boots
     window.addEventListener("resize", fit2d);
 
     var w = document.getElementById("cst-weight");
