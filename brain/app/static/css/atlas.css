@@ -521,13 +521,14 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 }
 .fam.morph, .fam.hidden-form { opacity: 0; }
 
-/* butterfly: both wing groups beat; JS speeds the beat with flight speed */
+/* butterfly: the original wings, exactly as loved — JS only speeds the
+   beat with flight speed */
 .fam .fam-wing-l, .fam .fam-wing-r {
-  transform-box: fill-box; transform-origin: 100% 50%;
-  animation: fam-flutter .18s ease-in-out infinite alternate;
+  animation: fam-flutter .16s ease-in-out infinite alternate;
 }
-.fam .fam-wing-r { transform-origin: 0% 50%; }
-@keyframes fam-flutter { from { transform: scaleY(1); } to { transform: scaleY(.32); } }
+.fam .fam-wing-l { transform-origin: 28px 30px; }
+.fam .fam-wing-r { transform-origin: 32px 30px; }
+@keyframes fam-flutter { from { transform: scaleX(1); } to { transform: scaleX(.4); } }
 
 /* spider: alternating leg groups scuttle while it runs */
 .fam.scuttle .fam-legs-a {
@@ -547,25 +548,6 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
   background: linear-gradient(90deg, rgba(220, 235, 255, .75),
                               rgba(190, 214, 255, .35));
   filter: drop-shadow(0 0 3px rgba(143, 184, 232, .5));
-}
-
-/* the solar system: the cursor is the sun */
-.fam-sun {
-  position: absolute; left: 0; top: 0; width: 14px; height: 14px;
-  transform: translate(-50%, -50%); border-radius: 50%;
-  background: radial-gradient(circle at 38% 34%, #fff6d8, #ffd98a 55%, #e0851f);
-  box-shadow: 0 0 14px 3px rgba(255, 217, 138, .55),
-              0 0 40px 12px rgba(255, 217, 138, .16);
-}
-.fam-planet {
-  position: absolute; left: 0; top: 0; border-radius: 50%;
-  box-shadow: 0 0 6px -1px currentColor;
-}
-.fam-planet.ringed::after {
-  content: ""; position: absolute; left: 50%; top: 50%;
-  width: 210%; height: 210%;
-  transform: translate(-50%, -50%) rotateX(72deg) rotate(-18deg);
-  border-radius: 50%; border: 1px solid rgba(230, 207, 159, .75);
 }
 
 .fam-print {

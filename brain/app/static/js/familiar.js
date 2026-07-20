@@ -6,12 +6,10 @@
      footprints — stamped along your path, stride varies
      butterfly  — chaotic darts and drifting loops; flutters harder the
                   faster it flies; trails well behind a quick hand
-     solar      — the nine planets of our solar system in tilted orbits
-                  around the cursor: the mouse is the sun
      spider     — scuttles after the pointer in bursts, sometimes jumps,
-                  and sometimes fires a silk line AT the cursor, swings
-                  from it like a pendulum while you move, then climbs
-                  back up the thread and resumes the chase
+                  and sometimes fires a silk line AT the cursor and hangs
+                  BELOW it, swinging like a damped pendulum while you
+                  move, then climbs back up the thread and resumes
 
    It has its own switch (rail button + palette, remembered), independent
    of the world's ambience. Same safety rails as everything ambient here:
@@ -40,21 +38,16 @@
      orients them along their motion. */
   var SVG_OPEN = '<svg viewBox="0 0 60 60" width="46" height="46" fill="currentColor" stroke="none">';
 
+  /* the butterfly the owner liked — the original form, unchanged; it is
+     drawn head-up, so facing adds a quarter-turn (headingOff) */
   var BUTTERFLY_SVG = SVG_OPEN
-    // body along +x, head right
-    + '<ellipse cx="31" cy="30" rx="10" ry="3"/>'
-    + '<circle cx="41" cy="30" r="2.6"/>'
-    + '<path d="M43 29 Q49 24 52 23" fill="none" stroke="currentColor" stroke-width="1.4"/>'
-    + '<path d="M43 31 Q49 36 52 37" fill="none" stroke="currentColor" stroke-width="1.4"/>'
-    // upper wing pair (fore), lower pair (hind); groups flutter in CSS
-    + '<g class="fam-wing-l">'
-    + '<path d="M30 28 Q18 8 8 12 Q4 22 16 28 Q24 30 30 28 Z"/>'
-    + '<circle cx="15" cy="17" r="2.4" fill="rgba(8,12,24,.55)"/>'
-    + '<path d="M28 30 Q16 40 12 48 Q20 52 26 42 Q29 35 28 30 Z"/>'
-    + "</g>"
-    + '<g class="fam-wing-r">'
-    + '<path d="M32 28 Q44 8 54 12 Q58 22 46 28 Q38 30 32 28 Z" transform="translate(-8 0) scale(.9 1)"/>'
-    + "</g>"
+    + '<ellipse cx="30" cy="32" rx="3.4" ry="11"/>'
+    + '<path d="M30 24 Q26 14 22 12" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+    + '<path d="M30 24 Q34 14 38 12" fill="none" stroke="currentColor" stroke-width="1.6"/>'
+    + '<g class="fam-wing-l"><ellipse cx="18" cy="27" rx="12" ry="8" transform="rotate(-24 18 27)"/>'
+    + '<ellipse cx="20" cy="39" rx="9" ry="6" transform="rotate(18 20 39)"/></g>'
+    + '<g class="fam-wing-r"><ellipse cx="42" cy="27" rx="12" ry="8" transform="rotate(24 42 27)"/>'
+    + '<ellipse cx="40" cy="39" rx="9" ry="6" transform="rotate(-18 40 39)"/></g>'
     + "</svg>";
 
   var SPIDER_SVG = SVG_OPEN
@@ -73,21 +66,7 @@
     + "</g>"
     + "</svg>";
 
-  /* the nine worlds: [orbit radius px, size px, colour, period s, ring?] */
-  var PLANETS = [
-    [16, 3.0, "#c9b8a8", 2.4],
-    [23, 5.0, "#e8c9a0", 3.8],
-    [31, 5.5, "#7fb4e6", 5.4],
-    [39, 4.2, "#e08a6a", 7.6],
-    [50, 9.5, "#d9b08a", 11],
-    [63, 8.0, "#e6cf9f", 15, true],
-    [75, 6.5, "#9fd4d9", 20],
-    [86, 6.0, "#6f8fe0", 26],
-    [96, 2.6, "#c9b8d4", 33],
-  ];
-
-  var FORMS = { paws: {}, butterfly: {}, solar: {}, spider: {} };
-  var ORDER = ["paws", "butterfly", "solar", "spider"];
+  var ORDER = ["paws", "butterfly", "spider"];
 
   var PRINT_SVG = '<svg viewBox="0 0 20 34" width="13" height="22" fill="currentColor">'
     + '<path d="M10 1 C15 1 17 6 16 13 C15.3 18 14 20.5 12.6 21.5 L7.4 21.5 C6 20.5 4.7 18 4 13 C3 6 5 1 10 1 Z"/>'
@@ -120,8 +99,6 @@
     sState: "chase",                    // chase | jump | hang | climb
     sNext: 0, sJumpT: 0, sTheta: 0, sOmega: 0, sLen: 0,
     sAnchorVX: 0, sPrevTX: 0,
-    // solar
-    planets: null, sunT: 0,
     printFlip: false, prints: [],
   };
 
@@ -141,7 +118,6 @@
     body.className = "fam";
     body.style.transform = "";
     web.style.display = "none";
-    st.planets = null;
   }
 
   function setForm(name) {
@@ -152,16 +128,15 @@
       body.classList.add("morph");
       if (name === "butterfly") {
         body.innerHTML = BUTTERFLY_SVG;
-        st.headingOff = 0;
+        st.headingOff = Math.PI / 2;           // drawn head-up; 0 rad = right
+        st.heading = -Math.PI / 2;             // start upright, no first-frame spin
         st.x = st.tx + 40; st.y = st.ty + 40;
       } else if (name === "spider") {
         body.innerHTML = SPIDER_SVG;
-        st.headingOff = 0;
+        st.headingOff = 0;                     // drawn head-right
         st.sState = "chase";
         st.sNext = performance.now() + rnd(2500, 5000);
         st.x = st.tx - 120; st.y = st.ty + 80;
-      } else if (name === "solar") {
-        buildSolar();
       } else {
         body.classList.add("hidden-form");     // paws: prints only
       }
@@ -176,22 +151,6 @@
       setForm(ORDER[i]);
       scheduleMorph();
     }, rnd(12000, 22000));
-  }
-
-  /* ------------------------------- solar -------------------------------- */
-  function buildSolar() {
-    var sun = document.createElement("div");
-    sun.className = "fam-sun";
-    body.appendChild(sun);
-    st.planets = PLANETS.map(function (p, i) {
-      var el = document.createElement("div");
-      el.className = "fam-planet" + (p[4] ? " ringed" : "");
-      el.style.width = el.style.height = p[1] + "px";
-      el.style.background = "radial-gradient(circle at 34% 30%, #fff8, " + p[2] + " 55%, #0006)";
-      el.style.color = p[2];
-      body.appendChild(el);
-      return { el: el, r: p[0], size: p[1], period: p[3], a: rnd(0, Math.PI * 2) };
-    });
   }
 
   /* ------------------------------ footprints ----------------------------- */
@@ -273,29 +232,6 @@
       st.y += ddy * st.bLerp;
       keep = true;                                 // a butterfly never rests
 
-    } else if (st.form === "solar") {
-      /* the cursor is the sun: the system drifts onto it with weight */
-      st.x += (st.tx - st.x) * 0.16;
-      st.y += (st.ty - st.y) * 0.16;
-      if (st.planets) {
-        st.planets.forEach(function (p) {
-          p.a += (Math.PI * 2 / p.period) * dt;
-          var ex = Math.cos(p.a) * p.r, ey = Math.sin(p.a) * p.r * 0.42;
-          var behind = Math.sin(p.a) < 0;
-          // tilt the whole plane a little
-          var tx2 = ex * 0.978 - ey * 0.208, ty2 = ex * 0.208 + ey * 0.978;
-          p.el.style.transform = "translate(" + (tx2 - p.size / 2)
-            + "px," + (ty2 - p.size / 2) + "px)"
-            + (behind ? " scale(.86)" : "");
-          p.el.style.opacity = behind ? 0.55 : 1;
-        });
-      }
-      st.heading = 0;
-      body.style.transform = "translate3d(" + st.x.toFixed(1) + "px,"
-        + st.y.toFixed(1) + "px,0)";
-      st.raf = requestAnimationFrame(tick);        // orbits never stand still
-      return;                                      // (custom transform above)
-
     } else if (st.form === "spider") {
       var S = st.sState;
       if (S === "chase" || S === "jump") {
@@ -317,12 +253,13 @@
           }
         } else if (now > st.sNext) {
           if (gap > 120 && gap < 460 && R() < 0.45) {
-            /* fire silk AT the cursor and swing from it */
+            /* fire silk AT the cursor and swing BELOW it */
             st.sState = "hang";
             st.sLen = Math.min(Math.max(gap * 0.7, 80), 190);
-            var ang = Math.atan2(st.x - st.tx, st.y - st.ty);  // from vertical
-            st.sTheta = Math.max(-1.2, Math.min(1.2, ang));
+            var ang = Math.atan2(st.x - st.tx, st.y - st.ty);  // from straight-down
+            st.sTheta = Math.max(-0.9, Math.min(0.9, ang));
             st.sOmega = 0;
+            st.sAnchorVX = 0;
             st.sPrevTX = st.tx;
             st.sNext = now + rnd(2600, 4600);      // how long it hangs
           } else {
@@ -343,21 +280,26 @@
 
       } else if (S === "hang") {
         /* a real pendulum from the LIVE cursor: moving the mouse whips
-           the anchor and the spider swings; damped, weighty */
+           the anchor and the spider swings; damped, weighty. θ = 0 is
+           STRAIGHT DOWN (screen +y) and the swing is clamped well short
+           of horizontal — the spider always hangs beneath the hand. */
         var anchorVX = (st.tx - st.sPrevTX) / dt;
         var dvx = anchorVX - st.sAnchorVX;
         st.sAnchorVX = anchorVX;
         st.sPrevTX = st.tx;
         var g = 2600;
         st.sOmega += (-(g / st.sLen) * Math.sin(st.sTheta)) * dt
-                   - (dvx / st.sLen) * Math.cos(st.sTheta) * 0.9
-                   - st.sOmega * 1.1 * dt;
+                   - (dvx / st.sLen) * Math.cos(st.sTheta) * 0.55
+                   - st.sOmega * 1.6 * dt;
         st.sTheta += st.sOmega * dt;
+        if (st.sTheta > 1.25) { st.sTheta = 1.25; st.sOmega = Math.min(st.sOmega, 0); }
+        if (st.sTheta < -1.25) { st.sTheta = -1.25; st.sOmega = Math.max(st.sOmega, 0); }
         st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
-        st.y = st.ty + Math.cos(st.sTheta) * st.sLen;
+        st.y = st.ty + Math.cos(st.sTheta) * st.sLen;   // +y: BELOW the cursor
         drawWeb(st.tx, st.ty, st.x, st.y);
         body.classList.remove("scuttle");
-        face(Math.atan2(st.ty - st.y, st.tx - st.x));   // head up the thread
+        /* dangle head-down: face away from the thread */
+        face(Math.atan2(st.y - st.ty, st.x - st.tx));
         place(1);
         if (now > st.sNext) { st.sState = "climb"; }
         st.raf = requestAnimationFrame(tick);
@@ -376,6 +318,7 @@
           st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
           st.y = st.ty + Math.cos(st.sTheta) * st.sLen;
           drawWeb(st.tx, st.ty, st.x, st.y);
+          /* climbing: head UP the thread, toward the cursor */
           face(Math.atan2(st.ty - st.y, st.tx - st.x));
           place(1);
           st.raf = requestAnimationFrame(tick);
@@ -391,7 +334,7 @@
       if (sp > 14) face(Math.atan2(vy, vx));
       /* flutter harder the faster it flies */
       var wings = body.querySelectorAll(".fam-wing-l, .fam-wing-r");
-      var durMs = Math.max(70, 240 - sp * 0.35);
+      var durMs = Math.max(80, 195 - sp * 0.28);
       wings.forEach(function (w) { w.style.animationDuration = (durMs / 1000) + "s"; });
       place(1);
     }

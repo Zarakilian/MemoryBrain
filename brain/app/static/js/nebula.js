@@ -1,9 +1,10 @@
 /* The Nebula — one living world.
    A single full-screen three.js scene owns everything behind the glass:
-   deep space, procedural fbm gas clouds, a luminous boundary shell around
-   the space the memories occupy, a cursor-stirred particle field with real
-   spring physics, and the memories themselves as plasma stars — fresnel
-   rims, domain-warped swirling cores, hot hearts — joined by synaptic
+   a liquid aurora-fog background that flows like slow smoke and swirls
+   around the cursor, a luminous boundary shell around the space the
+   memories occupy, cursor-stirred fog-wisps with real spring physics,
+   and the memories themselves as plasma stars — fresnel rims,
+   domain-warped swirling cores, hot hearts — joined by synaptic
    filaments under a 3D force layout (d3-force-3d).
 
    Design rules honoured here (this repo's scar tissue):
@@ -107,48 +108,6 @@ if (renderer) {
     return tex;
   }
 
-  /* real gas: domain-warped fbm on a canvas, faded radially — one-time
-     cost at load, no external assets, endlessly variable */
-  function cloudTexture(seed) {
-    var S = 256, c = document.createElement("canvas");
-    c.width = c.height = S;
-    var g = c.getContext("2d");
-    var img = g.createImageData(S, S);
-    function h2(x, y) {
-      var n = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
-      return n - Math.floor(n);
-    }
-    function vn(x, y) {
-      var xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
-      var u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
-      return h2(xi, yi) * (1 - u) * (1 - v) + h2(xi + 1, yi) * u * (1 - v)
-           + h2(xi, yi + 1) * (1 - u) * v + h2(xi + 1, yi + 1) * u * v;
-    }
-    function fbm2(x, y) {
-      var a = 0.5, r = 0;
-      for (var i = 0; i < 4; i++) { r += a * vn(x, y); x *= 2.03; y *= 2.03; a *= 0.5; }
-      return r;
-    }
-    for (var y = 0; y < S; y++) {
-      for (var x = 0; x < S; x++) {
-        var u = x / S, v = y / S;
-        var qx = fbm2(u * 4 + seed, v * 4);          // domain warp: the swirl
-        var qy = fbm2(u * 4 + 5.2, v * 4 + 1.3);
-        var d = fbm2(u * 4 + 1.7 * qx, v * 4 + 1.7 * qy);
-        var dx = u - 0.5, dy = v - 0.5;
-        var fall = Math.max(0, 1 - 2.15 * Math.sqrt(dx * dx + dy * dy));
-        var a = Math.pow(Math.max(0, d - 0.28), 1.5) * fall * fall * 255 * 2.2;
-        var i4 = (y * S + x) * 4;
-        img.data[i4] = 255; img.data[i4 + 1] = 255; img.data[i4 + 2] = 255;
-        img.data[i4 + 3] = Math.min(255, a);
-      }
-    }
-    g.putImageData(img, 0, 0);
-    var tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    return tex;
-  }
-
   /* soft point-sprite material with per-point size */
   function pointsMaterial(alpha) {
     return new THREE.ShaderMaterial({
@@ -211,82 +170,84 @@ if (renderer) {
   var shell = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), shellMat);
   shell.scale.setScalar(SPACE.r);
   shell.renderOrder = 2;
+  shell.frustumCulled = false;
   scene.add(shell);
 
   /* =========================================== ambient: the nebula body */
   var ambient = new THREE.Group();          // everything the toggle removes
   scene.add(ambient);
 
-  /* gas clouds live OUTSIDE the space: direction + distance factor,
-     re-anchored whenever the shell grows */
-  var CLOUD_DEFS = [
-    { col: 0x2a3f78, f: 2.6, s: 5.2, dir: [-0.62, 0.28, -0.73], phase: 0.0 },
-    { col: 0x4a3670, f: 3.1, s: 4.6, dir: [0.71, -0.32, -0.62], phase: 2.1 },
-    { col: 0x1d4a58, f: 3.6, s: 4.0, dir: [0.14, 0.62, -0.77], phase: 4.2 },
-    { col: 0x5a3f22, f: 2.9, s: 3.4, dir: [-0.28, -0.66, -0.70], phase: 5.3 },
-    { col: 0x33508c, f: 3.3, s: 4.4, dir: [0.55, 0.45, 0.70], phase: 1.2 },
-    { col: 0x452a60, f: 2.7, s: 3.8, dir: [-0.70, -0.10, 0.71], phase: 3.6 },
-  ];
-  var clouds = CLOUD_DEFS.map(function (cfg, i) {
-    var m = new THREE.SpriteMaterial({
-      map: cloudTexture(i * 3.7 + 1), color: cfg.col,
-      transparent: true, opacity: 0.16,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    var sp = new THREE.Sprite(m);
-    sp.userData = cfg;
-    ambient.add(sp);
-    return sp;
+  /* THE LIVING FOG — no star specks, no sprites: one screen-covering
+     shader where the whole background is liquid. Domain-warped noise
+     flows like slow smoke through indigo, violet, teal and a rare warm
+     ember; the cursor stirs a gentle vortex into the flow and carries a
+     faint warm bloom. Drawn first, under everything, at the far plane. */
+  var GLSL_NOISE2 = [
+    "float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
+    "float vn2(vec2 x){ vec2 i = floor(x); vec2 f = fract(x);",
+    "  f = f*f*(3.0-2.0*f);",
+    "  return mix(mix(h2(i), h2(i+vec2(1,0)), f.x),",
+    "             mix(h2(i+vec2(0,1)), h2(i+vec2(1,1)), f.x), f.y); }",
+    "float fbm2(vec2 p){ float a = 0.5, r = 0.0;",
+    "  for (int i = 0; i < 4; i++){ r += a*vn2(p); p = p*2.03 + vec2(17.0, 9.0); a *= 0.5; }",
+    "  return r; }",
+  ].join("\n");
+
+  var auroraMat = new THREE.ShaderMaterial({
+    depthWrite: false, depthTest: false,
+    uniforms: {
+      uTime: { value: 0 },
+      /* gl_FragCoord is in DEVICE pixels: uRes must carry the pixel ratio */
+      uRes: { value: new THREE.Vector2(
+        window.innerWidth * Math.min(window.devicePixelRatio || 1, 2),
+        window.innerHeight * Math.min(window.devicePixelRatio || 1, 2)) },
+      uMouse: { value: new THREE.Vector2(0.5, 0.5) },
+    },
+    vertexShader:
+      "void main(){ gl_Position = vec4(position.xy, 1.0, 1.0); }",
+    fragmentShader: [
+      "uniform float uTime; uniform vec2 uRes; uniform vec2 uMouse;",
+      GLSL_NOISE2,
+      "void main(){",
+      "  vec2 uv = gl_FragCoord.xy / uRes;",
+      "  float aspect = uRes.x / max(uRes.y, 1.0);",
+      "  vec2 p = vec2(uv.x * aspect, uv.y);",
+      "  vec2 m = vec2(uMouse.x * aspect, uMouse.y);",
+      "  /* the hand stirs the fog: a soft vortex around the cursor */",
+      "  vec2 d = p - m;",
+      "  float sw = exp(-dot(d, d) * 7.0);",
+      "  float ca = cos(sw * 1.1), sa = sin(sw * 1.1);",
+      "  p = m + mat2(ca, -sa, sa, ca) * d;",
+      "  /* liquid: noise fed back into itself, drifting slowly */",
+      "  float t = uTime * 0.02;",
+      "  vec2 q = vec2(fbm2(p * 1.5 + vec2(t * 0.7, 0.0)),",
+      "                fbm2(p * 1.5 + vec2(5.2, t * 0.55)));",
+      "  float f  = fbm2(p * 1.5 + 2.1 * q + vec2(0.0, t * 0.35));",
+      "  float f2 = fbm2(p * 0.65 - 1.4 * q + vec2(t * 0.22, -t * 0.16));",
+      "  vec3 col = vec3(0.027, 0.042, 0.088);",                 // deep indigo
+      "  col = mix(col, vec3(0.10, 0.062, 0.20), smoothstep(0.35, 0.85, f));",
+      "  col = mix(col, vec3(0.028, 0.125, 0.155), smoothstep(0.42, 0.9, f2) * 0.85);",
+      "  col += vec3(0.16, 0.088, 0.045) * pow(max(f * f2 - 0.17, 0.0), 2.0) * 1.4;",
+      "  /* the cursor's warmth, carried in the fog itself */",
+      "  col += vec3(0.30, 0.24, 0.13) * sw * (0.35 + 0.65 * f) * 0.55;",
+      "  /* vignette into the void */",
+      "  float vig = smoothstep(1.25, 0.35, distance(uv, vec2(0.5)));",
+      "  gl_FragColor = vec4(col * vig, 1.0); }",
+    ].join("\n"),
   });
-  function anchorClouds() {
-    clouds.forEach(function (sp) {
-      var cfg = sp.userData;
-      var d = new THREE.Vector3().fromArray(cfg.dir).normalize()
-        .multiplyScalar(SPACE.r * cfg.f);
-      cfg.base = d;
-      sp.position.copy(d);
-      sp.scale.setScalar(SPACE.r * cfg.s);
-    });
-  }
+  var aurora = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), auroraMat);
+  aurora.frustumCulled = false;      // clip-space quad: culling must not think
+  aurora.renderOrder = -10;
+  ambient.add(aurora);
 
-  /* far starfield: a distant shell of tiny lights, denser than before,
-     always beyond the space so its edge reads clearly */
-  var farDust = null;
-  function buildFarDust() {
-    if (farDust) {
-      ambient.remove(farDust);
-      farDust.geometry.dispose(); farDust.material.dispose();
-    }
-    var COUNT = 2600, pos = new Float32Array(COUNT * 3),
-        col = new Float32Array(COUNT * 3), size = new Float32Array(COUNT);
-    var c = new THREE.Color();
-    for (var i = 0; i < COUNT; i++) {
-      var r = SPACE.r * (1.45 + Math.pow(Math.random(), 0.7) * 4.5);
-      var th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
-      pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
-      pos[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.85;
-      pos[i * 3 + 2] = r * Math.cos(ph);
-      var warm = Math.random() < 0.22;
-      c.setHSL(warm ? 0.09 : 0.6, warm ? 0.55 : 0.3,
-               0.5 + Math.random() * 0.4, THREE.SRGBColorSpace);
-      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-      size[i] = 1.0 + Math.random() * 2.6;
-    }
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    geo.setAttribute("psize", new THREE.BufferAttribute(size, 1));
-    farDust = new THREE.Points(geo, pointsMaterial(0.55));
-    ambient.add(farDust);
-  }
-
-  /* ============================== the cursor field: physics you can stir
-     Motes inside and just beyond the space with real dynamics: a slow
-     curl drift, a hard-but-soft repulsion around the cursor's ray (they
-     scatter, swirl sideways, and spring home with damped inertia). This
-     is feedback — it answers the hand — so it runs at full rate. */
+  /* ============================ the cursor field: physics you can stir
+     Not stars, not specks: soft fog-wisps — large, blurred, barely-there
+     breaths of the nebula drifting through the space, with real dynamics.
+     A slow curl drift, a hard-but-soft repulsion around the cursor's ray
+     (they scatter, swirl sideways, and spring home with damped inertia).
+     This is feedback — it answers the hand — so it runs at full rate. */
   var motes = null;
-  var MOTES = { n: 1600, home: null, pos: null, vel: null };
+  var MOTES = { n: 700, home: null, pos: null, vel: null };
   function buildMotes() {
     if (motes) {
       ambient.remove(motes);
@@ -299,7 +260,7 @@ if (renderer) {
     var col = new Float32Array(n * 3), size = new Float32Array(n);
     var c = new THREE.Color();
     for (var i = 0; i < n; i++) {
-      var r = SPACE.r * (0.25 + Math.pow(Math.random(), 0.8) * 0.92);
+      var r = SPACE.r * (0.25 + Math.pow(Math.random(), 0.8) * 1.05);
       var th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
       var x = r * Math.sin(ph) * Math.cos(th),
           y = r * Math.sin(ph) * Math.sin(th) * 0.9,
@@ -307,19 +268,20 @@ if (renderer) {
       MOTES.home[i * 3] = pos[i * 3] = x;
       MOTES.home[i * 3 + 1] = pos[i * 3 + 1] = y;
       MOTES.home[i * 3 + 2] = pos[i * 3 + 2] = z;
-      var warm = Math.random() < 0.3;
-      c.setHSL(warm ? 0.11 : 0.58, 0.45, 0.6 + Math.random() * 0.25,
+      var warm = Math.random() < 0.22;
+      c.setHSL(warm ? 0.1 : 0.6, 0.35, 0.5 + Math.random() * 0.2,
                THREE.SRGBColorSpace);
       col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-      size[i] = 1.2 + Math.random() * 2.0;
+      size[i] = 7 + Math.random() * 9;             // fog breath, not a star
     }
     MOTES.pos = pos;
     var geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
     geo.setAttribute("psize", new THREE.BufferAttribute(size, 1));
-    motes = new THREE.Points(geo, pointsMaterial(0.5));
+    motes = new THREE.Points(geo, pointsMaterial(0.13));
     motes.geometry.attributes.position.setUsage(THREE.DynamicDrawUsage);
+    motes.frustumCulled = false;
     ambient.add(motes);
   }
 
@@ -367,20 +329,8 @@ if (renderer) {
     motes.geometry.attributes.position.needsUpdate = true;
   }
 
-  /* the cursor's presence: a faint warm light drifting where you point */
-  var cursorLight = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: glowTexture(128, "rgba(255,217,138,.5)", "rgba(255,217,138,.12)"),
-    transparent: true, opacity: 0.15,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  }));
-  cursorLight.scale.setScalar(340);
-  cursorLight.visible = !reduced;
-  ambient.add(cursorLight);
-
   function anchorSpace() {          // everything that hangs off the radius
     shell.scale.setScalar(SPACE.r);
-    anchorClouds();
-    buildFarDust();
     buildMotes();
   }
   anchorSpace();
@@ -514,6 +464,8 @@ if (renderer) {
     geo.setAttribute("aChurn", new THREE.InstancedBufferAttribute(churns, 1));
     var mesh = new THREE.InstancedMesh(geo, nodeMat, count);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;      // the constellation is always on stage;
+                                     // culling only ever causes vanishing bugs
     var c = new THREE.Color();
     graph.nodes.forEach(function (n, i) { mesh.setColorAt(i, nodeColor(n, c)); });
     mesh.instanceColor.needsUpdate = true;
@@ -534,6 +486,7 @@ if (renderer) {
     ggeo.setAttribute("color", new THREE.BufferAttribute(gcol, 3));
     ggeo.setAttribute("psize", new THREE.BufferAttribute(gsize, 1));
     graph.glow = new THREE.Points(ggeo, pointsMaterial(0.3));
+    graph.glow.frustumCulled = false;
     graph.group.add(graph.glow);
 
     /* filaments */
@@ -543,6 +496,7 @@ if (renderer) {
     lgeo.setAttribute("position", new THREE.BufferAttribute(lpos, 3));
     lgeo.setAttribute("color", new THREE.BufferAttribute(lcol, 3));
     graph.lines = new THREE.LineSegments(lgeo, lineMat);
+    graph.lines.frustumCulled = false;
     graph.group.add(graph.lines);
 
     /* selection pulses (filled during animate when a star is selected) */
@@ -556,6 +510,7 @@ if (renderer) {
       new THREE.BufferAttribute(new Float32Array(pmax), 1));
     pgeo.setDrawRange(0, 0);
     graph.pulses = new THREE.Points(pgeo, pointsMaterial(0.9));
+    graph.pulses.frustumCulled = false;
     graph.group.add(graph.pulses);
 
     startSim();
@@ -637,6 +592,13 @@ if (renderer) {
       g[i * 3] = p.x; g[i * 3 + 1] = p.y; g[i * 3 + 2] = p.z;
     });
     graph.mesh.instanceMatrix.needsUpdate = true;
+    /* THE outer-stars-unclickable bug: InstancedMesh caches its bounding
+       sphere at the FIRST raycast — while the newborn constellation is
+       still a tight cluster — and never recomputes it. Rays aimed at
+       stars that later drifted outward were rejected by that stale
+       sphere before any per-star test ran. Invalidate it on every
+       position update; the next pick recomputes an honest one. */
+    graph.mesh.boundingSphere = null;
     graph.glow.geometry.attributes.position.needsUpdate = true;
     graph.glow.geometry.computeBoundingSphere();
     var lp = graph.lines.geometry.attributes.position.array;
@@ -1132,23 +1094,12 @@ if (renderer) {
     if (ambient.visible) {
       /* cursor physics field — feedback, full rate */
       stepMotes(dt);
-      /* ambient drift — the 60 s+ register only */
-      var t = clockTime;
-      if (farDust) farDust.rotation.y = t * (Math.PI * 2 / 900);   // 15 min/lap
-      clouds.forEach(function (sp) {
-        var cfg = sp.userData;
-        if (!cfg.base) return;
-        sp.position.set(
-          cfg.base.x + Math.sin(t * 0.008 + cfg.phase) * SPACE.r * 0.14,
-          cfg.base.y + Math.cos(t * 0.006 + cfg.phase) * SPACE.r * 0.1,
-          cfg.base.z);
-        var breathe = 1 + Math.sin(t * 0.009 + cfg.phase) * 0.04;   // ~70 s breath
-        sp.scale.setScalar(SPACE.r * cfg.s * breathe);
-      });
-      /* the cursor's light drifts to where you point */
-      raycaster.setFromCamera(new THREE.Vector2(pointer.nx, pointer.ny), camera);
-      var lp = raycaster.ray.at(camera.position.length() * 0.55, new THREE.Vector3());
-      cursorLight.position.lerp(lp, 0.06);
+      /* the fog flows like liquid (slow register) and leans toward the
+         hand: lerped mouse gives the vortex weight, not jitter */
+      auroraMat.uniforms.uTime.value = clockTime;
+      var mu = auroraMat.uniforms.uMouse.value;
+      mu.x += ((pointer.nx + 1) / 2 - mu.x) * 0.05;
+      mu.y += ((pointer.ny + 1) / 2 - mu.y) * 0.05;
     }
 
     /* selection pulses along the chosen star's filaments (feedback) */
@@ -1211,6 +1162,9 @@ if (renderer) {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    var pr = renderer.getPixelRatio();
+    auroraMat.uniforms.uRes.value.set(window.innerWidth * pr,
+                                      window.innerHeight * pr);
     N.requestRender();
   });
 
