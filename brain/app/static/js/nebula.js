@@ -1,23 +1,22 @@
 /* The Nebula — one living world.
    A single full-screen three.js scene owns everything behind the glass:
-   deep space, two breathing gas clouds, cursor-parallax star dust, and the
-   memories themselves as luminous stars joined by synaptic filaments under
-   a real 3D force layout (d3-force-3d). The DOM shell floats above as
-   translucent panes; this module never touches it.
+   deep space, procedural fbm gas clouds, a luminous boundary shell around
+   the space the memories occupy, a cursor-stirred particle field with real
+   spring physics, and the memories themselves as plasma stars — fresnel
+   rims, domain-warped swirling cores, hot hearts — joined by synaptic
+   filaments under a 3D force layout (d3-force-3d).
 
    Design rules honoured here (this repo's scar tissue):
-   - ONE three instance (vendored r170 module) owns the ENTIRE scene.
-     Nothing from any other three build may enter it.  (rule 5)
-   - Node legibility beats mood: cores are unlit MeshBasicMaterial at full
-     opacity; glow is additive and behind them, never over them.  (rule 2)
-   - Two motion speeds: ambient drift (60 s+ loops) and feedback (~150 ms
-     eases). Nothing in between.  (rule 4)
-   - prefers-reduced-motion: no animation loop at all — the world renders
-     stills on demand and everything still works.  (rule 7)
-   - The canvas sits under the shell; interactivity is granted by CSS
-     (body[data-lens="constellation"] #world { pointer-events:auto }).
-     No ambient element can ever eat a click.  (rule 6)
-   - One pointermove listener; lerp work happens inside the one rAF. (rule 8)
+   - ONE three instance (vendored r170 module) owns the ENTIRE scene. (rule 5)
+   - Node legibility beats mood: cores are opaque, full-brightness, and
+     their colour stays unmistakably the project colour.  (rule 2)
+   - Two motion speeds: ambient (60 s+ drifts, near-still plasma churn)
+     and feedback (~150 ms; the cursor field is direct feedback).  (rule 4)
+   - prefers-reduced-motion: no animation loop — stills on demand,
+     everything still works.  (rule 7)
+   - The canvas sits under the shell; CSS grants it the pointer only in
+     the Constellation lens. No ambient element can eat a click. (rule 6)
+   - One pointermove listener; all lerp work inside the one rAF. (rule 8)
 */
 import * as THREE from "three";
 import { OrbitControls } from "orbitcontrols";
@@ -38,10 +37,26 @@ function hueOf(slug) {
   return HUES[h % 12];
 }
 function nodeColor(n, out) {
-  return out.setHSL(hueOf(n.project) / 360, 0.7, 0.66, THREE.SRGBColorSpace);
+  return out.setHSL(hueOf(n.project) / 360, 0.7, 0.62, THREE.SRGBColorSpace);
 }
 var STAR = new THREE.Color().setStyle("#ffd98a", THREE.SRGBColorSpace);
 var FILAMENT = new THREE.Color().setStyle("#d6be94", THREE.SRGBColorSpace);
+var AURA = new THREE.Color().setStyle("#7fa8e0", THREE.SRGBColorSpace);
+
+/* ------------------------------------------------ shared GLSL: noise */
+var GLSL_NOISE = [
+  "float nhash(vec3 p){ p = fract(p*0.3183099 + vec3(0.1,0.17,0.13));",
+  "  p *= 17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }",
+  "float vnoise(vec3 x){ vec3 i = floor(x); vec3 f = fract(x);",
+  "  f = f*f*(3.0-2.0*f);",
+  "  return mix(mix(mix(nhash(i+vec3(0,0,0)), nhash(i+vec3(1,0,0)), f.x),",
+  "                 mix(nhash(i+vec3(0,1,0)), nhash(i+vec3(1,1,0)), f.x), f.y),",
+  "             mix(mix(nhash(i+vec3(0,0,1)), nhash(i+vec3(1,0,1)), f.x),",
+  "                 mix(nhash(i+vec3(0,1,1)), nhash(i+vec3(1,1,1)), f.x), f.y), f.z); }",
+  "float fbm(vec3 p){ float a = 0.5, r = 0.0;",
+  "  for (int i = 0; i < 4; i++){ r += a*vnoise(p); p *= 2.03; a *= 0.5; }",
+  "  return r; }",
+].join("\n");
 
 /* ------------------------------------------------------------- set-up */
 var host = document.getElementById("world");
@@ -62,18 +77,20 @@ if (renderer) {
 
   var scene = new THREE.Scene();
   var camera = new THREE.PerspectiveCamera(
-    50, window.innerWidth / window.innerHeight, 1, 12000);
-  camera.position.set(0, 0, 460);
+    50, window.innerWidth / window.innerHeight, 1, 14000);
+  camera.position.set(0, 60, 520);
 
   var controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
+  controls.enableDamping = true;          // real weight and inertia
+  controls.dampingFactor = 0.07;
   controls.minDistance = 60;
-  controls.maxDistance = 4000;
+  controls.maxDistance = 5000;
   controls.autoRotate = false;
-  controls.enabled = false;              // granted in focus (constellation) mode
+  controls.enabled = false;               // granted in focus mode only
 
-  /* ------------------------------------------------ ambient: the nebula */
+  var clockTime = 0;                      // world time, seconds
+
+  /* =========================================================== textures */
   function glowTexture(size, inner, mid) {
     var c = document.createElement("canvas");
     c.width = c.height = size;
@@ -90,57 +107,49 @@ if (renderer) {
     return tex;
   }
 
-  var ambient = new THREE.Group();          // everything the toggle removes
-  scene.add(ambient);
-
-  var cloudTex = glowTexture(256, "rgba(255,255,255,.85)", "rgba(255,255,255,.28)");
-  var CLOUDS = [
-    { col: 0x24345e, s: 2400, p: [-700, 260, -1500], phase: 0.0 },
-    { col: 0x3a2c58, s: 2100, p: [820, -340, -1700], phase: 2.1 },
-    { col: 0x1d3d4a, s: 1800, p: [180, 620, -1900], phase: 4.2 },
-    { col: 0x4a3520, s: 1500, p: [-260, -640, -1600], phase: 5.3 },
-  ].map(function (cfg) {
-    var m = new THREE.SpriteMaterial({
-      map: cloudTex, color: cfg.col, transparent: true, opacity: 0.075,
-      blending: THREE.AdditiveBlending, depthWrite: false,
-    });
-    var sp = new THREE.Sprite(m);
-    sp.position.fromArray(cfg.p);
-    sp.scale.setScalar(cfg.s);
-    sp.userData = cfg;
-    ambient.add(sp);
-    return sp;
-  });
-
-  /* star dust: one instanced point cloud on a far shell, tiny + faint —
-     the graph's stars stay unmistakably brighter and bigger. */
-  var dustGroup = new THREE.Group();
-  ambient.add(dustGroup);
-  (function makeDust() {
-    var COUNT = 1300, pos = new Float32Array(COUNT * 3),
-        col = new Float32Array(COUNT * 3), size = new Float32Array(COUNT);
-    var c = new THREE.Color();
-    for (var i = 0; i < COUNT; i++) {
-      // shell distribution: far behind and around the graph
-      var r = 900 + Math.random() * 2400;
-      var th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
-      pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
-      pos[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.8;
-      pos[i * 3 + 2] = r * Math.cos(ph);
-      var warm = Math.random() < 0.18;
-      c.setHSL(warm ? 0.11 : 0.6, warm ? 0.5 : 0.25,
-               0.55 + Math.random() * 0.3, THREE.SRGBColorSpace);
-      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-      size[i] = 1.1 + Math.random() * 2.2;
+  /* real gas: domain-warped fbm on a canvas, faded radially — one-time
+     cost at load, no external assets, endlessly variable */
+  function cloudTexture(seed) {
+    var S = 256, c = document.createElement("canvas");
+    c.width = c.height = S;
+    var g = c.getContext("2d");
+    var img = g.createImageData(S, S);
+    function h2(x, y) {
+      var n = Math.sin(x * 127.1 + y * 311.7 + seed * 74.7) * 43758.5453;
+      return n - Math.floor(n);
     }
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    geo.setAttribute("psize", new THREE.BufferAttribute(size, 1));
-    dustGroup.add(new THREE.Points(geo, pointsMaterial(0.5)));
-  })();
+    function vn(x, y) {
+      var xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+      var u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+      return h2(xi, yi) * (1 - u) * (1 - v) + h2(xi + 1, yi) * u * (1 - v)
+           + h2(xi, yi + 1) * (1 - u) * v + h2(xi + 1, yi + 1) * u * v;
+    }
+    function fbm2(x, y) {
+      var a = 0.5, r = 0;
+      for (var i = 0; i < 4; i++) { r += a * vn(x, y); x *= 2.03; y *= 2.03; a *= 0.5; }
+      return r;
+    }
+    for (var y = 0; y < S; y++) {
+      for (var x = 0; x < S; x++) {
+        var u = x / S, v = y / S;
+        var qx = fbm2(u * 4 + seed, v * 4);          // domain warp: the swirl
+        var qy = fbm2(u * 4 + 5.2, v * 4 + 1.3);
+        var d = fbm2(u * 4 + 1.7 * qx, v * 4 + 1.7 * qy);
+        var dx = u - 0.5, dy = v - 0.5;
+        var fall = Math.max(0, 1 - 2.15 * Math.sqrt(dx * dx + dy * dy));
+        var a = Math.pow(Math.max(0, d - 0.28), 1.5) * fall * fall * 255 * 2.2;
+        var i4 = (y * S + x) * 4;
+        img.data[i4] = 255; img.data[i4 + 1] = 255; img.data[i4 + 2] = 255;
+        img.data[i4 + 3] = Math.min(255, a);
+      }
+    }
+    g.putImageData(img, 0, 0);
+    var tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  }
 
-  /* soft point-sprite material with per-point size (shared by dust + glow) */
+  /* soft point-sprite material with per-point size */
   function pointsMaterial(alpha) {
     return new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -149,7 +158,7 @@ if (renderer) {
         "attribute float psize; varying vec3 vC;" +
         "void main(){ vC = color;" +
         " vec4 mv = modelViewMatrix * vec4(position,1.0);" +
-        " gl_PointSize = psize * (320.0 / -mv.z);" +
+        " gl_PointSize = min(psize * (320.0 / -mv.z), 72.0);" +
         " gl_Position = projectionMatrix * mv; }",
       fragmentShader:
         "uniform float uAlpha; varying vec3 vC;" +
@@ -160,17 +169,228 @@ if (renderer) {
     });
   }
 
+  /* ================================================= THE SPACE (shell)
+     A faint luminous membrane around the volume the memories occupy —
+     bright only at its limb (fresnel), banded by slow aurora. Inside is
+     clear; beyond it, the nebula thickens. */
+  var SPACE = { r: 240, target: 240 };
+  var shellMat = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide, transparent: true, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    uniforms: {
+      uTime: { value: 0 },
+      uColor: { value: AURA.clone() },
+      uColor2: { value: new THREE.Color().setStyle("#b18fe0", THREE.SRGBColorSpace) },
+      uAlpha: { value: 0.55 },
+    },
+    vertexShader: [
+      "varying vec3 vN; varying vec3 vW; varying vec3 vP;",
+      "void main(){",
+      "  vP = position;",
+      "  vN = normalize(mat3(modelMatrix) * normal);",
+      "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+      "  vW = wp.xyz;",
+      "  gl_Position = projectionMatrix * viewMatrix * wp; }",
+    ].join("\n"),
+    fragmentShader: [
+      "uniform float uTime; uniform vec3 uColor; uniform vec3 uColor2;",
+      "uniform float uAlpha;",
+      "varying vec3 vN; varying vec3 vW; varying vec3 vP;",
+      GLSL_NOISE,
+      "void main(){",
+      "  vec3 v = normalize(cameraPosition - vW);",
+      "  float limb = pow(1.0 - abs(dot(normalize(vN), v)), 3.0);",
+      "  if (limb < 0.003) discard;",
+      "  float lat = normalize(vP).y;",
+      "  float au = fbm(vec3(normalize(vP).xz * 3.0, lat * 2.0 + uTime * 0.01));",
+      "  vec3 col = mix(uColor, uColor2, smoothstep(0.3, 0.7, au));",
+      "  float band = 0.75 + 0.25 * au;",
+      "  gl_FragColor = vec4(col * limb * band * uAlpha, limb * uAlpha); }",
+    ].join("\n"),
+  });
+  var shell = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), shellMat);
+  shell.scale.setScalar(SPACE.r);
+  shell.renderOrder = 2;
+  scene.add(shell);
+
+  /* =========================================== ambient: the nebula body */
+  var ambient = new THREE.Group();          // everything the toggle removes
+  scene.add(ambient);
+
+  /* gas clouds live OUTSIDE the space: direction + distance factor,
+     re-anchored whenever the shell grows */
+  var CLOUD_DEFS = [
+    { col: 0x2a3f78, f: 2.6, s: 5.2, dir: [-0.62, 0.28, -0.73], phase: 0.0 },
+    { col: 0x4a3670, f: 3.1, s: 4.6, dir: [0.71, -0.32, -0.62], phase: 2.1 },
+    { col: 0x1d4a58, f: 3.6, s: 4.0, dir: [0.14, 0.62, -0.77], phase: 4.2 },
+    { col: 0x5a3f22, f: 2.9, s: 3.4, dir: [-0.28, -0.66, -0.70], phase: 5.3 },
+    { col: 0x33508c, f: 3.3, s: 4.4, dir: [0.55, 0.45, 0.70], phase: 1.2 },
+    { col: 0x452a60, f: 2.7, s: 3.8, dir: [-0.70, -0.10, 0.71], phase: 3.6 },
+  ];
+  var clouds = CLOUD_DEFS.map(function (cfg, i) {
+    var m = new THREE.SpriteMaterial({
+      map: cloudTexture(i * 3.7 + 1), color: cfg.col,
+      transparent: true, opacity: 0.16,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    var sp = new THREE.Sprite(m);
+    sp.userData = cfg;
+    ambient.add(sp);
+    return sp;
+  });
+  function anchorClouds() {
+    clouds.forEach(function (sp) {
+      var cfg = sp.userData;
+      var d = new THREE.Vector3().fromArray(cfg.dir).normalize()
+        .multiplyScalar(SPACE.r * cfg.f);
+      cfg.base = d;
+      sp.position.copy(d);
+      sp.scale.setScalar(SPACE.r * cfg.s);
+    });
+  }
+
+  /* far starfield: a distant shell of tiny lights, denser than before,
+     always beyond the space so its edge reads clearly */
+  var farDust = null;
+  function buildFarDust() {
+    if (farDust) {
+      ambient.remove(farDust);
+      farDust.geometry.dispose(); farDust.material.dispose();
+    }
+    var COUNT = 2600, pos = new Float32Array(COUNT * 3),
+        col = new Float32Array(COUNT * 3), size = new Float32Array(COUNT);
+    var c = new THREE.Color();
+    for (var i = 0; i < COUNT; i++) {
+      var r = SPACE.r * (1.45 + Math.pow(Math.random(), 0.7) * 4.5);
+      var th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+      pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+      pos[i * 3 + 1] = r * Math.sin(ph) * Math.sin(th) * 0.85;
+      pos[i * 3 + 2] = r * Math.cos(ph);
+      var warm = Math.random() < 0.22;
+      c.setHSL(warm ? 0.09 : 0.6, warm ? 0.55 : 0.3,
+               0.5 + Math.random() * 0.4, THREE.SRGBColorSpace);
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      size[i] = 1.0 + Math.random() * 2.6;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("psize", new THREE.BufferAttribute(size, 1));
+    farDust = new THREE.Points(geo, pointsMaterial(0.55));
+    ambient.add(farDust);
+  }
+
+  /* ============================== the cursor field: physics you can stir
+     Motes inside and just beyond the space with real dynamics: a slow
+     curl drift, a hard-but-soft repulsion around the cursor's ray (they
+     scatter, swirl sideways, and spring home with damped inertia). This
+     is feedback — it answers the hand — so it runs at full rate. */
+  var motes = null;
+  var MOTES = { n: 1600, home: null, pos: null, vel: null };
+  function buildMotes() {
+    if (motes) {
+      ambient.remove(motes);
+      motes.geometry.dispose(); motes.material.dispose();
+    }
+    var n = MOTES.n;
+    MOTES.home = new Float32Array(n * 3);
+    MOTES.vel = new Float32Array(n * 3);
+    var pos = new Float32Array(n * 3);
+    var col = new Float32Array(n * 3), size = new Float32Array(n);
+    var c = new THREE.Color();
+    for (var i = 0; i < n; i++) {
+      var r = SPACE.r * (0.25 + Math.pow(Math.random(), 0.8) * 0.92);
+      var th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1);
+      var x = r * Math.sin(ph) * Math.cos(th),
+          y = r * Math.sin(ph) * Math.sin(th) * 0.9,
+          z = r * Math.cos(ph);
+      MOTES.home[i * 3] = pos[i * 3] = x;
+      MOTES.home[i * 3 + 1] = pos[i * 3 + 1] = y;
+      MOTES.home[i * 3 + 2] = pos[i * 3 + 2] = z;
+      var warm = Math.random() < 0.3;
+      c.setHSL(warm ? 0.11 : 0.58, 0.45, 0.6 + Math.random() * 0.25,
+               THREE.SRGBColorSpace);
+      col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+      size[i] = 1.2 + Math.random() * 2.0;
+    }
+    MOTES.pos = pos;
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("psize", new THREE.BufferAttribute(size, 1));
+    motes = new THREE.Points(geo, pointsMaterial(0.5));
+    motes.geometry.attributes.position.setUsage(THREE.DynamicDrawUsage);
+    ambient.add(motes);
+  }
+
+  var _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _tmp = new THREE.Vector3();
+  function stepMotes(dt) {
+    if (!motes || reduced) return;
+    dt = Math.min(dt, 0.05);
+    raycaster.setFromCamera(new THREE.Vector2(pointer.nx, pointer.ny), camera);
+    _ro.copy(raycaster.ray.origin);
+    _rd.copy(raycaster.ray.direction);
+    var pos = MOTES.pos, vel = MOTES.vel, home = MOTES.home;
+    var R = SPACE.r * 0.45, R2 = R * R;          // reach of the hand
+    var t = clockTime;
+    for (var i = 0; i < MOTES.n; i++) {
+      var ix = i * 3, x = pos[ix], y = pos[ix + 1], z = pos[ix + 2];
+      /* curl-ish drift — the ambient register, barely-there */
+      vel[ix]     += 1.3 * Math.sin(0.011 * y + t * 0.05 + i) * dt;
+      vel[ix + 1] += 1.3 * Math.sin(0.012 * z + t * 0.045) * dt;
+      vel[ix + 2] += 1.3 * Math.sin(0.010 * x + t * 0.04) * dt;
+      /* repulsion from the cursor's ray + a sideways swirl */
+      var wx = x - _ro.x, wy = y - _ro.y, wz = z - _ro.z;
+      var a = wx * _rd.x + wy * _rd.y + wz * _rd.z;
+      if (a > 0) {
+        var cx = wx - a * _rd.x, cy = wy - a * _rd.y, cz = wz - a * _rd.z;
+        var d2 = cx * cx + cy * cy + cz * cz;
+        if (d2 < R2 && d2 > 1e-4) {
+          var d = Math.sqrt(d2);
+          var f = (1 - d / R); f = 260 * f * f * dt / d;
+          vel[ix] += cx * f; vel[ix + 1] += cy * f; vel[ix + 2] += cz * f;
+          /* swirl: ray × offset — the stir */
+          var sx = _rd.y * cz - _rd.z * cy,
+              sy = _rd.z * cx - _rd.x * cz,
+              sz = _rd.x * cy - _rd.y * cx;
+          vel[ix] += sx * f * 0.45; vel[ix + 1] += sy * f * 0.45; vel[ix + 2] += sz * f * 0.45;
+        }
+      }
+      /* spring home, damped — inertia you can feel */
+      vel[ix]     += (home[ix] - x) * 1.1 * dt;
+      vel[ix + 1] += (home[ix + 1] - y) * 1.1 * dt;
+      vel[ix + 2] += (home[ix + 2] - z) * 1.1 * dt;
+      var damp = 1 - 1.6 * dt;
+      vel[ix] *= damp; vel[ix + 1] *= damp; vel[ix + 2] *= damp;
+      pos[ix] += vel[ix] * dt; pos[ix + 1] += vel[ix + 1] * dt; pos[ix + 2] += vel[ix + 2] * dt;
+    }
+    motes.geometry.attributes.position.needsUpdate = true;
+  }
+
   /* the cursor's presence: a faint warm light drifting where you point */
   var cursorLight = new THREE.Sprite(new THREE.SpriteMaterial({
     map: glowTexture(128, "rgba(255,217,138,.5)", "rgba(255,217,138,.12)"),
-    transparent: true, opacity: 0.16,
+    transparent: true, opacity: 0.15,
     blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   cursorLight.scale.setScalar(340);
   cursorLight.visible = !reduced;
   ambient.add(cursorLight);
 
-  /* --------------------------------------------------- the constellation */
+  function anchorSpace() {          // everything that hangs off the radius
+    shell.scale.setScalar(SPACE.r);
+    anchorClouds();
+    buildFarDust();
+    buildMotes();
+  }
+  anchorSpace();
+
+  /* ====================================== the constellation: plasma stars
+     Not coloured balls: each memory is a small sun. Domain-warped noise
+     churns under the surface (newer memories churn faster), a hot heart
+     burns at the centre (importance), and a fresnel rim in the project
+     colour holds the silhouette. Selection turns the whole star to warm
+     starlight via instanceColor. Opaque, full brightness — rule 2. */
   var graph = {
     group: new THREE.Group(),
     nodes: [], links: [], byId: {},
@@ -179,8 +399,54 @@ if (renderer) {
   };
   scene.add(graph.group);
 
-  var nodeGeo = new THREE.SphereGeometry(1, 22, 16);
-  var nodeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  var nodeGeo = new THREE.SphereGeometry(1, 28, 20);
+  var nodeMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uAura: { value: AURA.clone() },
+    },
+    vertexShader: [
+      "attribute float aSeed; attribute float aHeat; attribute float aChurn;",
+      "varying vec3 vN; varying vec3 vW; varying vec3 vP; varying vec3 vC;",
+      "varying float vSeed; varying float vHeat; varying float vChurn;",
+      "void main(){",
+      "  vC = instanceColor;",
+      "  vSeed = aSeed; vHeat = aHeat; vChurn = aChurn;",
+      "  vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);",
+      "  vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);",
+      "  vW = wp.xyz; vP = position;",
+      "  gl_Position = projectionMatrix * viewMatrix * wp; }",
+    ].join("\n"),
+    fragmentShader: [
+      "uniform float uTime; uniform vec3 uAura;",
+      "varying vec3 vN; varying vec3 vW; varying vec3 vP; varying vec3 vC;",
+      "varying float vSeed; varying float vHeat; varying float vChurn;",
+      GLSL_NOISE,
+      "void main(){",
+      "  vec3 n = normalize(vN);",
+      "  vec3 v = normalize(cameraPosition - vW);",
+      "  float ndv = clamp(dot(n, v), 0.0, 1.0);",
+      "  /* plasma: domain-warped fbm churning under the surface */",
+      "  float t = uTime * (0.015 + vChurn * 0.035) + vSeed * 19.0;",
+      "  vec3 p = vP * 2.4 + vSeed * 7.0;",
+      "  vec3 q = vec3(fbm(p + vec3(t, 0.0, 0.0)),",
+      "                fbm(p + vec3(5.2, t * 0.8, 1.3)),",
+      "                fbm(p + vec3(1.7, 9.2, -t * 0.6)));",
+      "  float sw = fbm(p + 1.9 * q);",
+      "  /* palette: shadowed body -> project colour -> white-hot */",
+      "  vec3 deep = vC * 0.22;",
+      "  vec3 hot = mix(vC, vec3(1.0, 0.97, 0.9), 0.8);",
+      "  vec3 col = mix(deep, vC, smoothstep(0.3, 0.75, sw));",
+      "  col += hot * pow(max(sw - 0.45, 0.0) * 1.8, 2.0) * (0.6 + vHeat);",
+      "  /* the heart: importance burns at the centre of the disc */",
+      "  col += hot * pow(ndv, 3.0) * (0.25 + 0.85 * vHeat);",
+      "  /* fresnel rim: silhouette in project colour kissed by the aura */",
+      "  float rim = pow(1.0 - ndv, 2.6);",
+      "  col += mix(vC, uAura, 0.3) * rim * 1.7;",
+      "  gl_FragColor = vec4(col, 1.0); }",
+    ].join("\n"),
+  });
+
   var lineMat = new THREE.LineBasicMaterial({
     vertexColors: true, transparent: true, opacity: 1,
     blending: THREE.AdditiveBlending, depthWrite: false,
@@ -188,6 +454,12 @@ if (renderer) {
 
   function radiusOf(n) {
     return (3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8) * 0.62;
+  }
+  function churnOf(n) {              // newer memories churn faster
+    var t = Date.parse(n.timestamp || "") || 0;
+    if (!t) return 0.4;
+    var days = (Date.now() - t) / 864e5;
+    return Math.max(0, Math.min(1, 1 - days / 60));
   }
 
   function disposeGraph() {
@@ -224,34 +496,44 @@ if (renderer) {
       });
 
     disposeGraph();
-    if (!graph.nodes.length) { N.requestRender(); return; }
+    if (!graph.nodes.length) { fitSpace(); N.requestRender(); return; }
 
-    /* cores: one InstancedMesh, unlit, full opacity — unmistakable */
-    var mesh = new THREE.InstancedMesh(nodeGeo, nodeMat, graph.nodes.length);
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    var c = new THREE.Color();
+    /* plasma stars: one InstancedMesh + per-instance seed/heat/churn */
+    var count = graph.nodes.length;
+    var geo = nodeGeo.clone();
+    var seeds = new Float32Array(count), heats = new Float32Array(count),
+        churns = new Float32Array(count);
     graph.nodes.forEach(function (n, i) {
       n._r = radiusOf(n);
-      mesh.setColorAt(i, nodeColor(n, c));
+      seeds[i] = (i * 0.61803) % 1;
+      heats[i] = Math.max(0, Math.min(1, ((n.importance || 3) - 1) / 4));
+      churns[i] = churnOf(n);
     });
+    geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 1));
+    geo.setAttribute("aHeat", new THREE.InstancedBufferAttribute(heats, 1));
+    geo.setAttribute("aChurn", new THREE.InstancedBufferAttribute(churns, 1));
+    var mesh = new THREE.InstancedMesh(geo, nodeMat, count);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    var c = new THREE.Color();
+    graph.nodes.forEach(function (n, i) { mesh.setColorAt(i, nodeColor(n, c)); });
     mesh.instanceColor.needsUpdate = true;
     graph.mesh = mesh;
     graph.group.add(mesh);
 
-    /* halos: additive point sprites behind the cores */
-    var gpos = new Float32Array(graph.nodes.length * 3);
-    var gcol = new Float32Array(graph.nodes.length * 3);
-    var gsize = new Float32Array(graph.nodes.length);
+    /* halos: additive point sprites behind the stars */
+    var gpos = new Float32Array(count * 3);
+    var gcol = new Float32Array(count * 3);
+    var gsize = new Float32Array(count);
     graph.nodes.forEach(function (n, i) {
       nodeColor(n, c);
       gcol[i * 3] = c.r; gcol[i * 3 + 1] = c.g; gcol[i * 3 + 2] = c.b;
-      gsize[i] = n._r * 7;
+      gsize[i] = n._r * 7.5;
     });
     var ggeo = new THREE.BufferGeometry();
     ggeo.setAttribute("position", new THREE.BufferAttribute(gpos, 3));
     ggeo.setAttribute("color", new THREE.BufferAttribute(gcol, 3));
     ggeo.setAttribute("psize", new THREE.BufferAttribute(gsize, 1));
-    graph.glow = new THREE.Points(ggeo, pointsMaterial(0.34));
+    graph.glow = new THREE.Points(ggeo, pointsMaterial(0.3));
     graph.group.add(graph.glow);
 
     /* filaments */
@@ -263,7 +545,7 @@ if (renderer) {
     graph.lines = new THREE.LineSegments(lgeo, lineMat);
     graph.group.add(graph.lines);
 
-    /* selection pulses (filled during animate when a node is selected) */
+    /* selection pulses (filled during animate when a star is selected) */
     var pgeo = new THREE.BufferGeometry();
     var pmax = 64;
     pgeo.setAttribute("position",
@@ -283,8 +565,6 @@ if (renderer) {
 
   function startSim() {
     if (typeof window.d3 === "undefined" || !window.d3.forceSimulation) {
-      // layout library missing: place nodes on a sphere so the world
-      // still shows every memory
       graph.nodes.forEach(function (n, i) {
         var ph = Math.acos(1 - 2 * (i + 0.5) / graph.nodes.length);
         var th = Math.PI * (1 + Math.sqrt(5)) * i;
@@ -293,6 +573,7 @@ if (renderer) {
         n.z = 180 * Math.cos(ph);
       });
       updateBuffers();
+      fitSpace();
       return;
     }
     if (graph.sim) graph.sim.stop();
@@ -307,8 +588,28 @@ if (renderer) {
       for (var i = 0; i < 220; i++) graph.sim.tick();
       graph.sim.alpha(0);
       updateBuffers();
+      fitSpace(true);
     } else {
       graph.sim.alpha(1);
+    }
+  }
+
+  /* the space breathes outward to hold its stars (with margin), never
+     jumps: the shell eases toward the fit */
+  function fitSpace(now) {
+    var maxR = 0;
+    graph.nodes.forEach(function (n) {
+      var d = Math.sqrt((n.x || 0) * (n.x || 0) + (n.y || 0) * (n.y || 0)
+                        + (n.z || 0) * (n.z || 0)) + (n._r || 4) * 3;
+      if (d > maxR) maxR = d;
+    });
+    SPACE.target = Math.max(170, maxR * 1.22);
+    if (now || reduced) {
+      SPACE.r = SPACE.target;
+      anchorSpace();
+    } else if (Math.abs(SPACE.target - SPACE.r) / SPACE.r > 0.45) {
+      SPACE.r = SPACE.target;          // big jump (new dataset): re-anchor
+      anchorSpace();
     }
   }
 
@@ -385,8 +686,8 @@ if (renderer) {
     controls.autoRotate = !focus && !reduced && ambienceOn();
     controls.autoRotateSpeed = 0.25;               // one lap ≈ 4 minutes
     graph.dim = focus ? 1 : 0.38;
-    nodeMat.opacity = 1;                            // cores never fade (rule 2)
-    if (graph.glow) graph.glow.material.uniforms.uAlpha.value = focus ? 0.34 : 0.14;
+    if (graph.glow) graph.glow.material.uniforms.uAlpha.value = focus ? 0.3 : 0.13;
+    shellMat.uniforms.uAlpha.value = focus ? 0.55 : 0.3;
     paintLinks();
     if (!focus) hideTip();
     N.requestRender();
@@ -399,11 +700,12 @@ if (renderer) {
   };
   N.setGraphVisible = function (on) {
     graph.group.visible = !!on;
+    shell.visible = !!on;
     N.requestRender();
   };
 
   /* ------------------------------------------------------------ pointer */
-  var pointer = { x: 0, y: 0, nx: 0, ny: 0, sx: 0, sy: 0 };
+  var pointer = { x: 0, y: 0, nx: 0, ny: 0, px: 0, py: 0 };
   var raycaster = new THREE.Raycaster();
   var tip = null;
 
@@ -616,7 +918,7 @@ if (renderer) {
     sc.add(rim);
 
     var o = { renderer: r2, scene: sc, camera: cam, mesh: mesh, glass: glass,
-              rim: rim, tex: tex, raf: 0, dragging: false, vx: 0 };
+              rim: rim, tex: tex, raf: 0, dragging: false, vx: 0, alive: true };
 
     var lastX = 0, lastY = 0, el = r2.domElement;
     el.addEventListener("pointerdown", function (ev) {
@@ -639,16 +941,21 @@ if (renderer) {
     });
     el.addEventListener("click", function (ev) { ev.stopPropagation(); });
 
-    (function frame() {
-      if (!orb.three) return;
-      if (!o.dragging) {
-        o.vx *= 0.96;
-        mesh.rotation.y += reduced ? o.vx : Math.max(o.vx, 0.0016);
-      }
-      r2.render(sc, cam);
-      if (!reduced) o.raf = requestAnimationFrame(frame);
-    })();
-    if (reduced) r2.render(sc, cam);
+    /* the loop keys off its OWN liveness flag — the old version checked a
+       field that was only assigned after this returned, so the orb never
+       drew a single frame. Never again. */
+    o.start = function () {
+      (function frame() {
+        if (!o.alive) return;
+        if (!o.dragging) {
+          o.vx *= 0.96;
+          mesh.rotation.y += reduced ? o.vx : Math.max(o.vx, 0.0016);
+        }
+        r2.render(sc, cam);
+        if (!reduced) o.raf = requestAnimationFrame(frame);
+      })();
+      if (reduced) r2.render(sc, cam);
+    };
     return o;
   }
 
@@ -656,6 +963,7 @@ if (renderer) {
     var o = orb.three;
     if (!o) return;
     orb.three = null;
+    o.alive = false;
     cancelAnimationFrame(o.raf);
     o.tex.dispose();
     o.mesh.geometry.dispose(); o.mesh.material.dispose();
@@ -690,7 +998,9 @@ if (renderer) {
     orb.veil = veil;
 
     orb.three = buildOrbScene(mem, stage);
-    if (!orb.three) {
+    if (orb.three) {
+      orb.three.start();
+    } else {
       var flat = orbCanvas(mem, 1200, 600);
       var two = document.createElement("canvas");
       two.width = 2400; two.height = 600;
@@ -762,10 +1072,14 @@ if (renderer) {
     if (t >= 1) { flight = null; if (f.done) f.done(); }
   }
 
-  var lastPulse = 0;
+  var lastNow = 0, fitCounter = 0;
+  var docStyle = document.documentElement.style;
   function animate(now) {
     requestAnimationFrame(animate);
-    if (document.hidden) return;
+    if (document.hidden) { lastNow = now; return; }
+    var dt = Math.min((now - lastNow) / 1000 || 0.016, 0.05);
+    lastNow = now;
+    clockTime = now * 0.001;
 
     if (flight) stepFlight(now);
 
@@ -773,19 +1087,40 @@ if (renderer) {
     if (graph.sim && graph.sim.alpha() > graph.sim.alphaMin()) {
       graph.sim.tick();
       updateBuffers();
+      if (++fitCounter % 20 === 0) fitSpace();
     }
 
-    /* ambient drift — the 60 s+ register only */
+    /* the shell eases toward its fit — weight, not snap */
+    if (Math.abs(SPACE.target - SPACE.r) > 0.5) {
+      SPACE.r += (SPACE.target - SPACE.r) * 0.03;
+      shell.scale.setScalar(SPACE.r);
+    }
+
+    /* time flows through the shaders (slow: the plasma register) */
+    nodeMat.uniforms.uTime.value = clockTime;
+    shellMat.uniforms.uTime.value = ambient.visible ? clockTime : 0;
+
+    /* the glass leans with the hand: two custom props, GPU transforms only */
+    pointer.px += (pointer.nx - pointer.px) * 0.04;
+    pointer.py += (pointer.ny - pointer.py) * 0.04;
+    docStyle.setProperty("--px", pointer.px.toFixed(4));
+    docStyle.setProperty("--py", pointer.py.toFixed(4));
+
     if (ambient.visible) {
-      var t = now * 0.001;
-      dustGroup.rotation.y = t * (Math.PI * 2 / 900);        // one lap / 15 min
-      dustGroup.rotation.x += (pointer.ny * 0.05 - dustGroup.rotation.x) * 0.02;
-      CLOUDS.forEach(function (sp) {
+      /* cursor physics field — feedback, full rate */
+      stepMotes(dt);
+      /* ambient drift — the 60 s+ register only */
+      var t = clockTime;
+      if (farDust) farDust.rotation.y = t * (Math.PI * 2 / 900);   // 15 min/lap
+      clouds.forEach(function (sp) {
         var cfg = sp.userData;
-        sp.position.x = cfg.p[0] + Math.sin(t * 0.008 + cfg.phase) * 60;
-        sp.position.y = cfg.p[1] + Math.cos(t * 0.006 + cfg.phase) * 44;
-        var breathe = 1 + Math.sin(t * 0.009 + cfg.phase) * 0.03;   // ~70 s breath
-        sp.scale.setScalar(cfg.s * breathe);
+        if (!cfg.base) return;
+        sp.position.set(
+          cfg.base.x + Math.sin(t * 0.008 + cfg.phase) * SPACE.r * 0.14,
+          cfg.base.y + Math.cos(t * 0.006 + cfg.phase) * SPACE.r * 0.1,
+          cfg.base.z);
+        var breathe = 1 + Math.sin(t * 0.009 + cfg.phase) * 0.04;   // ~70 s breath
+        sp.scale.setScalar(SPACE.r * cfg.s * breathe);
       });
       /* the cursor's light drifts to where you point */
       raycaster.setFromCamera(new THREE.Vector2(pointer.nx, pointer.ny), camera);
