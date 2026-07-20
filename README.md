@@ -6,7 +6,10 @@ Replaces flat MEMORY.md files with a FastAPI + SQLite (FTS5 + sqlite-vec) + Olla
 that gives your AI assistant automatic context on every new session, with on-demand semantic search,
 an automatic memory graph, and a local web UI at http://localhost:7741/ui.
 
-MemoryBrain natively supports **SSE transport** for Claude Code and **stdio transport** (via a Docker wrapper) for Gemini.
+MemoryBrain works with **any AI assistant**: MCP over SSE (Claude Code),
+MCP over stdio (Gemini, Codex, Kimi, Grok, Cline — any MCP client, via a
+one-line Docker command), or plain REST for assistants without MCP.
+See [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md).
 
 MemoryBrain is a **passive store** — it stores what your assistant saves via `add_memory`. No polling,
 no plugin credentials. Works identically on any machine with any MCP tools registered.

@@ -323,20 +323,28 @@
     return s;
   }
 
-  function decorate(el, xPct, yPct, size, depth) {
+  function decorate(el, xPct, yPct, size, depth, roam) {
     el.style.left = xPct + "vw";
     el.style.top = yPct + "vh";
     el.style.width = size + "px";
     el.style.height = size + "px";
     el.style.setProperty("--depth", depth.toFixed(2));
-    var inner = el.firstChild;
-    inner.style.setProperty("--drift-x", rnd(-16, 16).toFixed(1) + "px");
-    inner.style.setProperty("--drift-y", rnd(-12, 12).toFixed(1) + "px");
-    inner.style.setProperty("--drift-r", rnd(-4, 4).toFixed(2) + "deg");
-    inner.style.setProperty("--base-r", rnd(-9, 9).toFixed(1) + "deg");
-    inner.style.setProperty("--breathe", rnd(1.01, 1.035).toFixed(3));
-    inner.style.animationDuration = rnd(40, 100).toFixed(0) + "s";
-    inner.style.animationDelay = "-" + rnd(0, 60).toFixed(0) + "s";
+    var inner = el.firstChild, st = inner.style;
+    // four waypoints of a slow float about the room; nearer pieces roam wider
+    var ax = roam * (0.6 + depth), ay = roam * 0.8 * (0.6 + depth);
+    for (var i = 1; i <= 3; i++) {
+      st.setProperty("--x" + i, rnd(-ax, ax).toFixed(2) + "vw");
+      st.setProperty("--y" + i, rnd(-ay, ay).toFixed(2) + "vh");
+    }
+    var r0 = rnd(-9, 9);
+    st.setProperty("--r0", r0.toFixed(1) + "deg");
+    for (var j = 1; j <= 3; j++) {
+      st.setProperty("--r" + j, (r0 + rnd(-7, 7)).toFixed(1) + "deg");
+    }
+    st.setProperty("--s1", rnd(1.01, 1.05).toFixed(3));
+    st.setProperty("--s2", rnd(0.96, 1.03).toFixed(3));
+    st.animationDuration = rnd(70, 150).toFixed(0) + "s";
+    st.animationDelay = "-" + rnd(0, 120).toFixed(0) + "s";
   }
 
   function build() {
@@ -357,6 +365,21 @@
     room.id = "codex-room";
     layer.appendChild(room);
 
+    // the breath: two vast blooms that keep the room moving even when
+    // the pointer rests
+    for (var bi = 0; bi < 2; bi++) {
+      var blob = document.createElement("div");
+      blob.className = "codex-blob";
+      blob.style.left = rnd(-20, 70) + "vw";
+      blob.style.top = rnd(-25, 65) + "vh";
+      blob.style.setProperty("--bx1", rnd(-14, 14).toFixed(1) + "vw");
+      blob.style.setProperty("--by1", rnd(-10, 10).toFixed(1) + "vh");
+      blob.style.setProperty("--bs", rnd(1.08, 1.3).toFixed(2));
+      blob.style.animationDuration = rnd(50, 95).toFixed(0) + "s";
+      blob.style.animationDelay = "-" + rnd(0, 50).toFixed(0) + "s";
+      room.appendChild(blob);
+    }
+
     var vignette = document.createElement("div");
     vignette.id = "codex-vignette";
     layer.appendChild(vignette);
@@ -373,7 +396,7 @@
       var plate = plates.splice(Math.floor(R() * plates.length), 1)[0];
       inner.style.backgroundImage = "url(/static/img/" + plate + ")";
       piece.appendChild(inner);
-      decorate(piece, p[0], p[1], rnd(230, 330), rnd(0.15, 0.3));
+      decorate(piece, p[0], p[1], rnd(230, 330), rnd(0.15, 0.3), 1.6);
       room.appendChild(piece);
     });
 
@@ -394,7 +417,7 @@
         + fn() + "</svg>";
       piece.appendChild(inner);
       var p = pos[n++ % pos.length];
-      decorate(piece, p[0], p[1], size, depth);
+      decorate(piece, p[0], p[1], size, depth, 4.2);
       room.appendChild(piece);
     }
 
