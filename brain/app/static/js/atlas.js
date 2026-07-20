@@ -1,6 +1,7 @@
-/* MemoryBrain Atlas shell: lens switching, inspector, command palette,
-   stream load-more. Everything here is progressive enhancement — the
-   server-rendered Stream works without any of it. */
+/* MemoryBrain shell: lens switching, inspector, command palette, stream
+   load-more, ambience switch. Everything here is progressive enhancement —
+   the server-rendered Stream works without any of it. The world itself
+   (the Nebula) lives in nebula.js; this file only talks to it. */
 "use strict";
 
 /* ---- shared helpers (constellation.js / chronicle.js use these) ---- */
@@ -13,28 +14,13 @@ Atlas.hue = function (slug) {
   for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 997;
   return HUES[h % 12];
 };
-function parchment() { return document.documentElement.dataset.theme === "parchment"; }
 Atlas.color = function (slug, l) {
-  /* pastel-leaning on parchment, deeper on umber */
-  return "hsl(" + Atlas.hue(slug) + (parchment() ? " 46% " : " 42% ")
-    + (l || (parchment() ? 46 : 60)) + "%)";
+  /* luminous against the night — the same law the world's stars obey */
+  return "hsl(" + Atlas.hue(slug) + " 70% " + (l || 66) + "%)";
 };
-Atlas.goldRGBA = function (a) {
-  return (parchment() ? "rgba(138,107,49," : "rgba(201,162,95,") + a + ")";
-};
-Atlas.goldBright = function () { return parchment() ? "#8a6b31" : "#e0bd7d"; };
+Atlas.goldRGBA = function (a) { return "rgba(255, 217, 138," + a + ")"; };
+Atlas.goldBright = function () { return "#ffd98a"; };
 
-function updateThemeBtn() {
-  var b = document.getElementById("theme-toggle");
-  if (b) b.textContent = parchment() ? "\u263e umber" : "\u2600 parchment";
-}
-Atlas.setTheme = function (t) {
-  if (t) document.documentElement.dataset.theme = t;
-  else document.documentElement.removeAttribute("data-theme");
-  try { localStorage.setItem("atlas-theme", t || ""); } catch (e) {}
-  updateThemeBtn();
-  document.dispatchEvent(new CustomEvent("atlas:theme"));
-};
 Atlas.esc = function (s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -50,11 +36,6 @@ Atlas.reducedMotion = window.matchMedia
 
 document.querySelectorAll("[data-js]").forEach(function (el) {
   el.removeAttribute("hidden");
-});
-updateThemeBtn();
-var _tb = document.getElementById("theme-toggle");
-if (_tb) _tb.addEventListener("click", function () {
-  Atlas.setTheme(parchment() ? "" : "parchment");
 });
 
 /* -------------------------------------------------------------- lenses */
@@ -78,11 +59,15 @@ function showLens(name, push) {
     t.classList.toggle("on", on);
     t.setAttribute("aria-selected", on ? "true" : "false");
   });
+  /* the world listens to this attribute: CSS grants it the pointer only
+     here, and the Nebula brightens to full luminosity */
+  document.body.dataset.lens = name;
   if (push) {
     var u = new URL(location.href);
     u.searchParams.set("lens", name);
     history.replaceState(null, "", u);
   }
+  document.dispatchEvent(new CustomEvent("atlas:lens", { detail: { lens: name } }));
   if (lensHooks[name]) lensHooks[name]();   // lazy init on first show
 }
 Atlas.showLens = showLens;
@@ -109,6 +94,34 @@ window.addEventListener("DOMContentLoaded", function () {
   var lens = new URLSearchParams(location.search).get("lens") || "stream";
   if (lens !== "stream" && LENSES.indexOf(lens) >= 0) showLens(lens, false);
 });
+
+/* ------------------------------------------------------------ ambience
+   One switch for the world's living layers: clouds, dust, drift, the
+   cursor's light. The memories themselves are content, never ambience. */
+(function () {
+  var STORE = "nebula-ambience";
+  function on() {
+    try { return localStorage.getItem(STORE) !== "off"; } catch (e) { return true; }
+  }
+  function updateBtn() {
+    var b = document.getElementById("ambience-toggle");
+    if (b) b.textContent = on() ? "✦ ambience on" : "✧ ambience off";
+  }
+  function setAmbience(v) {
+    try { localStorage.setItem(STORE, v ? "on" : "off"); } catch (e) {}
+    if (window.Nebula && window.Nebula.available) window.Nebula.setAmbience(v);
+    document.body.classList.toggle("no-ambience", !v);
+    updateBtn();
+  }
+  var btn = document.getElementById("ambience-toggle");
+  if (btn) btn.addEventListener("click", function () { setAmbience(!on()); });
+  updateBtn();
+  document.body.classList.toggle("no-ambience", !on());
+  Atlas.extraCommands = (Atlas.extraCommands || []).concat([
+    { kind: "world", label: "Ambience: On", run: function () { setAmbience(true); } },
+    { kind: "world", label: "Ambience: Off", run: function () { setAmbience(false); } },
+  ]);
+})();
 
 /* ------------------------------------------------------------ inspector */
 var inspector = document.getElementById("inspector");
@@ -297,8 +310,6 @@ function commandsFor(qtext) {
     { kind: "lens", label: "Lens: Chronicle", run: function () { showLens("chronicle", true); } },
     { kind: "go", label: "All memories", run: function () { location.href = "/ui"; } },
     { kind: "go", label: "Doctor (diagnostics)", run: function () { location.href = "/ui/doctor"; } },
-    { kind: "theme", label: "Theme: Parchment (pastel)", run: function () { Atlas.setTheme("parchment"); } },
-    { kind: "theme", label: "Theme: Umber (dark)", run: function () { Atlas.setTheme(""); } },
   ];
   (Atlas.extraCommands || []).forEach(function (c) { cmds.push(c); });
   document.querySelectorAll(".rail-projects a").forEach(function (a) {

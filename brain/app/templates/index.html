@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import mem_row, empty_state %}
-{% block title %}{{ current.name if current else 'Atlas' }} — MemoryBrain{% endblock %}
+{% block title %}{{ current.name if current else 'Nebula' }} — MemoryBrain{% endblock %}
 {% block stage %}
 
 <header class="stagehead">
@@ -42,6 +42,7 @@
 
   <section id="pane-stream" class="pane {{ 'on' if lens == 'stream' else '' }}"
            role="tabpanel" {{ 'hidden' if lens != 'stream' else '' }}>
+    <div class="stream-glass">
     {% if stream.days %}
     <div id="stream-feed">
       {% for d in stream.days %}
@@ -60,9 +61,9 @@
     {% endif %}
     {% else %}
     {{ empty_state('Nothing here yet',
-                   'Memories appear as your sessions are ingested — or seed one with `brain add`.',
-                   'plate-flowers') }}
+                   'Memories appear as your sessions are ingested — or seed one with `brain add`.') }}
     {% endif %}
+    </div>
   </section>
 
   <section id="pane-constellation" class="pane {{ 'on' if lens == 'constellation' else '' }}"
@@ -93,9 +94,10 @@
 </div>
 {% endblock %}
 {% block scripts %}
+{# d3-force-3d powers the world's layout; force-graph is the 2D / no-WebGL
+   fallback only — its bundled three never meets the world's (rule 5). #}
+<script src="/static/vendor/d3-force-3d.bundle.min.js?b={{ build_stamp }}" defer></script>
 <script src="/static/vendor/force-graph.min.js?b={{ build_stamp }}" defer></script>
-<script src="/static/vendor/3d-force-graph.min.js?b={{ build_stamp }}" defer></script>
-<script src="/static/vendor/three.min.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/constellation.js?b={{ build_stamp }}" defer></script>
 <script src="/static/js/chronicle.js?b={{ build_stamp }}" defer></script>
 {% endblock %}
