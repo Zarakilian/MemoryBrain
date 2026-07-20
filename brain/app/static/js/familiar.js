@@ -257,7 +257,7 @@
                unspools (sLen grows toward sLenT) so the fall reads as a
                fall — downward, along the tether */
             st.sState = "hang";
-            st.sLenT = Math.min(Math.max(gap * 0.8, 110), 210);
+            st.sLenT = Math.min(Math.max(gap * 0.9, 180), 340);   // a proper drop
             st.sLen = Math.min(26, st.sLenT);      // starts at the hand…
             var ang = Math.atan2(st.x - st.tx, st.y - st.ty);  // from straight-down
             st.sTheta = Math.max(-0.9, Math.min(0.9, ang));
