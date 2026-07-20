@@ -31,6 +31,16 @@
 
   function idOf(x) { return typeof x === "object" && x ? x.id : x; }
 
+  /* luminous palette against the night stage — theme-independent */
+  var SELECT_COL = "#ffd98a";
+  function nodeCol(n) {
+    return n.id === selectedId ? SELECT_COL
+      : "hsl(" + Atlas.hue(n.project) + " 70% 66%)";
+  }
+  function nodeSize(n) {
+    return 3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8;
+  }
+
   function nodeOnSelection(l) {
     return selectedId
       && (idOf(l.source) === selectedId || idOf(l.target) === selectedId);
@@ -40,12 +50,8 @@
   function configure(g, is3d) {
     g.backgroundColor("rgba(0,0,0,0)")
       .nodeId("id")
-      .nodeVal(function (n) {
-        return 2 + Math.sqrt(n.degree || 0) * 2.2 + (n.importance || 3) * 0.6;
-      })
-      .nodeColor(function (n) {
-        return n.id === selectedId ? Atlas.goldBright() : Atlas.color(n.project);
-      })
+      .nodeVal(nodeSize)
+      .nodeColor(nodeCol)
       .nodeLabel(function (n) {
         return '<div class="cst-tip"><strong>' + Atlas.esc(n.label || n.id)
           + '</strong><p class="quiet">' + Atlas.esc(n.project || "")
@@ -53,8 +59,9 @@
           + " · gravity " + (n.degree != null ? n.degree.toFixed(1) : "?") + "</p></div>";
       })
       .linkColor(function (l) {
-        return Atlas.goldRGBA(nodeOnSelection(l)
-          ? 0.9 : Math.min(0.85, 0.12 + (l.w || 0) * 0.7));
+        // fixed warm-white on the night stage, whatever the theme
+        return "rgba(214, 190, 148," + (nodeOnSelection(l)
+          ? 0.9 : Math.min(0.7, 0.1 + (l.w || 0) * 0.55)) + ")";
       })
       .linkDirectionalParticles(function (l) {
         return (!Atlas.reducedMotion && nodeOnSelection(l)) ? 2 : 0;
@@ -77,9 +84,30 @@
       .warmupTicks(Atlas.reducedMotion ? 60 : 0);
     if (is3d) {
       g.linkOpacity(0.9);            // per-link alpha carried by linkColor
+      g.nodeOpacity(1);              // the library default (.75) buries the orbs
+      if (g.nodeResolution) g.nodeResolution(14);
       if (g.showNavInfo) g.showNavInfo(false);
     } else {
       g.linkWidth(function (l) { return 0.4 + (l.w || 0) * 2.2; });
+      // rim + glow so every orb reads as a body, not a dot
+      g.nodeCanvasObjectMode(function () { return "after"; })
+        .nodeCanvasObject(function (n, ctx) {
+          var r = 4 * Math.sqrt(nodeSize(n));         // nodeRelSize default = 4
+          ctx.save();
+          if (n.id === selectedId) {
+            ctx.shadowColor = SELECT_COL;
+            ctx.shadowBlur = 18;
+            ctx.strokeStyle = SELECT_COL;
+            ctx.lineWidth = 1.6;
+          } else {
+            ctx.strokeStyle = "rgba(255, 246, 224, .35)";
+            ctx.lineWidth = 0.7;
+          }
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, r + 0.8, 0, 2 * Math.PI);
+          ctx.stroke();
+          ctx.restore();
+        });
     }
     return g;
   }
