@@ -97,7 +97,7 @@
     bGoal: [0, 0], bLerp: 0.05, bNext: 0, bLoop: 0,
     // spider
     sState: "chase",                    // chase | jump | hang | climb
-    sNext: 0, sJumpT: 0, sTheta: 0, sOmega: 0, sLen: 0,
+    sNext: 0, sJumpT: 0, sTheta: 0, sOmega: 0, sLen: 0, sLenT: 0,
     sAnchorVX: 0, sPrevTX: 0,
     printFlip: false, prints: [],
   };
@@ -248,24 +248,29 @@
           if (jt >= 1) { st.sState = "chase"; }
           else {
             var arc = 4 * jt * (1 - jt);           // parabola
-            jumpLift = arc * 30;
-            jumpScale = 1 + arc * 0.18;
+            jumpLift = arc * 18;                   // a pounce, not a launch
+            jumpScale = 1 + arc * 0.16;
           }
         } else if (now > st.sNext) {
-          if (gap > 120 && gap < 460 && R() < 0.45) {
-            /* fire silk AT the cursor and swing BELOW it */
+          if (gap < 620 && R() < 0.6) {
+            /* fire silk AT the cursor, then DROP below it: the thread
+               unspools (sLen grows toward sLenT) so the fall reads as a
+               fall — downward, along the tether */
             st.sState = "hang";
-            st.sLen = Math.min(Math.max(gap * 0.7, 80), 190);
+            st.sLenT = Math.min(Math.max(gap * 0.8, 110), 210);
+            st.sLen = Math.min(26, st.sLenT);      // starts at the hand…
             var ang = Math.atan2(st.x - st.tx, st.y - st.ty);  // from straight-down
             st.sTheta = Math.max(-0.9, Math.min(0.9, ang));
             st.sOmega = 0;
             st.sAnchorVX = 0;
             st.sPrevTX = st.tx;
-            st.sNext = now + rnd(2600, 4600);      // how long it hangs
-          } else {
+            st.sNext = now + rnd(3500, 6000);      // it HANGS a while
+          } else if (R() < 0.5) {
             st.sState = "jump";
             st.sJumpT = now;
             st.sNext = now + rnd(2800, 6500);
+          } else {
+            st.sNext = now + rnd(1800, 4000);      // bide, keep stalking
           }
         }
         st.y -= jumpLift;
@@ -283,19 +288,23 @@
            the anchor and the spider swings; damped, weighty. θ = 0 is
            STRAIGHT DOWN (screen +y) and the swing is clamped well short
            of horizontal — the spider always hangs beneath the hand. */
+        st.sLen += (st.sLenT - st.sLen) * Math.min(1, 3.2 * dt);  // unspool: the drop
+        /* never dangle off the bottom of the screen */
+        var maxL = Math.max(50, innerHeight - st.ty - 30);
+        var L = Math.min(st.sLen, maxL);
         var anchorVX = (st.tx - st.sPrevTX) / dt;
         var dvx = anchorVX - st.sAnchorVX;
         st.sAnchorVX = anchorVX;
         st.sPrevTX = st.tx;
         var g = 2600;
-        st.sOmega += (-(g / st.sLen) * Math.sin(st.sTheta)) * dt
-                   - (dvx / st.sLen) * Math.cos(st.sTheta) * 0.55
+        st.sOmega += (-(g / L) * Math.sin(st.sTheta)) * dt
+                   - (dvx / L) * Math.cos(st.sTheta) * 0.55
                    - st.sOmega * 1.6 * dt;
         st.sTheta += st.sOmega * dt;
         if (st.sTheta > 1.25) { st.sTheta = 1.25; st.sOmega = Math.min(st.sOmega, 0); }
         if (st.sTheta < -1.25) { st.sTheta = -1.25; st.sOmega = Math.max(st.sOmega, 0); }
-        st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
-        st.y = st.ty + Math.cos(st.sTheta) * st.sLen;   // +y: BELOW the cursor
+        st.x = st.tx + Math.sin(st.sTheta) * L;
+        st.y = st.ty + Math.cos(st.sTheta) * L;   // +y: BELOW the cursor
         drawWeb(st.tx, st.ty, st.x, st.y);
         body.classList.remove("scuttle");
         /* dangle head-down: face away from the thread */
@@ -306,18 +315,20 @@
         return;
 
       } else if (S === "climb") {
-        /* hand over hand back up the silk, then resume the chase */
-        st.sLen -= 240 * dt;
-        st.sOmega *= (1 - 1.5 * dt);
+        /* SLOW, hand over hand, back up the silk — then resume the chase */
+        st.sLen -= 85 * dt;
+        st.sOmega *= (1 - 1.8 * dt);
         st.sTheta += st.sOmega * dt;
         if (st.sLen <= 14) {
           st.sState = "chase";
           st.sNext = now + rnd(3200, 7000);
           web.style.display = "none";
+          body.classList.remove("scuttle");
         } else {
           st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
           st.y = st.ty + Math.cos(st.sTheta) * st.sLen;
           drawWeb(st.tx, st.ty, st.x, st.y);
+          body.classList.add("scuttle");   // little legs working the thread
           /* climbing: head UP the thread, toward the cursor */
           face(Math.atan2(st.ty - st.y, st.tx - st.x));
           place(1);

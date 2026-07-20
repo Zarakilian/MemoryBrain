@@ -541,13 +541,13 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 }
 @keyframes fam-scuttle { from { transform: rotate(-5deg); } to { transform: rotate(5deg); } }
 
-/* the silk line the spider swings from — starlight, laser-thin */
+/* the silk line the spider swings from — starlight, thin but unmissable */
 .fam-web {
-  position: absolute; height: 1.5px; pointer-events: none !important;
-  transform-origin: left center;
-  background: linear-gradient(90deg, rgba(220, 235, 255, .75),
-                              rgba(190, 214, 255, .35));
-  filter: drop-shadow(0 0 3px rgba(143, 184, 232, .5));
+  position: absolute; height: 2px; pointer-events: none !important;
+  transform-origin: left center; border-radius: 1px;
+  background: linear-gradient(90deg, rgba(230, 240, 255, .9),
+                              rgba(190, 214, 255, .45));
+  filter: drop-shadow(0 0 4px rgba(160, 195, 240, .6));
 }
 
 .fam-print {
