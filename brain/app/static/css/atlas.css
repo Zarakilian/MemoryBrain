@@ -112,13 +112,16 @@ kbd {
 .pane { position: absolute; inset: 0; overflow-y: auto; }
 .pane#pane-constellation, .pane#pane-chronicle { overflow: hidden; }
 #pane-constellation {
-  background: radial-gradient(120% 90% at 50% 40%, #1c222d 0%, #12151b 78%);
+  /* warm translucent scrim, not a separate night-app: the codex room
+     glows through faintly while luminous orbs keep their contrast */
+  background: radial-gradient(120% 90% at 50% 40%,
+    rgba(32, 25, 17, .78) 0%, rgba(17, 13, 9, .9) 78%);
 }
-#pane-constellation .lens-controls { color: #9aa4b5; }
+#pane-constellation .lens-controls { color: #a89a82; }
 #pane-constellation .lens-controls select {
-  background: #1d232e; color: #cfd6e0; border-color: #2c3442;
+  background: #2a2118; color: #d9cdb8; border-color: #45392a;
 }
-#pane-constellation .lens-status { color: #6d7789; }
+#pane-constellation .lens-status { color: #7d7057; }
 
 /* ------------------------------------------------------------- stream */
 #pane-stream { padding: 6px 22px 30px; }
