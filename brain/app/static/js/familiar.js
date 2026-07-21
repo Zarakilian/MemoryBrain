@@ -80,8 +80,13 @@
   var body = document.createElement("div");
   body.className = "fam";
   layer.appendChild(body);
-  var web = document.createElement("div");        // the spider's silk line
-  web.className = "fam-web";
+  /* the silk: an SVG path so it can SAG and BOW like a real thread */
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var web = document.createElementNS(SVGNS, "svg");
+  web.setAttribute("class", "fam-web-svg");
+  var webPath = document.createElementNS(SVGNS, "path");
+  webPath.setAttribute("class", "fam-web-path");
+  web.appendChild(webPath);
   web.style.display = "none";
   layer.appendChild(web);
   document.body.appendChild(layer);
@@ -185,13 +190,17 @@
       + ((st.heading + st.headingOff) * 180 / Math.PI).toFixed(1) + "deg)"
       + (scale && scale !== 1 ? " scale(" + scale.toFixed(3) + ")" : "");
   }
-  function drawWeb(x1, y1, x2, y2) {
-    var dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy);
+  function drawWeb(x1, y1, x2, y2, slack) {
+    /* a thread, not a rod: the midpoint sags with slack and trails the
+       spider's motion, so the silk visibly bows and whips */
+    var mx = (x1 + x2) / 2, my = (y1 + y2) / 2;
+    var bow = Math.max(-26, Math.min(26, -st.sVX * 0.045));
+    var sag = 8 + Math.max(0, slack || 0) * 0.85 + Math.abs(st.sVX) * 0.012;
     web.style.display = "";
-    web.style.left = x1 + "px";
-    web.style.top = y1 + "px";
-    web.style.width = len + "px";
-    web.style.transform = "rotate(" + Math.atan2(dy, dx) + "rad)";
+    webPath.setAttribute("d",
+      "M" + x1.toFixed(1) + " " + y1.toFixed(1)
+      + " Q" + (mx + bow).toFixed(1) + " " + (my + sag).toFixed(1)
+      + " " + x2.toFixed(1) + " " + y2.toFixed(1));
   }
 
   /* ------------------------- per-creature movement ------------------------ */
@@ -294,28 +303,30 @@
         }
         /* never dangle off the bottom of the screen */
         var L = Math.min(st.sLen, Math.max(50, innerHeight - st.ty - 26));
+        /* the spider works its legs: the rest length itself breathes */
+        if (S === "hang") L += Math.sin(now * 0.0021) * 6;
         var rx = st.x - st.tx, ry = st.y - st.ty;
         var d = Math.hypot(rx, ry) || 1;
         var axf = 0, ayf = 1500;                 // gravity
         if (d > L) {                             // silk only PULLS
           var stretch = d - L;
-          var kk = 55;                           // elasticity
+          var kk = 26;                           // SOFT: silk gives, then gathers
           axf += -kk * stretch * rx / d;
           ayf += -kk * stretch * ry / d;
-          /* damp motion along the thread (silk absorbs the snap) */
+          /* light damping along the thread — leave the bounce alive */
           var vr = (st.sVX * rx + st.sVY * ry) / d;
-          axf += -4.0 * vr * rx / d;
-          ayf += -4.0 * vr * ry / d;
+          axf += -1.8 * vr * rx / d;
+          ayf += -1.8 * vr * ry / d;
         }
         st.sVX += axf * dt; st.sVY += ayf * dt;
-        var air = 1 - 0.6 * dt;                  // light air drag
+        var air = 1 - 0.4 * dt;                  // light air drag
         st.sVX *= air; st.sVY *= air;
         st.x += st.sVX * dt; st.y += st.sVY * dt;
         if (st.y > innerHeight - 18) {           // the floor is the floor
           st.y = innerHeight - 18;
           st.sVY = Math.min(st.sVY, 0) * 0.35;
         }
-        drawWeb(st.tx, st.ty, st.x, st.y);
+        drawWeb(st.tx, st.ty, st.x, st.y, L - d);
         if (S === "climb") {
           body.classList.add("scuttle");         // legs working the thread
           face(Math.atan2(st.ty - st.y, st.tx - st.x));  // head UP the silk

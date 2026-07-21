@@ -31,15 +31,19 @@ function ambienceOn() {
 }
 
 /* ------------------------------------------------------------ colours */
-var HUES = [28, 82, 140, 190, 215, 255, 285, 320, 350, 45, 165, 5];
-function hueOf(slug) {
-  var h = 0, s = String(slug || "");
-  for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 997;
-  return HUES[h % 12];
-}
+/* Hierarchy is colour (owner's call: four colours, no more). The rest of
+   the UI keeps project hues; in here, rank is what you need to read. */
+var LEVEL_COLORS = [
+  new THREE.Color().setStyle("#ffe3a1", THREE.SRGBColorSpace),  // head: gold sun
+  new THREE.Color().setStyle("#ff9d5c", THREE.SRGBColorSpace),  // level 1: ember
+  new THREE.Color().setStyle("#4fd6c5", THREE.SRGBColorSpace),  // level 2: teal
+  new THREE.Color().setStyle("#8b93ec", THREE.SRGBColorSpace),  // level 3+: violet
+];
 function nodeColor(n, out) {
-  return out.setHSL(hueOf(n.project) / 360, 0.7, 0.62, THREE.SRGBColorSpace);
+  var lv = n._level == null ? 2 : Math.min(n._level, 3);
+  return out.copy(LEVEL_COLORS[lv]);
 }
+var SELECT = new THREE.Color().setStyle("#ffffff", THREE.SRGBColorSpace);
 var STAR = new THREE.Color().setStyle("#ffd98a", THREE.SRGBColorSpace);
 var FILAMENT = new THREE.Color().setStyle("#d6be94", THREE.SRGBColorSpace);
 var AURA = new THREE.Color().setStyle("#7fa8e0", THREE.SRGBColorSpace);
@@ -516,7 +520,9 @@ if (renderer) {
         churns = new Float32Array(count), hovs = new Float32Array(count);
     graph.nodes.forEach(function (n, i) {
       n._i = i;
-      n._r = radiusOf(n) * (n._head === n ? 1.55 : 1 - Math.min(n._level, 3) * 0.05);
+      /* rank is also SIZE, unmissably: head 1.85x, then shrinking rings */
+      n._r = radiusOf(n) * (n._head === n ? 1.85
+        : [1, 1.0, 0.84, 0.72][Math.min(n._level, 3)] || 0.72);
       seeds[i] = (i * 0.61803) % 1;
       heats[i] = Math.max(0, Math.min(1,
         ((n.importance || 3) - 1) / 4 + (n._head === n ? 0.3 : 0)));
@@ -720,7 +726,7 @@ if (renderer) {
     if (!graph.mesh) return;
     var c = new THREE.Color();
     graph.nodes.forEach(function (n, i) {
-      if (n.id === graph.selected) c.copy(STAR);
+      if (n.id === graph.selected) c.copy(SELECT);   // pure white: unmistakable
       else nodeColor(n, c);
       graph.mesh.setColorAt(i, c);
     });
