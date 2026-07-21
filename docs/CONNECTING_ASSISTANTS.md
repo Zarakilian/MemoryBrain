@@ -14,9 +14,10 @@ snippet lands in.
 | MCP over stdio | `docker exec -i memorybrain-brain-1 python /app/stdio_server.py` | your client only launches local MCP commands |
 | REST | `http://localhost:7741/...` | no MCP support at all |
 
-Both MCP doors expose the same 9 tools (`search_memory`, `get_memory`,
+Both MCP doors expose the same 10 tools (`search_memory`, `get_memory`,
 `add_memory`, `get_recent_context`, `list_projects`, `get_startup_summary`,
-`delete_memory`, `get_related_memories`, `get_memory_graph`).
+`delete_memory`, `get_related_memories`, `get_memory_graph`,
+`consolidate_memory`).
 
 If your container has a different name, find it with `docker ps`
 (look for the image built from this repo).

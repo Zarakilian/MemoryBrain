@@ -23,7 +23,9 @@
 
 - Edit here (or PR), then pull into the **live** install dir and `docker compose build brain && docker compose up -d`.
 - Verify: `/readiness` ready, memory count unchanged after migrations, Atlas at `/ui`.
-- New MCP tools in v2: `get_related_memories`, `get_memory_graph`.
+- New MCP tools in v2: `get_related_memories`, `get_memory_graph`; v2.1 adds
+  `consolidate_memory` (run the consolidation cycle — beliefs, conflicts,
+  open loops, decay).
 
 ## End of session
 

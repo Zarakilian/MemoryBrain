@@ -91,7 +91,8 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 - **Automatic memory graph.** Semantic, tag (IDF-weighted), reference
   (supersession / shared source / UUID mentions) and session-chain edges,
   derived at ingest, fully rebuildable via `POST /admin/rebuild-graph`.
-- **2 new MCP tools** (9 total): `get_related_memories`, `get_memory_graph`.
+- **3 new MCP tools** (10 total): `get_related_memories`, `get_memory_graph`,
+  and `consolidate_memory` (v2.1.0 — runs one consolidation cycle).
   The existing 7 contracts are unchanged.
 - **Local web UI — the MemoryBrain Nebula** at `/ui`: one living world.
   A single full-screen three.js scene (vendored r170 module, no CDN)
