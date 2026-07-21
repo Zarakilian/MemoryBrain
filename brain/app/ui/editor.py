@@ -79,6 +79,25 @@ def delete_project(slug: str):
     return {"deleted": True, "slug": slug}
 
 
+# ------------------------------------------------------- consolidation
+
+class SleepBody(BaseModel):
+    project: str = Field(default="", max_length=64)
+    idle_days: int = Field(default=14, ge=1, le=365)
+
+
+@router.post("/api/ui/edit/consolidate")
+async def run_consolidation(body: SleepBody | None = None):
+    """The Sleep button: run one consolidation cycle from the UI. Same
+    behaviour as POST /admin/consolidate, but living under /api/ui/edit/*
+    so the UI keeps exactly one write path and one auth story
+    (X-Brain-Key when set)."""
+    from ..consolidate import consolidate
+    body = body or SleepBody()
+    return await consolidate(project=body.project or None,
+                             idle_days=body.idle_days)
+
+
 # ------------------------------------------------------------- memories
 
 @router.post("/api/ui/edit/memories/{memory_id}/recall")

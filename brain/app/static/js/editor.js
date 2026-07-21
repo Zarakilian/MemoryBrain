@@ -291,6 +291,92 @@
     });
   });
 
+  /* -------------------------------- sleep --------------------------------
+     The consolidation cycle, one click away. Runs the cycle (can take a
+     while — the local LLM writes the beliefs), then shows what the brain
+     dreamt up. Optional: run automatically once a day when the UI opens. */
+  var AUTO_SLEEP = "nebula-auto-sleep";
+  var LAST_SLEEP = "nebula-last-sleep";
+  var sleeping = false;
+
+  function autoSleepOn() {
+    try { return localStorage.getItem(AUTO_SLEEP) === "on"; } catch (e) { return false; }
+  }
+
+  async function runSleep(silent) {
+    if (sleeping) return;
+    sleeping = true;
+    var btn = document.getElementById("sleep-btn");
+    if (btn) { btn.textContent = "☾ consolidating…"; btn.disabled = true; }
+    var report = null, err = null;
+    try {
+      var res = await writeFetch("/api/ui/edit/consolidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (res.ok) {
+        report = await res.json();
+        try { localStorage.setItem(LAST_SLEEP, String(Date.now())); } catch (e) {}
+      } else {
+        var data = null; try { data = await res.json(); } catch (e) {}
+        err = (data && data.detail) ? String(data.detail) : "HTTP " + res.status;
+      }
+    } catch (e) { err = e.message; }
+    sleeping = false;
+    if (btn) { btn.textContent = "☾ sleep"; btn.disabled = false; }
+    if (silent && !err) return;         // the quiet nightly kind
+    showSleepReport(report, err);
+  }
+
+  function showSleepReport(report, err) {
+    var beliefs = 0, conflicts = 0, loops = 0;
+    (report && report.projects || []).forEach(function (p) {
+      beliefs += (p.beliefs || []).length;
+      conflicts += p.conflicts || 0;
+      loops += p.loops || 0;
+    });
+    var body = err
+      ? '<p class="quiet">The cycle failed: ' + esc(err) + "</p>"
+      : '<p>The brain slept on it:</p><ul class="sleep-report">'
+        + "<li><strong>" + beliefs + "</strong> belief" + (beliefs === 1 ? "" : "s")
+        + " distilled from clusters</li>"
+        + "<li><strong>" + conflicts + "</strong> contradiction"
+        + (conflicts === 1 ? "" : "s") + " flagged for your verdict</li>"
+        + "<li><strong>" + loops + "</strong> open loop"
+        + (loops === 1 ? "" : "s") + " extracted</li>"
+        + "<li><strong>" + ((report && report.decayed) || 0)
+        + "</strong> unrecalled memories decayed a little</li></ul>"
+        + '<p class="quiet">Beliefs appear gold in the Stream and rise toward '
+        + "the head of their constellation.</p>";
+    body += '<label class="field" style="flex-direction:row;align-items:center;gap:8px">'
+      + '<input type="checkbox" id="f-autosleep"'
+      + (autoSleepOn() ? " checked" : "")
+      + '> run automatically once a day when I open the UI</label>';
+    var m = modal("☾ The sleep cycle", body,
+      (err || beliefs + conflicts + loops === 0)
+        ? []
+        : [{ label: "Reload to see it", primary: true,
+             run: function () { location.reload(); } }]);
+    m.q("#f-autosleep").addEventListener("change", function (ev) {
+      try { localStorage.setItem(AUTO_SLEEP, ev.target.checked ? "on" : "off"); }
+      catch (e) {}
+    });
+  }
+
+  var sleepBtn = document.getElementById("sleep-btn");
+  if (sleepBtn) sleepBtn.addEventListener("click", function () { runSleep(false); });
+
+  /* the quiet nightly kind: at most once a day, only if opted in */
+  window.addEventListener("DOMContentLoaded", function () {
+    if (!autoSleepOn()) return;
+    var last = 0;
+    try { last = Number(localStorage.getItem(LAST_SLEEP) || 0); } catch (e) {}
+    if (Date.now() - last > 24 * 3600 * 1000) {
+      setTimeout(function () { runSleep(true); }, 4000);   // let the world load
+    }
+  });
+
   /* ------------------------------- triggers ------------------------------ */
   var addBtn = document.getElementById("add-note-btn");
   if (addBtn) addBtn.addEventListener("click", openAddNote);
@@ -308,6 +394,8 @@
     Atlas.extraCommands = (Atlas.extraCommands || []).concat([
       { kind: "edit", label: "Add note / file", run: openAddNote },
       { kind: "edit", label: "New project", run: function () { openProject(null); } },
+      { kind: "brain", label: "Sleep: run the consolidation cycle",
+        run: function () { runSleep(false); } },
     ]);
   }
 })();

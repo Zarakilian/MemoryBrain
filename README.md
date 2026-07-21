@@ -127,6 +127,9 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   strengthen a memory (Ebbinghaus, inverted). Strength sways hybrid
   search through a bounded multiplier (`MEMORYBRAIN_STRENGTH_WEIGHT`,
   0 disables). Beliefs auto-supersede only prior beliefs, never sources.
+  In the UI, the **☾ sleep** button in the rail runs a cycle and reports
+  what the brain dreamt up; an opt-in setting runs it automatically once
+  a day when you open the Nebula.
 - **Editing from the UI.** The Nebula can add, edit, archive and delete
   memories and projects: "+ note" in the stage head (notes, facts,
   references, or a text-file upload), "+ new project" in the rail, and

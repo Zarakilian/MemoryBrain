@@ -316,6 +316,24 @@ def test_ui_conflicts_endpoint_shape(api_client, cdb):
     assert api_client.get("/api/ui/conflicts").json()["total"] == 0
 
 
+def test_ui_sleep_endpoint(api_client, cdb):
+    """The Sleep button's endpoint: same cycle, UI write path + auth story."""
+    with patch("app.ingest_pipeline._check_supersession", NO_SUPERSESSION):
+        r = api_client.post("/api/ui/edit/consolidate", json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert "projects" in body and "decayed" in body
+
+
+def test_ui_sleep_endpoint_requires_key_when_set(api_client, monkeypatch):
+    monkeypatch.setattr("app.auth._API_KEY", "sekrit")
+    assert api_client.post("/api/ui/edit/consolidate",
+                           json={}).status_code == 401
+    r = api_client.post("/api/ui/edit/consolidate", json={},
+                        headers={"X-Brain-Key": "sekrit"})
+    assert r.status_code == 200
+
+
 def test_ui_recall_endpoint(api_client, cdb):
     add_memory(_mem("u1"), db_path=cdb)
     r = api_client.post("/api/ui/edit/memories/u1/recall")

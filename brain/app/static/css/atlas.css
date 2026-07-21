@@ -579,6 +579,16 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
   cursor: pointer; text-align: left;
 }
 #conflicts-chip:hover { background: rgba(255, 217, 138, .16); }
+#sleep-btn {
+  background: none; border: 1px solid var(--glass-edge); border-radius: 8px;
+  color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px;
+  cursor: pointer; text-align: left;
+}
+#sleep-btn:hover { color: var(--star); border-color: var(--star-dim); }
+#sleep-btn:disabled { opacity: .6; cursor: progress; }
+.sleep-report { margin: 8px 0 12px; padding-left: 20px; color: var(--ink); }
+.sleep-report li { margin: 3px 0; font-size: 13px; }
+.sleep-report strong { color: var(--star); }
 .conflict-pair {
   border: 1px solid var(--glass-edge); border-radius: 10px;
   padding: 10px 12px; margin-bottom: 10px;
