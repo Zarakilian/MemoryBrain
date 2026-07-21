@@ -21,6 +21,16 @@ Atlas.color = function (slug, l) {
 Atlas.goldRGBA = function (a) { return "rgba(255, 217, 138," + a + ")"; };
 Atlas.goldBright = function () { return "#ffd98a"; };
 
+/* older stored summaries may open with LLM throat-clearing ("Here is a
+   summary of ...:") — the sleep cycle repairs them server-side; this
+   covers anything it has not met yet */
+Atlas.cleanSummary = function (s) {
+  var out = String(s == null ? "" : s).replace(
+    /^(?:okay[,.!]?\s+|sure[,.!]?\s+)?(?:here(?:'s| is| are)\s+(?:a |the |your )?(?:concise |brief |short )?(?:summary|distillation|overview|breakdown|synopsis)[^:\n]{0,80}[:.]\s*)+/i,
+    "").trim();
+  return out || String(s == null ? "" : s);
+};
+
 Atlas.esc = function (s) {
   return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
@@ -231,7 +241,7 @@ function renderInspector(m, related) {
     "<time>" + esc(m.timestamp) + "</time>",
     '<span class="imp" data-imp="' + (m.importance || 1) + '"></span>',
     "</div>");
-  h.push("<h1>" + esc(m.summary || "(no summary)") + "</h1>");
+  h.push("<h1>" + esc(Atlas.cleanSummary(m.summary) || "(no summary)") + "</h1>");
   if (m.tags && m.tags.length) {
     h.push('<div class="tags">' + m.tags.map(function (t) {
       return '<span class="tag">' + esc(t) + "</span>";
@@ -324,7 +334,7 @@ function appendStream(data) {
         + '<span class="badge t-' + esc(m.type) + '">' + esc(m.type) + "</span>"
         + (showProject ? '<span class="pdot" style="--ph:' + Atlas.hue(m.project)
            + '" title="' + esc(m.project) + '"></span>' : "")
-        + '<span class="sum">' + esc(m.summary || "(no summary)") + "</span>"
+        + '<span class="sum">' + esc(Atlas.cleanSummary(m.summary) || "(no summary)") + "</span>"
         + '<span class="imp" data-imp="' + (m.importance || 1) + '"></span>';
       container.appendChild(a);
     });
@@ -416,7 +426,7 @@ palInput && palInput.addEventListener("input", function () {
       var data = await Atlas.getJSON(url);
       var hits = (data.results || []).map(function (m) {
         return {
-          kind: m.type, html: Atlas.esc(m.summary || m.id),
+          kind: m.type, html: Atlas.esc(Atlas.cleanSummary(m.summary) || m.id),
           run: function () { closePalette(); Atlas.inspect(m.id, null); },
         };
       });

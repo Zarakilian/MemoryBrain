@@ -41,7 +41,7 @@ from typing import Optional
 from .models import MemoryEntry
 from .storage import (DB_PATH, decay_strengths, get_memory_by_content_hash,
                       scale_strengths, _connect)
-from .summarise import summarise
+from .summarise import summarise, strip_preamble
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +221,29 @@ def _extract_loops(conn, project: str) -> list[str]:
     return loops[:MAX_LOOPS_PER_RUN]
 
 
+# ----------------------------------------------------------- summary repair
+
+def _repair_summaries(db_path: Path) -> int:
+    """Heal stored LLM throat-clearing ('Here is a summary of ...:') left
+    by earlier prompts. Deterministic, idempotent, part of every sleep."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """SELECT id, summary FROM memories
+               WHERE lower(summary) LIKE 'here%'
+                  OR lower(summary) LIKE 'okay%'
+                  OR lower(summary) LIKE 'sure%'"""
+        ).fetchall()
+        fixed = 0
+        for r in rows:
+            cleaned = strip_preamble(r["summary"])
+            if cleaned != r["summary"]:
+                conn.execute("UPDATE memories SET summary = ? WHERE id = ?",
+                             (cleaned, r["id"]))
+                fixed += 1
+        conn.commit()
+    return fixed
+
+
 # --------------------------------------------------------------- the cycle
 
 async def consolidate(project: Optional[str] = None,
@@ -228,10 +251,11 @@ async def consolidate(project: Optional[str] = None,
                       db_path: Path = None) -> dict:
     """Run one full sleep cycle. Returns a plain-dict report."""
     from .ingest_pipeline import ingest          # late: avoids cycles
-    from .linker import _write_edges
+    from .linker import _write_edges, _update_degrees
 
     db_path = db_path or DB_PATH
-    report = {"projects": [], "decayed": 0, "started_at": _now()}
+    report = {"projects": [], "decayed": 0, "started_at": _now(),
+              "summaries_repaired": _repair_summaries(db_path)}
 
     with _connect(db_path) as conn:
         if project:
@@ -292,6 +316,12 @@ async def consolidate(project: Optional[str] = None,
                  "weight": 1.0, "directed": 1, "meta": {}}
                 for mid in cluster
             ], db_path)
+            # keep link_degree honest right away (sizes in the UI use it)
+            try:
+                _update_degrees(set(cluster) | {belief.id}, db_path)
+            except Exception:
+                logger.warning("Consolidation: degree refresh failed",
+                               exc_info=True)
             # 2. the belief speaks first for its sources now
             scale_strengths(cluster, SOURCE_DAMP, db_path=db_path)
             entry_report["beliefs"].append(

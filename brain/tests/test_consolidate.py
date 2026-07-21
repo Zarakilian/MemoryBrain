@@ -266,6 +266,55 @@ async def test_open_loops_extracted_once(cdb, mock_ollama):
     assert second["projects"][0]["loops"] == 0
 
 
+# --------------------------------------------------------- summary hygiene
+
+def test_strip_preamble_variants():
+    from app.summarise import strip_preamble
+    assert strip_preamble(
+        "Here is a summary of the feedback in 3 sentences: The exporter works."
+    ) == "The exporter works."
+    assert strip_preamble(
+        "Sure! Here's a concise summary: GSID802 now retries hourly."
+    ) == "GSID802 now retries hourly."
+    assert strip_preamble("Okay, here is a breakdown of the issue: Disk full."
+                          ) == "Disk full."
+    # untouched when there is no preamble, or nothing would remain
+    assert strip_preamble("The exporter works.") == "The exporter works."
+    assert strip_preamble("Here is a summary:") == "Here is a summary:"
+    assert strip_preamble("") == ""
+
+
+@pytest.mark.asyncio
+async def test_sleep_repairs_stored_preambles(cdb, mock_ollama):
+    upsert_project(Project(slug="proj-a", name="A"), db_path=cdb)
+    add_memory(_mem("p1", summary="Here is a summary of the feedback in 3 "
+                                  "sentences: The connector was fixed."),
+               db_path=cdb)
+    add_memory(_mem("p2", summary="Clean already."), db_path=cdb)
+    with patch("app.ingest_pipeline._check_supersession", NO_SUPERSESSION):
+        report = await consolidate(project="proj-a", db_path=cdb)
+    assert report["summaries_repaired"] == 1
+    from app.storage import get_memory
+    assert get_memory("p1", db_path=cdb).summary == "The connector was fixed."
+    assert get_memory("p2", db_path=cdb).summary == "Clean already."
+
+
+@pytest.mark.asyncio
+async def test_belief_gets_honest_link_degree(cdb, mock_ollama):
+    """derived_from edges must count into link_degree immediately — the
+    constellation sizes stars by it."""
+    _seed_cluster(cdb, ["d1", "d2", "d3"])
+    with patch("app.ingest_pipeline._check_supersession", NO_SUPERSESSION):
+        report = await consolidate(project="proj-a", db_path=cdb)
+    belief_id = report["projects"][0]["beliefs"][0]["id"]
+    from app.storage import _connect
+    with _connect(cdb) as conn:
+        deg = conn.execute("SELECT link_degree FROM memories WHERE id = ?",
+                           (belief_id,)).fetchone()[0]
+    assert deg >= 2.9          # its three derived_from spokes (noisy-OR
+                               # caps each neighbour at 0.999)
+
+
 # ------------------------------------------------- endpoint + MCP + UI
 
 @pytest.fixture

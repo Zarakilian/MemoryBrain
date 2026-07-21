@@ -416,7 +416,20 @@ if (renderer) {
   });
 
   function radiusOf(n) {
-    return (3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8) * 0.62;
+    // capped: no star may dwarf the world, however mighty its degree
+    // (a consolidated belief hub once ate the whole view)
+    return Math.min(
+      (3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8) * 0.62,
+      8.6);
+  }
+
+  /* old summaries may still carry LLM throat-clearing; the server repairs
+     them during sleep, this covers the ones it hasn't met yet */
+  function cleanLabel(s) {
+    var out = String(s || "").replace(
+      /^(?:okay[,.!]?\s+|sure[,.!]?\s+)?(?:here(?:'s| is| are)\s+(?:a |the |your )?(?:concise |brief |short )?(?:summary|distillation|overview|breakdown|synopsis)[^:\n]{0,80}[:.]\s*)+/i,
+      "").trim();
+    return out || String(s || "");
   }
 
   /* ------------------------------------------------------- hierarchy
@@ -439,8 +452,12 @@ if (renderer) {
     });
     Object.keys(byProject).forEach(function (proj) {
       var members = byProject[proj];
-      var head = members[0];
-      members.forEach(function (n) {
+      /* a belief IS a project's distilled truth: if any exist, the
+         strongest belief takes the head, however mighty a raw session */
+      var pool = members.filter(function (n) { return n.type === "belief"; });
+      if (!pool.length) pool = members;
+      var head = pool[0];
+      pool.forEach(function (n) {
         if ((n.degree || 0) > (head.degree || 0)
             || ((n.degree || 0) === (head.degree || 0)
                 && (n.importance || 0) > (head.importance || 0))) head = n;
@@ -624,7 +641,11 @@ if (renderer) {
     graph.sim = window.d3.forceSimulation(graph.nodes, 3)
       .force("link", window.d3.forceLink(graph.links)
         .id(function (d) { return d.id; })
-        .distance(function (l) { return 26 + 40 * (1 - (l.w || 0)); }))
+        .distance(function (l) {
+          // sources orbit their belief tightly — a little solar system
+          if (l.kinds && l.kinds.indexOf("derived_from") >= 0) return 22;
+          return 26 + 40 * (1 - (l.w || 0));
+        }))
       .force("charge", window.d3.forceManyBody()
         .strength(function (n) { return n._head === n ? -520 : -110; }))
       .force("hierarchy", hierarchyForce)
@@ -710,9 +731,12 @@ if (renderer) {
       var lit = i === graph.linkFocus ? 1.0
               : i === graph.hoverLink ? 0.8
               : 0;
+      var provenance = l.kinds && l.kinds.indexOf("derived_from") >= 0;
       // additive blending: intensity IS opacity
-      var k = Math.max(lit, (onSel ? 0.95 : 0.10 + (l.w || 0) * 0.5) * graph.dim);
-      var col = (onSel || lit) ? STAR : FILAMENT;
+      var k = Math.max(lit, (onSel ? 0.95
+        : (provenance ? 0.24 : 0.10) + (l.w || 0) * 0.5) * graph.dim);
+      // provenance reads as provenance: gold spokes from belief to source
+      var col = (onSel || lit) ? STAR : provenance ? STAR : FILAMENT;
       for (var v = 0; v < 2; v++) {
         lc[i * 6 + v * 3] = col.r * k;
         lc[i * 6 + v * 3 + 1] = col.g * k;
@@ -871,20 +895,30 @@ if (renderer) {
       renderer.domElement.style.cursor = (n || li >= 0) ? "pointer" : "";
       if (!tip) makeTip();
       if (n) {
-        tip.innerHTML = "<strong>" + esc(n.label || n.id) + "</strong>"
-          + '<p class="quiet">' + esc(n.project || "")
-          + (n._head === n ? " · project head" : "")
-          + " · " + esc(n.type || "") + " · importance " + (n.importance || "?")
+        /* what you need FIRST: whose star is this, what kind, when */
+        var when = (n.timestamp || "").slice(0, 10) || "undated";
+        tip.innerHTML = '<p class="tip-head">'
+          + '<b class="tip-project">' + esc(n.project || "(no project)") + "</b>"
+          + ' · <span class="badge t-' + esc(n.type) + '">' + esc(n.type) + "</span>"
+          + " · " + esc(when)
+          + (n._head === n ? ' · <b class="tip-crown">★ head</b>' : "")
+          + "</p>"
+          + "<strong>" + esc(cleanLabel(n.label || n.id)) + "</strong>"
+          + '<p class="quiet">importance ' + (n.importance || "?")
           + " · gravity " + (n.degree != null ? Number(n.degree).toFixed(1) : "?")
+          + " · ring " + (n._level != null ? n._level : "?")
           + "</p>";
         tip.style.display = "";
       } else if (li >= 0) {
         var l = graph.links[li];
-        tip.innerHTML = "<strong>" + esc((l.source.label || l.source.id).slice(0, 46))
-          + " ⟷ " + esc((l.target.label || l.target.id).slice(0, 46)) + "</strong>"
-          + '<p class="quiet">' + esc((l.kinds || []).join(", ") || "link")
-          + " · weight " + (l.w != null ? l.w.toFixed(2) : "?")
-          + " · click to frame the pair</p>";
+        tip.innerHTML = '<p class="tip-head"><b class="tip-project">'
+          + esc(l.source.project || "") + "</b> · "
+          + esc((l.kinds || []).join(", ") || "link")
+          + " · weight " + (l.w != null ? l.w.toFixed(2) : "?") + "</p>"
+          + "<strong>" + esc(cleanLabel(l.source.label || l.source.id).slice(0, 46))
+          + " ⟷ " + esc(cleanLabel(l.target.label || l.target.id).slice(0, 46))
+          + "</strong>"
+          + '<p class="quiet">click to frame the pair</p>';
         tip.style.display = "";
       } else tip.style.display = "none";
     }

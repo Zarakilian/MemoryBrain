@@ -319,6 +319,10 @@ body[data-lens="constellation"] #world { pointer-events: auto; }
   box-shadow: 0 6px 24px rgba(2, 4, 10, .55);
 }
 .cst-tip .quiet { color: var(--ink-faint); margin: 2px 0 0; }
+.cst-tip .tip-head { margin: 0 0 5px; color: var(--ink-dim); font-size: 11px; }
+.cst-tip .tip-project { color: var(--ink); font-weight: 650; }
+.cst-tip .tip-crown { color: var(--star); }
+.cst-tip .badge { font-size: 9px; padding: 0 6px; vertical-align: 1px; }
 
 /* ------------------------------------------------------------ inspector
    The same glass as everything else — darker, closer, never a foreign
