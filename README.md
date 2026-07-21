@@ -111,6 +111,21 @@ it gives you a stable, intentional slug that won't change if you rename or move 
   pointer-inert, stands still under reduced-motion, and the constellation
   keeps breathing dimly behind the other lenses. Fully offline, zero
   telemetry; every read path stays on query-only connections.
+- **The consolidation cycle — the brain that sleeps (v2.1.0).** On demand
+  (`POST /admin/consolidate`, or the `consolidate_memory` MCP tool), the
+  brain digests what it has stored: clusters of tightly-linked memories
+  are distilled by your local LLM into **belief** memories that carry
+  `derived_from` edges back to every source (provenance, always);
+  consolidated sources sink in ranking but stay searchable; pairs of very
+  similar, coexisting facts/beliefs are flagged with `conflicts_with`
+  edges and surface in the UI for a human verdict (never auto-resolved);
+  unfinished business (TODO / "next session" / open-question lines) is
+  extracted into `open-loop` notes; and everything unrecalled for two
+  weeks decays a little in **strength** — forgetting is ranking, never
+  deletion. Retrieval reinforces: MCP fetches and inspector opens
+  strengthen a memory (Ebbinghaus, inverted). Strength sways hybrid
+  search through a bounded multiplier (`MEMORYBRAIN_STRENGTH_WEIGHT`,
+  0 disables). Beliefs auto-supersede only prior beliefs, never sources.
 - **Editing from the UI.** The Nebula can add, edit, archive and delete
   memories and projects: "+ note" in the stage head (notes, facts,
   references, or a text-file upload), "+ new project" in the rail, and

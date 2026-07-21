@@ -135,11 +135,11 @@ async def test_mcp_graph_tool_shape(gdb, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_nine_tools_registered():
+async def test_ten_tools_registered():
     tools = await list_tools()
     names = {t.name for t in tools}
     assert names == {
         "search_memory", "get_memory", "add_memory", "delete_memory",
         "get_recent_context", "list_projects", "get_startup_summary",
-        "get_related_memories", "get_memory_graph",
+        "get_related_memories", "get_memory_graph", "consolidate_memory",
     }

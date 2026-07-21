@@ -229,6 +229,17 @@ async def rebuild_graph_endpoint():
     return rebuild_graph()
 
 
+@app.post("/admin/consolidate")
+async def consolidate_endpoint(project: str = "", idle_days: int = 14):
+    """Run one consolidation cycle (the brain's sleep): distil clusters into
+    beliefs, damp their sources, flag contradictions, extract open loops,
+    decay the unrecalled. Additive and derived — never deletes. Optionally
+    scoped to one project. Authenticated via the API-key middleware."""
+    from .consolidate import consolidate
+    return await consolidate(project=project or None,
+                             idle_days=max(1, min(idle_days, 365)))
+
+
 # ── Web UI (v2.0.0) — local, read-only, server-rendered ─────────────────────
 from pathlib import Path as _Path
 from fastapi.staticfiles import StaticFiles

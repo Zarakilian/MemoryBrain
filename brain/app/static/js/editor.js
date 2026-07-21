@@ -205,7 +205,7 @@
       + esc(mem.content || "") + "</textarea></label>"
       + '<div class="field-row">'
       + '<label class="field">type<select id="f-type">'
-      + ["session", "handover", "note", "fact", "file", "reference"].map(function (t) {
+      + ["session", "handover", "note", "fact", "file", "reference", "belief"].map(function (t) {
           return "<option" + (t === mem.type ? " selected" : "") + ">" + t + "</option>";
         }).join("") + "</select></label>"
       + '<label class="field">importance<select id="f-imp">'
@@ -257,6 +257,15 @@
     var mem = ev.detail;
     var host = document.getElementById("insp-body");
     if (!host || !mem) return;
+    /* reinforcement: opening a memory is a recall. Fire-and-forget — no
+       key prompt, no retry, a lost signal is harmless. */
+    try {
+      var hdrs = {};
+      var k = getKey();
+      if (k) hdrs["X-Brain-Key"] = k;
+      fetch("/api/ui/edit/memories/" + encodeURIComponent(mem.id) + "/recall",
+            { method: "POST", headers: hdrs }).catch(function () {});
+    } catch (e) {}
     var row = document.createElement("div");
     row.className = "insp-actions";
     row.innerHTML = '<button type="button" data-act="edit">✎ Edit</button>'

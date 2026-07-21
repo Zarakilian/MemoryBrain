@@ -233,8 +233,11 @@ body[data-lens="constellation"] #world { pointer-events: auto; }
 .t-handover  { background: #e8a48f; }
 .t-note      { background: #9fd4a8; }
 .t-fact      { background: #e8d48f; }
-.t-file      { background: #bda8e8; }
+.t-file     { background: #bda8e8; }
 .t-reference { background: #8fe0d4; }
+.t-belief    { background: #ffe3a1;    /* consolidated truth: gold, like the
+                                          head stars it becomes */
+               box-shadow: 0 0 8px -2px #ffe3a1; }
 .badge.archived { background: #7a5c6c; color: var(--ink); }
 
 .imp { flex: none; font: 9px var(--mono); letter-spacing: 2px; color: var(--ink-faint); }
@@ -568,6 +571,25 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 #familiar-toggle, #ambience-toggle {
   background: none; border: 1px solid var(--glass-edge); border-radius: 8px;
   color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px; cursor: pointer;
+}
+#conflicts-chip {
+  background: rgba(255, 217, 138, .08);
+  border: 1px solid rgba(255, 217, 138, .35); border-radius: 8px;
+  color: var(--star); font: 11px var(--sans); padding: 3px 9px;
+  cursor: pointer; text-align: left;
+}
+#conflicts-chip:hover { background: rgba(255, 217, 138, .16); }
+.conflict-pair {
+  border: 1px solid var(--glass-edge); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.conflict-side {
+  padding: 5px 6px; border-radius: 7px; cursor: pointer; font-size: 13px;
+}
+.conflict-side:hover { background: var(--glass-hi); }
+.conflict-vs {
+  font: 10px var(--mono); color: var(--star-dim);
+  padding: 2px 6px; letter-spacing: .05em;
 }
 #familiar-toggle:hover, #ambience-toggle:hover {
   color: var(--star); border-color: var(--star-dim);

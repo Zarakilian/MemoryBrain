@@ -368,3 +368,30 @@ cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
 - 2D/no-WebGL fallback stays on the vendored force-graph canvas build —
   never mixed with the world's three (the r128 lesson, honoured).
 - Tests: 236 passing (asset list updated; new nebula/importmap check).
+
+
+## v2.1.0 — THE CONSOLIDATION CYCLE — 2026-07-21
+
+### Shipped
+- `brain/app/consolidate.py`: the brain that sleeps. One run distils
+  graph-clusters of related memories into cited `belief` memories
+  (`derived_from` edges to every source; synthesis via the configured
+  summarise provider; tiny clusters pass through verbatim), damps source
+  strength (the belief speaks first), flags warn-zone contradictions as
+  `conflicts_with` edges (never auto-resolved), extracts open loops
+  (TODO/"next session"/unresolved lines → `open-loop` notes, hash-deduped)
+  and decays everything unrecalled for `idle_days`. Additive and derived:
+  consolidation never deletes or archives.
+- Reinforcement & decay: `strength` + `last_recalled` on memories
+  (migration 004, which also widens memory_links' kind CHECK). MCP
+  `get_memory`/`search_memory` and the UI inspector (fire-and-forget
+  `/api/ui/edit/memories/{id}/recall`) strengthen; ranking folds strength
+  in via a bounded multiplier (`MEMORYBRAIN_STRENGTH_WEIGHT`).
+- Belief-scoped supersession: a belief may auto-supersede only prior
+  beliefs — never the raw sources it cites.
+- Surfaces: `POST /admin/consolidate` (API-key middleware), MCP tool #10
+  `consolidate_memory`, additive `GET /api/ui/conflicts`, a rail chip +
+  review modal for contradictions, `belief` type everywhere (filters,
+  badges, editor).
+- Tests: 251 passing (15 new in test_consolidate.py; tool-count test
+  updated to ten).

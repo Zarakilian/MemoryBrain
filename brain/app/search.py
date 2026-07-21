@@ -1,11 +1,22 @@
 import os
 from datetime import datetime, timezone
 from typing import Optional
-from .storage import keyword_search, get_memory, DB_PATH
+from .storage import keyword_search, get_memory, get_strengths, DB_PATH
 from .vector import vec_search
 from .summarise import embed
 
 RECENCY_DECAY_RATE = float(os.getenv("RECENCY_DECAY_RATE", "0.02"))
+# How much reinforcement/decay sways ranking. strength ∈ [0.2, 3.0];
+# the multiplier maps that to roughly [0.68, 1.4] — a thumb on the
+# scale, never a veto. 0 disables.
+STRENGTH_WEIGHT = float(os.getenv("MEMORYBRAIN_STRENGTH_WEIGHT", "0.4"))
+
+
+def strength_factor(strength: float, weight: float = STRENGTH_WEIGHT) -> float:
+    """Map a memory's strength to a bounded ranking multiplier."""
+    if weight <= 0:
+        return 1.0
+    return 1.0 + weight * (min(max(strength, 0.2), 3.0) - 1.0)
 
 
 def recency_factor(timestamp_str: str, decay_rate: float) -> float:
@@ -25,6 +36,7 @@ def reciprocal_rank_fusion(
     semantic_results: list[dict],
     k: int = 60,
     decay_rate: float = RECENCY_DECAY_RATE,
+    strengths: Optional[dict] = None,
 ) -> list[str]:
     scores: dict[str, float] = {}
     ts_map: dict[str, str] = {}
@@ -45,6 +57,12 @@ def reciprocal_rank_fusion(
         for id_ in scores:
             if id_ in ts_map:
                 scores[id_] *= recency_factor(ts_map[id_], decay_rate)
+
+    if strengths:
+        # reinforcement/decay: well-used memories float, untouched ones sink
+        for id_ in scores:
+            if id_ in strengths:
+                scores[id_] *= strength_factor(strengths[id_])
 
     return sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 
@@ -75,7 +93,12 @@ async def hybrid_search(
 
     sem_results = vec_search(embedding, n_results=20, filters=vec_filters, db_path=DB_PATH)
 
-    merged_ids = reciprocal_rank_fusion(kw_results, sem_results)[:limit]
+    candidate_ids = list({r["id"] for r in kw_results}
+                         | {r["id"] for r in sem_results})
+    strengths = get_strengths(candidate_ids, db_path=DB_PATH)
+
+    merged_ids = reciprocal_rank_fusion(kw_results, sem_results,
+                                        strengths=strengths)[:limit]
 
     kw_by_id = {r["id"]: r for r in kw_results}
     output = []

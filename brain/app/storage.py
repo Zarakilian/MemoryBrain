@@ -211,6 +211,79 @@ def get_project_recent_state(project: str, db_path: Path = DB_PATH) -> str:
     return (row["summary"] or row["content"][:100]).strip()
 
 
+STRENGTH_FLOOR = 0.2      # forgetting is ranking, never deletion
+STRENGTH_CEIL = 3.0
+RECALL_BOOST_DIRECT = 0.25   # explicitly fetched (get_memory, inspector)
+RECALL_BOOST_SEARCH = 0.05   # surfaced in a search result
+
+
+def record_recall(memory_ids: list[str], boost: float = RECALL_BOOST_DIRECT,
+                  db_path: Path = DB_PATH) -> int:
+    """Reinforcement: retrieval strengthens a memory (Ebbinghaus, inverted).
+    Bounded so nothing can grow monstrous or vanish."""
+    if not memory_ids:
+        return 0
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""UPDATE memories
+                SET strength = min(?, strength + ?), last_recalled = ?
+                WHERE id IN ({','.join('?' * len(memory_ids))})""",
+            [STRENGTH_CEIL, boost, now, *memory_ids],
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def decay_strengths(idle_days: int = 14, factor: float = 0.9,
+                    db_path: Path = DB_PATH) -> int:
+    """Decay: memories nothing has recalled within idle_days lose strength
+    (floored). Called by the consolidation cycle — the brain's sleep."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=idle_days)).isoformat()
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            """UPDATE memories
+               SET strength = max(?, strength * ?)
+               WHERE status = 'active'
+                 AND COALESCE(last_recalled, timestamp) < ?
+                 AND strength > ?""",
+            (STRENGTH_FLOOR, factor, cutoff, STRENGTH_FLOOR),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def scale_strengths(memory_ids: list[str], factor: float,
+                    db_path: Path = DB_PATH) -> int:
+    """Dampen (or boost) specific memories — e.g. sources that a belief now
+    represents sink a little; the belief speaks for them."""
+    if not memory_ids:
+        return 0
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            f"""UPDATE memories
+                SET strength = max(?, min(?, strength * ?))
+                WHERE id IN ({','.join('?' * len(memory_ids))})""",
+            [STRENGTH_FLOOR, STRENGTH_CEIL, factor, *memory_ids],
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def get_strengths(memory_ids: list[str], db_path: Path = DB_PATH) -> dict[str, float]:
+    """Strength map for ranking — read-only, shape-neutral (results never
+    carry the column; hybrid_search folds it into scores internally)."""
+    if not memory_ids:
+        return {}
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""SELECT id, strength FROM memories
+                WHERE id IN ({','.join('?' * len(memory_ids))})""",
+            memory_ids,
+        ).fetchall()
+    return {r["id"]: r["strength"] for r in rows}
+
+
 def upsert_project(project: Project, db_path: Path = DB_PATH):
     with _connect(db_path) as conn:
         conn.execute(

@@ -28,7 +28,8 @@ from pydantic import BaseModel, Field
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry, Project
 from ..storage import (DB_PATH, add_memory, delete_memory, get_memory,
-                       get_memory_by_content_hash, get_project, upsert_project)
+                       get_memory_by_content_hash, get_project, record_recall,
+                       upsert_project)
 from ..vector import vec_delete
 from . import queries as q
 
@@ -79,6 +80,16 @@ def delete_project(slug: str):
 
 
 # ------------------------------------------------------------- memories
+
+@router.post("/api/ui/edit/memories/{memory_id}/recall")
+def recall_memory(memory_id: str):
+    """Reinforcement signal from the UI: opening a memory in the inspector
+    counts as a recall (fire-and-forget from the client; a lost signal is
+    harmless). The only 'write' is strength/last_recalled."""
+    if record_recall([memory_id], db_path=DB_PATH) == 0:
+        raise HTTPException(404, "Memory not found")
+    return {"recalled": memory_id}
+
 
 class NoteBody(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
