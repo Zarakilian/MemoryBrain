@@ -8,8 +8,9 @@
                   faster it flies; trails well behind a quick hand
      spider     — scuttles after the pointer in bursts, sometimes jumps,
                   and sometimes fires a silk line AT the cursor and hangs
-                  BELOW it, swinging like a damped pendulum while you
-                  move, then climbs back up the thread and resumes
+                  BELOW it on an ELASTIC thread — a free body under
+                  gravity, whipped and stretched by mouse movement —
+                  then climbs slowly back up the silk and resumes
 
    It has its own switch (rail button + palette, remembered), independent
    of the world's ambience. Same safety rails as everything ambient here:
@@ -97,8 +98,8 @@
     bGoal: [0, 0], bLerp: 0.05, bNext: 0, bLoop: 0,
     // spider
     sState: "chase",                    // chase | jump | hang | climb
-    sNext: 0, sJumpT: 0, sTheta: 0, sOmega: 0, sLen: 0, sLenT: 0,
-    sAnchorVX: 0, sPrevTX: 0,
+    sNext: 0, sJumpT: 0, sLen: 0, sLenT: 0,
+    sVX: 0, sVY: 0,                     // silk physics: a real rope, not a rod
     printFlip: false, prints: [],
   };
 
@@ -255,15 +256,12 @@
           if (gap < 620 && R() < 0.6) {
             /* fire silk AT the cursor, then DROP below it: the thread
                unspools (sLen grows toward sLenT) so the fall reads as a
-               fall — downward, along the tether */
+               fall — downward, along an ELASTIC tether */
             st.sState = "hang";
             st.sLenT = Math.min(Math.max(gap * 0.9, 180), 340);   // a proper drop
             st.sLen = Math.min(26, st.sLenT);      // starts at the hand…
-            var ang = Math.atan2(st.x - st.tx, st.y - st.ty);  // from straight-down
-            st.sTheta = Math.max(-0.9, Math.min(0.9, ang));
-            st.sOmega = 0;
-            st.sAnchorVX = 0;
-            st.sPrevTX = st.tx;
+            st.sVX = Math.max(-350, Math.min(350, st.vx || 0));   // carries its
+            st.sVY = Math.max(-350, Math.min(350, st.vy || 0));   // running speed
             st.sNext = now + rnd(3500, 6000);      // it HANGS a while
           } else if (R() < 0.5) {
             st.sState = "jump";
@@ -283,58 +281,57 @@
         if (keep) st.raf = requestAnimationFrame(tick);
         return;
 
-      } else if (S === "hang") {
-        /* a real pendulum from the LIVE cursor: moving the mouse whips
-           the anchor and the spider swings; damped, weighty. θ = 0 is
-           STRAIGHT DOWN (screen +y) and the swing is clamped well short
-           of horizontal — the spider always hangs beneath the hand. */
-        st.sLen += (st.sLenT - st.sLen) * Math.min(1, 3.2 * dt);  // unspool: the drop
+      } else if (S === "hang" || S === "climb") {
+        /* SILK, NOT A ROD: the spider is a free body under gravity tied
+           to the live cursor by a tension-only elastic thread. Moving
+           the mouse drags the anchor and the rope whips, stretches and
+           recoils; still hands leave it swaying itself to sleep. */
+        if (S === "hang") {
+          st.sLen += (st.sLenT - st.sLen) * Math.min(1, 3.2 * dt);  // unspool
+          if (now > st.sNext) st.sState = "climb";
+        } else {
+          st.sLen -= 85 * dt;                    // slow, hand over hand
+        }
         /* never dangle off the bottom of the screen */
-        var maxL = Math.max(50, innerHeight - st.ty - 30);
-        var L = Math.min(st.sLen, maxL);
-        var anchorVX = (st.tx - st.sPrevTX) / dt;
-        var dvx = anchorVX - st.sAnchorVX;
-        st.sAnchorVX = anchorVX;
-        st.sPrevTX = st.tx;
-        var g = 2600;
-        st.sOmega += (-(g / L) * Math.sin(st.sTheta)) * dt
-                   - (dvx / L) * Math.cos(st.sTheta) * 0.55
-                   - st.sOmega * 1.6 * dt;
-        st.sTheta += st.sOmega * dt;
-        if (st.sTheta > 1.25) { st.sTheta = 1.25; st.sOmega = Math.min(st.sOmega, 0); }
-        if (st.sTheta < -1.25) { st.sTheta = -1.25; st.sOmega = Math.max(st.sOmega, 0); }
-        st.x = st.tx + Math.sin(st.sTheta) * L;
-        st.y = st.ty + Math.cos(st.sTheta) * L;   // +y: BELOW the cursor
+        var L = Math.min(st.sLen, Math.max(50, innerHeight - st.ty - 26));
+        var rx = st.x - st.tx, ry = st.y - st.ty;
+        var d = Math.hypot(rx, ry) || 1;
+        var axf = 0, ayf = 1500;                 // gravity
+        if (d > L) {                             // silk only PULLS
+          var stretch = d - L;
+          var kk = 55;                           // elasticity
+          axf += -kk * stretch * rx / d;
+          ayf += -kk * stretch * ry / d;
+          /* damp motion along the thread (silk absorbs the snap) */
+          var vr = (st.sVX * rx + st.sVY * ry) / d;
+          axf += -4.0 * vr * rx / d;
+          ayf += -4.0 * vr * ry / d;
+        }
+        st.sVX += axf * dt; st.sVY += ayf * dt;
+        var air = 1 - 0.6 * dt;                  // light air drag
+        st.sVX *= air; st.sVY *= air;
+        st.x += st.sVX * dt; st.y += st.sVY * dt;
+        if (st.y > innerHeight - 18) {           // the floor is the floor
+          st.y = innerHeight - 18;
+          st.sVY = Math.min(st.sVY, 0) * 0.35;
+        }
         drawWeb(st.tx, st.ty, st.x, st.y);
-        body.classList.remove("scuttle");
-        /* dangle head-down: face away from the thread */
-        face(Math.atan2(st.y - st.ty, st.x - st.tx));
+        if (S === "climb") {
+          body.classList.add("scuttle");         // legs working the thread
+          face(Math.atan2(st.ty - st.y, st.tx - st.x));  // head UP the silk
+          if (st.sLen <= 14 && Math.hypot(st.x - st.tx, st.y - st.ty) < 46) {
+            st.sState = "chase";
+            st.sNext = now + rnd(3200, 7000);
+            web.style.display = "none";
+            body.classList.remove("scuttle");
+          }
+        } else {
+          body.classList.remove("scuttle");
+          face(Math.atan2(st.y - st.ty, st.x - st.tx));  // dangle head-down
+        }
         place(1);
-        if (now > st.sNext) { st.sState = "climb"; }
         st.raf = requestAnimationFrame(tick);
         return;
-
-      } else if (S === "climb") {
-        /* SLOW, hand over hand, back up the silk — then resume the chase */
-        st.sLen -= 85 * dt;
-        st.sOmega *= (1 - 1.8 * dt);
-        st.sTheta += st.sOmega * dt;
-        if (st.sLen <= 14) {
-          st.sState = "chase";
-          st.sNext = now + rnd(3200, 7000);
-          web.style.display = "none";
-          body.classList.remove("scuttle");
-        } else {
-          st.x = st.tx + Math.sin(st.sTheta) * st.sLen;
-          st.y = st.ty + Math.cos(st.sTheta) * st.sLen;
-          drawWeb(st.tx, st.ty, st.x, st.y);
-          body.classList.add("scuttle");   // little legs working the thread
-          /* climbing: head UP the thread, toward the cursor */
-          face(Math.atan2(st.ty - st.y, st.tx - st.x));
-          place(1);
-          st.raf = requestAnimationFrame(tick);
-          return;
-        }
       }
     }
 

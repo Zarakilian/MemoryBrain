@@ -346,6 +346,7 @@ if (renderer) {
     nodes: [], links: [], byId: {},
     mesh: null, glow: null, lines: null, pulses: null,
     sim: null, selected: null, hoverId: null, dim: 1,
+    hoverLink: -1, linkFocus: -1,
   };
   scene.add(graph.group);
 
@@ -357,11 +358,13 @@ if (renderer) {
     },
     vertexShader: [
       "attribute float aSeed; attribute float aHeat; attribute float aChurn;",
+      "attribute float aHov;",
       "varying vec3 vN; varying vec3 vW; varying vec3 vP; varying vec3 vC;",
       "varying float vSeed; varying float vHeat; varying float vChurn;",
+      "varying float vHov;",
       "void main(){",
       "  vC = instanceColor;",
-      "  vSeed = aSeed; vHeat = aHeat; vChurn = aChurn;",
+      "  vSeed = aSeed; vHeat = aHeat; vChurn = aChurn; vHov = aHov;",
       "  vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);",
       "  vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);",
       "  vW = wp.xyz; vP = position;",
@@ -371,18 +374,23 @@ if (renderer) {
       "uniform float uTime; uniform vec3 uAura;",
       "varying vec3 vN; varying vec3 vW; varying vec3 vP; varying vec3 vC;",
       "varying float vSeed; varying float vHeat; varying float vChurn;",
+      "varying float vHov;",
       GLSL_NOISE,
       "void main(){",
       "  vec3 n = normalize(vN);",
       "  vec3 v = normalize(cameraPosition - vW);",
       "  float ndv = clamp(dot(n, v), 0.0, 1.0);",
-      "  /* plasma: domain-warped fbm churning under the surface */",
-      "  float t = uTime * (0.015 + vChurn * 0.035) + vSeed * 19.0;",
-      "  vec3 p = vP * 2.4 + vSeed * 7.0;",
+      "  /* LIQUID SUN: the surface circulates around the axis while",
+      "     domain-warped fbm churns through it — molten, flowing; newer",
+      "     memories flow faster, and the hovered star surges */",
+      "  float t = uTime * (0.06 + vChurn * 0.10 + vHov * 0.22) + vSeed * 19.0;",
+      "  float ca = cos(t * 0.35), sa = sin(t * 0.35);",
+      "  vec3 rp = vec3(vP.x * ca - vP.z * sa, vP.y, vP.x * sa + vP.z * ca);",
+      "  vec3 p = rp * 2.4 + vSeed * 7.0;",
       "  vec3 q = vec3(fbm(p + vec3(t, 0.0, 0.0)),",
       "                fbm(p + vec3(5.2, t * 0.8, 1.3)),",
       "                fbm(p + vec3(1.7, 9.2, -t * 0.6)));",
-      "  float sw = fbm(p + 1.9 * q);",
+      "  float sw = fbm(p + 1.9 * q + 0.5 * vec3(0.0, sin(t * 0.7), 0.0));",
       "  /* palette: shadowed body -> project colour -> white-hot */",
       "  vec3 deep = vC * 0.22;",
       "  vec3 hot = mix(vC, vec3(1.0, 0.97, 0.9), 0.8);",
@@ -392,7 +400,8 @@ if (renderer) {
       "  col += hot * pow(ndv, 3.0) * (0.25 + 0.85 * vHeat);",
       "  /* fresnel rim: silhouette in project colour kissed by the aura */",
       "  float rim = pow(1.0 - ndv, 2.6);",
-      "  col += mix(vC, uAura, 0.3) * rim * 1.7;",
+      "  col += mix(vC, uAura, 0.3) * rim * (1.7 + vHov * 0.9);",
+      "  col *= 1.0 + vHov * 0.28;",
       "  gl_FragColor = vec4(col, 1.0); }",
     ].join("\n"),
   });
@@ -404,6 +413,55 @@ if (renderer) {
 
   function radiusOf(n) {
     return (3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8) * 0.62;
+  }
+
+  /* ------------------------------------------------------- hierarchy
+     Every project has a HEAD — its most connected memory, the sun of
+     that little system. Everything else in the project takes a level
+     from BFS distance to the head: direct children ring close, deeper
+     descendants ring further out. Heads are visibly bigger, burn
+     hotter, and repel each other harder so the projects read as
+     separate systems inside the one space. */
+  function computeHierarchy() {
+    var byProject = {};
+    graph.nodes.forEach(function (n) {
+      (byProject[n.project || ""] = byProject[n.project || ""] || []).push(n);
+      n._head = null; n._level = 1;
+    });
+    var adj = {};
+    graph.links.forEach(function (l) {
+      (adj[l.source.id] = adj[l.source.id] || []).push(l.target);
+      (adj[l.target.id] = adj[l.target.id] || []).push(l.source);
+    });
+    Object.keys(byProject).forEach(function (proj) {
+      var members = byProject[proj];
+      var head = members[0];
+      members.forEach(function (n) {
+        if ((n.degree || 0) > (head.degree || 0)
+            || ((n.degree || 0) === (head.degree || 0)
+                && (n.importance || 0) > (head.importance || 0))) head = n;
+      });
+      /* BFS from the head, staying inside the project */
+      var seen = {}; seen[head.id] = true;
+      head._head = head; head._level = 0;
+      var frontier = [head], level = 0;
+      while (frontier.length) {
+        level++;
+        var next = [];
+        frontier.forEach(function (n) {
+          (adj[n.id] || []).forEach(function (m) {
+            if (seen[m.id] || m.project !== proj) return;
+            seen[m.id] = true;
+            m._head = head; m._level = level;
+            next.push(m);
+          });
+        });
+        frontier = next;
+      }
+      members.forEach(function (n) {        // unlinked members still belong
+        if (!n._head) { n._head = head; n._level = 2; }
+      });
+    });
   }
   function churnOf(n) {              // newer memories churn faster
     var t = Date.parse(n.timestamp || "") || 0;
@@ -445,23 +503,31 @@ if (renderer) {
                  w: e.w || 0, kinds: e.kinds };
       });
 
+    graph.hoverId = null; graph.hoverLink = -1; graph.linkFocus = -1;
     disposeGraph();
     if (!graph.nodes.length) { fitSpace(); N.requestRender(); return; }
 
-    /* plasma stars: one InstancedMesh + per-instance seed/heat/churn */
+    computeHierarchy();
+
+    /* plasma stars: one InstancedMesh + per-instance seed/heat/churn/hover */
     var count = graph.nodes.length;
     var geo = nodeGeo.clone();
     var seeds = new Float32Array(count), heats = new Float32Array(count),
-        churns = new Float32Array(count);
+        churns = new Float32Array(count), hovs = new Float32Array(count);
     graph.nodes.forEach(function (n, i) {
-      n._r = radiusOf(n);
+      n._i = i;
+      n._r = radiusOf(n) * (n._head === n ? 1.55 : 1 - Math.min(n._level, 3) * 0.05);
       seeds[i] = (i * 0.61803) % 1;
-      heats[i] = Math.max(0, Math.min(1, ((n.importance || 3) - 1) / 4));
+      heats[i] = Math.max(0, Math.min(1,
+        ((n.importance || 3) - 1) / 4 + (n._head === n ? 0.3 : 0)));
       churns[i] = churnOf(n);
     });
     geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 1));
     geo.setAttribute("aHeat", new THREE.InstancedBufferAttribute(heats, 1));
     geo.setAttribute("aChurn", new THREE.InstancedBufferAttribute(churns, 1));
+    var hovAttr = new THREE.InstancedBufferAttribute(hovs, 1);
+    hovAttr.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aHov", hovAttr);
     var mesh = new THREE.InstancedMesh(geo, nodeMat, count);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false;      // the constellation is always on stage;
@@ -534,11 +600,28 @@ if (renderer) {
       return;
     }
     if (graph.sim) graph.sim.stop();
+    /* the hierarchy force: children seek a ring around their project's
+       head — level 1 close, deeper levels further out */
+    function hierarchyForce(alpha) {
+      var k = 0.10 * alpha;
+      for (var i = 0; i < graph.nodes.length; i++) {
+        var n = graph.nodes[i], h = n._head;
+        if (!h || h === n) continue;
+        var dx = n.x - h.x, dy = n.y - h.y, dz = n.z - h.z;
+        var d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        var ring = 30 + Math.min(n._level, 4) * 26;
+        var f = (ring - d) / d * k;
+        n.vx += dx * f; n.vy += dy * f; n.vz += dz * f;
+        h.vx -= dx * f * 0.15; h.vy -= dy * f * 0.15; h.vz -= dz * f * 0.15;
+      }
+    }
     graph.sim = window.d3.forceSimulation(graph.nodes, 3)
       .force("link", window.d3.forceLink(graph.links)
         .id(function (d) { return d.id; })
         .distance(function (l) { return 26 + 40 * (1 - (l.w || 0)); }))
-      .force("charge", window.d3.forceManyBody().strength(-150))
+      .force("charge", window.d3.forceManyBody()
+        .strength(function (n) { return n._head === n ? -520 : -110; }))
+      .force("hierarchy", hierarchyForce)
       .force("center", window.d3.forceCenter(0, 0, 0))
       .stop();
     if (reduced) {                     // settle synchronously, render a still
@@ -618,9 +701,12 @@ if (renderer) {
       var sid = typeof l.source === "object" ? l.source.id : l.source;
       var tid = typeof l.target === "object" ? l.target.id : l.target;
       var onSel = graph.selected && (sid === graph.selected || tid === graph.selected);
+      var lit = i === graph.linkFocus ? 1.0
+              : i === graph.hoverLink ? 0.8
+              : 0;
       // additive blending: intensity IS opacity
-      var k = (onSel ? 0.95 : 0.10 + (l.w || 0) * 0.5) * graph.dim;
-      var col = onSel ? STAR : FILAMENT;
+      var k = Math.max(lit, (onSel ? 0.95 : 0.10 + (l.w || 0) * 0.5) * graph.dim);
+      var col = (onSel || lit) ? STAR : FILAMENT;
       for (var v = 0; v < 2; v++) {
         lc[i * 6 + v * 3] = col.r * k;
         lc[i * 6 + v * 3 + 1] = col.g * k;
@@ -644,9 +730,10 @@ if (renderer) {
 
   N.select = function (id) {
     graph.selected = id;
+    if (id) graph.linkFocus = -1;      // a chosen star outranks a chosen link
     paintNodes(); paintLinks(); N.requestRender();
   };
-  N.deselect = function () { N.select(null); };
+  N.deselect = function () { graph.linkFocus = -1; N.select(null); };
   N.getNode = function (id) { return graph.byId[id] || null; };
 
   /* --------------------------------------------------- focus vs backdrop */
@@ -688,7 +775,12 @@ if (renderer) {
   }
   function hideTip() {
     if (tip) tip.style.display = "none";
-    if (graph.hoverId) { graph.hoverId = null; updateBuffers(); }
+    if (graph.hoverId) {
+      setHoverInstance(graph.hoverId, null);
+      graph.hoverId = null;
+      updateBuffers();
+    }
+    if (graph.hoverLink >= 0) { graph.hoverLink = -1; paintLinks(); }
     renderer.domElement.style.cursor = "";
   }
   function esc(s) {
@@ -704,28 +796,93 @@ if (renderer) {
     return hit && hit.instanceId != null ? graph.nodes[hit.instanceId] : null;
   }
 
+  function pickLink() {
+    if (!graph.lines || !graph.links.length) return -1;
+    raycaster.setFromCamera(new THREE.Vector2(pointer.nx, pointer.ny), camera);
+    raycaster.params.Line.threshold = 3.2;
+    var hit = raycaster.intersectObject(graph.lines, false)[0];
+    if (!hit || hit.index == null) return -1;
+    return Math.floor(hit.index / 2);          // two vertices per segment
+  }
+
+  /* the hovered star surges: one float per instance, flipped on change */
+  function setHoverInstance(prevId, newId) {
+    if (!graph.mesh) return;
+    var attr = graph.mesh.geometry.getAttribute("aHov");
+    if (!attr) return;
+    var p = prevId != null && graph.byId[prevId];
+    var q = newId != null && graph.byId[newId];
+    if (p && p._i != null) attr.array[p._i] = 0;
+    if (q && q._i != null) attr.array[q._i] = 1;
+    attr.needsUpdate = true;
+  }
+
+  /* click a filament: the camera frames its two stars — pulled square-on
+     to the pair, as best the current view allows */
+  function focusPair(idx) {
+    var l = graph.links[idx];
+    if (!l) return;
+    graph.linkFocus = idx;
+    graph.selected = null;
+    paintNodes(); paintLinks();
+    var a = l.source, b = l.target;
+    var mid = new THREE.Vector3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    var seg = new THREE.Vector3(b.x - a.x, b.y - a.y, b.z - a.z);
+    var sep = seg.length() || 1;
+    seg.normalize();
+    /* view direction: keep the current one, minus its component along the
+       pair — so the camera slides square-on to the filament */
+    var dir = camera.position.clone().sub(controls.target).normalize();
+    dir.addScaledVector(seg, -dir.dot(seg));
+    if (dir.lengthSq() < 0.05) dir.set(0, 0.2, 1);   // degenerate: pick a side
+    dir.normalize();
+    var dist = Math.max(110, sep * 2.2);
+    flyCamera(mid.clone().addScaledVector(dir, dist), mid, 750);
+    N.requestRender();
+  }
+
   var hoverPending = false;
   function onHoverCheck() {
     hoverPending = false;
     if (!focus || orb.veil || drag.node) return;
     var n = pick();
+    var li = n ? -1 : pickLink();          // stars outrank filaments
     var id = n ? n.id : null;
+    var changed = false;
     if (id !== graph.hoverId) {
+      setHoverInstance(graph.hoverId, id);
       graph.hoverId = id;
       updateBuffers();
+      changed = true;
+    }
+    if (li !== graph.hoverLink) {
+      graph.hoverLink = li;
+      paintLinks();
+      changed = true;
+    }
+    if (changed) {
       N.requestRender();
-      renderer.domElement.style.cursor = n ? "pointer" : "";
+      renderer.domElement.style.cursor = (n || li >= 0) ? "pointer" : "";
       if (!tip) makeTip();
       if (n) {
         tip.innerHTML = "<strong>" + esc(n.label || n.id) + "</strong>"
-          + '<p class="quiet">' + esc(n.project || "") + " · " + esc(n.type || "")
-          + " · importance " + (n.importance || "?")
+          + '<p class="quiet">' + esc(n.project || "")
+          + (n._head === n ? " · project head" : "")
+          + " · " + esc(n.type || "") + " · importance " + (n.importance || "?")
           + " · gravity " + (n.degree != null ? Number(n.degree).toFixed(1) : "?")
           + "</p>";
         tip.style.display = "";
+      } else if (li >= 0) {
+        var l = graph.links[li];
+        tip.innerHTML = "<strong>" + esc((l.source.label || l.source.id).slice(0, 46))
+          + " ⟷ " + esc((l.target.label || l.target.id).slice(0, 46)) + "</strong>"
+          + '<p class="quiet">' + esc((l.kinds || []).join(", ") || "link")
+          + " · weight " + (l.w != null ? l.w.toFixed(2) : "?")
+          + " · click to frame the pair</p>";
+        tip.style.display = "";
       } else tip.style.display = "none";
     }
-    if (n && tip) {
+    if ((n || graph.hoverLink >= 0) && tip) {
       tip.style.left = Math.min(pointer.x + 14, window.innerWidth - 360) + "px";
       tip.style.top = (pointer.y + 14) + "px";
     }
@@ -753,7 +910,8 @@ if (renderer) {
     pointer.nx = (ev.clientX / window.innerWidth) * 2 - 1;
     pointer.ny = -(ev.clientY / window.innerHeight) * 2 + 1;
     var n = pick();
-    drag.downAt = { x: ev.clientX, y: ev.clientY, node: n };
+    drag.downAt = { x: ev.clientX, y: ev.clientY, node: n,
+                    link: n ? -1 : pickLink() };
     if (!n) return;
     drag.node = n; drag.moved = 0;
     controls.enabled = false;
@@ -791,9 +949,11 @@ if (renderer) {
     var dx = Math.abs(ev.clientX - drag.downAt.x),
         dy = Math.abs(ev.clientY - drag.downAt.y);
     var clicked = drag.downAt.node;
+    var clickedLink = drag.downAt.link;
     drag.downAt = null;
     if (dx > 4 || dy > 4) return;                       // it was an orbit
     if (clicked) { if (N.hooks.onNodeClick) N.hooks.onNodeClick(clicked); }
+    else if (clickedLink >= 0) { focusPair(clickedLink); }
     else if (N.hooks.onBackgroundClick) N.hooks.onBackgroundClick();
   });
 
@@ -1102,8 +1262,10 @@ if (renderer) {
       mu.y += ((pointer.ny + 1) / 2 - mu.y) * 0.05;
     }
 
-    /* selection pulses along the chosen star's filaments (feedback) */
-    if (graph.pulses && graph.selected && graph.links.length) {
+    /* selection pulses along the chosen star's filaments — and along a
+       clicked filament itself (feedback) */
+    if (graph.pulses && graph.links.length
+        && (graph.selected || graph.linkFocus >= 0)) {
       var pp = graph.pulses.geometry.attributes.position.array;
       var pc = graph.pulses.geometry.attributes.color.array;
       var ps = graph.pulses.geometry.attributes.psize.array;
@@ -1113,7 +1275,8 @@ if (renderer) {
         var l = graph.links[i];
         var sid = typeof l.source === "object" ? l.source.id : l.source;
         var tid = typeof l.target === "object" ? l.target.id : l.target;
-        if (sid !== graph.selected && tid !== graph.selected) continue;
+        if (i !== graph.linkFocus
+            && sid !== graph.selected && tid !== graph.selected) continue;
         for (var j = 0; j < 2; j++, k++) {
           var f2 = (tt + i * 0.37 + j * 0.5) % 1;
           pp[k * 3] = l.source.x + (l.target.x - l.source.x) * f2;
