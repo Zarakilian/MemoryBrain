@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}MemoryBrain{% endblock %}</title>
 <link rel="stylesheet" href="/static/css/atlas.css?b={{ build_stamp }}">
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
+<link rel="icon" type="image/jpeg" href="/static/img/memorybrain-logo.jpg">
 {# One modern three build owns the whole world (design rule 5). No build
    pipeline: the import map is the module resolver, served as-is. #}
 <script type="importmap">
@@ -25,7 +25,10 @@
 <div class="shell">
 
   <aside class="rail">
-    <a class="brand" href="/ui">Memory<em>Brain</em></a>
+    <a class="brand" href="/ui">
+      <img class="brand-logo" src="/static/img/memorybrain-logo.jpg" width="28" height="28" alt="" />
+      Memory<em>Brain</em>
+    </a>
     <nav class="rail-nav" aria-label="Scope">
       <a href="/ui" class="{{ 'on' if not current else '' }}">
         <span class="pdot all"></span><span class="pname">All memories</span>
@@ -43,6 +46,8 @@
       {% endfor %}
     </nav>
     <button id="new-project-btn" class="rail-add" hidden data-js type="button">+ new project</button>
+    <button id="policy-btn" class="rail-add" hidden data-js type="button"
+            title="Per-project brief policy (system lane, char budget, notes)">⚙ policy</button>
     <div class="rail-foot">
       <button id="conflicts-chip" hidden type="button"
               title="Contradictions flagged by the consolidation cycle"></button>

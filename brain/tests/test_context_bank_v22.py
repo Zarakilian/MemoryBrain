@@ -204,11 +204,12 @@ async def test_mcp_list_tools_count():
     from app.mcp.tools import list_tools, TOOL_NAMES
     tools = await list_tools()
     names = [t.name for t in tools]
-    assert len(names) == 17
+    assert len(names) == len(TOOL_NAMES)
     assert set(names) == set(TOOL_NAMES)
     assert "get_project_brief" in names
     assert "pin_memory" in names
     assert "resolve_conflict" in names
+    assert "record_retrieval" in names
 
 
 @pytest.mark.asyncio

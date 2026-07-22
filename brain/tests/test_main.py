@@ -20,11 +20,13 @@ def test_status_endpoint_returns_structure(tmp_db, monkeypatch):
             data = resp.json()
             assert "project_count" in data
             assert "version" in data
-            assert data["version"] == "2.2.0"
+            assert data["version"] == "2.3.0"
             assert "mcp" in data
-            assert data["mcp"]["tool_count"] == 17
+            assert data["mcp"]["tool_count"] == 22
             assert "get_project_brief" in data["mcp"]["tools"]
+            assert "record_retrieval" in data["mcp"]["tools"]
             assert "recommended" in data["mcp"]
+            assert "scheduler" in data
             assert "active_plugins" not in data
             assert "inactive_plugins" not in data
 

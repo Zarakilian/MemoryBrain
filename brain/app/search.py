@@ -37,6 +37,7 @@ def reciprocal_rank_fusion(
     k: int = 60,
     decay_rate: float = RECENCY_DECAY_RATE,
     strengths: Optional[dict] = None,
+    feedback: Optional[dict] = None,
 ) -> list[str]:
     scores: dict[str, float] = {}
     ts_map: dict[str, str] = {}
@@ -63,6 +64,12 @@ def reciprocal_rank_fusion(
         for id_ in scores:
             if id_ in strengths:
                 scores[id_] *= strength_factor(strengths[id_])
+
+    if feedback:
+        # v2.3: memories agents actually chose after search float a little
+        for id_ in scores:
+            if id_ in feedback:
+                scores[id_] *= feedback[id_]
 
     return sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 
@@ -98,9 +105,15 @@ async def hybrid_search(
     candidate_ids = list({r["id"] for r in kw_results}
                          | {r["id"] for r in sem_results})
     strengths = get_strengths(candidate_ids, db_path=path)
+    try:
+        from .retrieval import feedback_boosts
+        feedback = feedback_boosts(candidate_ids, db_path=path)
+    except Exception:
+        feedback = {}
 
-    merged_ids = reciprocal_rank_fusion(kw_results, sem_results,
-                                        strengths=strengths)[:limit]
+    merged_ids = reciprocal_rank_fusion(
+        kw_results, sem_results, strengths=strengths, feedback=feedback,
+    )[:limit]
 
     kw_by_id = {r["id"]: r for r in kw_results}
     output = []

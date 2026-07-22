@@ -135,14 +135,15 @@ async def test_mcp_graph_tool_shape(gdb, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_seventeen_tools_registered():
+async def test_twenty_two_tools_registered():
     from app.mcp.tools import TOOL_NAMES
     tools = await list_tools()
     names = {t.name for t in tools}
     assert names == set(TOOL_NAMES)
-    assert len(names) == 17
-    # v2.2 context-bank tools
+    assert len(names) == 22
     assert {
         "get_project_brief", "list_conflicts", "resolve_conflict",
         "dismiss_conflict", "pin_memory", "unpin_memory", "list_pins",
+        "record_retrieval", "get_timeline", "get_entities",
+        "get_project_policy", "set_project_policy",
     } <= names

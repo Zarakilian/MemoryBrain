@@ -474,6 +474,52 @@
     }
   });
 
+  /* ------------------------------- policy ------------------------------ */
+  async function openPolicy() {
+    var proj = new URLSearchParams(location.search).get("project") || "";
+    if (!proj) {
+      alert("Open a project first, then edit its brief policy.");
+      return;
+    }
+    var cur = { include_system: true, max_brief_chars: 3500, notes: "", default_tags: [] };
+    try {
+      var r0 = await fetch("/api/ui/policy/" + encodeURIComponent(proj), { cache: "no-store" });
+      if (r0.ok) cur = await r0.json();
+    } catch (e) {}
+    var tags = (cur.default_tags || []).join(", ");
+    var m = modal("Brief policy — " + esc(proj),
+      '<p class="quiet">Controls get_project_brief for this project (v2.3).</p>'
+      + '<label class="field"><input type="checkbox" id="f-sys" '
+      + (cur.include_system ? "checked" : "") + '> Include system ops lane</label>'
+      + '<label class="field">Max brief chars<input type="number" id="f-chars" min="800" max="12000" value="'
+      + esc(cur.max_brief_chars || 3500) + '"></label>'
+      + '<label class="field">Default tags (comma-separated)<input id="f-tags" value="'
+      + esc(tags) + '"></label>'
+      + '<label class="field">Notes for agents<textarea id="f-notes" rows="3">'
+      + esc(cur.notes || "") + '</textarea></label>',
+      [{ label: "Save policy", primary: true, run: async function () {
+          var body = {
+            project: proj,
+            include_system: !!m.q("#f-sys").checked,
+            max_brief_chars: Number(m.q("#f-chars").value) || 3500,
+            default_tags: m.q("#f-tags").value.split(",").map(function (s) {
+              return s.trim();
+            }).filter(Boolean),
+            notes: m.q("#f-notes").value,
+          };
+          var res = await writeFetch("/api/ui/edit/policy", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          if (!res.ok) {
+            alert("Save failed: HTTP " + res.status);
+            return;
+          }
+          m.close();
+        } }]);
+  }
+
   /* ------------------------------- triggers ------------------------------ */
   var addBtn = document.getElementById("add-note-btn");
   if (addBtn) addBtn.addEventListener("click", openAddNote);
@@ -487,10 +533,17 @@
                   one_liner: epBtn.dataset.line });
   });
 
+  var polBtn = document.getElementById("policy-btn");
+  if (polBtn) {
+    polBtn.hidden = false;
+    polBtn.addEventListener("click", openPolicy);
+  }
+
   if (window.Atlas) {
     Atlas.extraCommands = (Atlas.extraCommands || []).concat([
       { kind: "edit", label: "Add note / file", run: openAddNote },
       { kind: "edit", label: "New project", run: function () { openProject(null); } },
+      { kind: "edit", label: "Edit project brief policy", run: openPolicy },
       { kind: "brain", label: "Sleep: run the consolidation cycle",
         run: function () { runSleep(false); } },
     ]);

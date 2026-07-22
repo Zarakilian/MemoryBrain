@@ -250,3 +250,20 @@ def api_conflicts(project: str | None = None,
     """Unresolved contradiction pairs flagged by the consolidation cycle.
     Additive endpoint (v2.1.0); read-only like all /api/ui reads."""
     return q.conflicts(conn, project=project, limit=limit)
+
+
+@router.get("/api/ui/timeline")
+def api_timeline(project: str | None = None,
+                 days: int = Query(30, ge=1, le=365),
+                 limit: int = Query(100, ge=1, le=500)):
+    """Chronological activity feed (v2.3)."""
+    from ..timeline import get_timeline
+    return get_timeline(project=project, days=days, limit=limit)
+
+
+@router.get("/api/ui/entities")
+def api_entities(project: str | None = None,
+                 limit: int = Query(40, ge=1, le=100)):
+    """Entity cards: tags, names, services (v2.3)."""
+    from ..timeline import get_entities
+    return get_entities(project=project, limit=limit)

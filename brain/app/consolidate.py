@@ -304,13 +304,24 @@ def _repair_summaries(db_path: Path) -> int:
 
 async def consolidate(project: Optional[str] = None,
                       idle_days: int = 14,
-                      db_path: Path = None) -> dict:
-    """Run one full sleep cycle. Returns a plain-dict report."""
+                      db_path: Path = None,
+                      mode: str = "full") -> dict:
+    """Run one sleep cycle. Returns a plain-dict report.
+
+    mode:
+      - "full"  — beliefs + conflicts + loops + decay (interactive / MCP)
+      - "light" — repair + conflicts + loops + decay; skip LLM belief
+                  distillation (cheap enough for nightly auto-sleep)
+    """
     from .ingest_pipeline import ingest          # late: avoids cycles
     from .linker import _write_edges, _update_degrees
 
     db_path = db_path or DB_PATH
+    mode = (mode or "full").strip().lower()
+    if mode not in ("full", "light"):
+        mode = "full"
     report = {"projects": [], "decayed": 0, "started_at": _now(),
+              "mode": mode,
               "summaries_repaired": _repair_summaries(db_path)}
 
     with _connect(db_path) as conn:
@@ -325,7 +336,7 @@ async def consolidate(project: Optional[str] = None,
     for proj in projects:
         entry_report = {"project": proj, "beliefs": [], "conflicts": 0,
                         "loops": 0, "skipped_clusters": 0,
-                        "beliefs_retired": 0}
+                        "beliefs_retired": 0, "mode": mode}
         with _connect(db_path) as conn:
             entry_report["beliefs_retired"] = _retire_bloated_beliefs(
                 conn, proj, db_path)
@@ -338,7 +349,10 @@ async def consolidate(project: Optional[str] = None,
             conflicts = _find_conflicts(conn, proj, db_path)
             loops = _extract_loops(conn, proj)
 
-        # 1. beliefs — through the full pipeline (summarise/embed/link)
+        # 1. beliefs — full mode only (light auto-sleep skips LLM cost)
+        if mode == "light":
+            todo = []
+            entry_report["skipped_clusters"] += len(clusters) - len(skip)
         for cluster in todo:
             corpus = _corpus(rows_by_id, cluster)
             prompt = ("Distil these related memories into their single current "

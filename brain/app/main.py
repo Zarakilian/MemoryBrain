@@ -74,6 +74,7 @@ streamable_session_manager = StreamableHTTPSessionManager(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import asyncio
     init_db()
     # v2.0.0: idempotent one-time copy of embeddings out of the legacy Chroma
     # directory into brain.db (no-op once complete, no-op on chroma backend).
@@ -81,10 +82,28 @@ async def lifespan(app: FastAPI):
     if not report.get("skipped") and report.get("missing_before"):
         logger.info(f"Vector backfill report: {report}")
     logger.info(f"Brain started (vector backend: {get_backend()})")
+    # v2.3: optional nightly light auto-sleep
+    stop_sched = asyncio.Event()
+    sched_task = None
+    try:
+        from .scheduler import scheduler_loop, auto_consolidate_enabled
+        if auto_consolidate_enabled():
+            sched_task = asyncio.create_task(
+                scheduler_loop(stop_sched), name="auto-consolidate"
+            )
+            logger.info("auto-consolidate scheduler task created")
+    except Exception:
+        logger.exception("failed to start auto-consolidate scheduler")
     # StreamableHTTPSessionManager.run() owns the request task group for /mcp.
     async with streamable_session_manager.run():
         logger.info("Streamable HTTP MCP session manager started at /mcp")
         yield
+    stop_sched.set()
+    if sched_task is not None:
+        try:
+            await asyncio.wait_for(sched_task, timeout=5)
+        except Exception:
+            sched_task.cancel()
     logger.info("Streamable HTTP MCP session manager stopped")
 
 
@@ -140,7 +159,7 @@ class PureASGIAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-app = FastAPI(title="MemoryBrain", version="2.2.0", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="2.3.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 # Pure ASGI middleware first so it wraps the whole stack without body buffering.
@@ -268,10 +287,12 @@ async def status():
             stamp = stamp_path.read_text(encoding="utf-8").strip()
         except Exception:
             stamp = ""
+    from .scheduler import scheduler_status
     return {
-        "version": "2.2.0",
+        "version": "2.3.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
         "build_stamp": stamp,
+        "scheduler": scheduler_status(db_path=DB_PATH),
         "mcp": {
             "sse": "/sse",
             "sse_messages": "/messages/",
@@ -387,14 +408,63 @@ async def rebuild_graph_endpoint():
 
 
 @app.post("/admin/consolidate")
-async def consolidate_endpoint(project: str = "", idle_days: int = 14):
+async def consolidate_endpoint(project: str = "", idle_days: int = 14,
+                               mode: str = "full"):
     """Run one consolidation cycle (the brain's sleep): distil clusters into
     beliefs, damp their sources, flag contradictions, extract open loops,
     decay the unrecalled. Additive and derived — never deletes. Optionally
-    scoped to one project. Authenticated via the API-key middleware."""
+    scoped to one project. mode=full|light (light skips LLM beliefs).
+    Authenticated via the API-key middleware."""
     from .consolidate import consolidate
     return await consolidate(project=project or None,
-                             idle_days=max(1, min(idle_days, 365)))
+                             idle_days=max(1, min(idle_days, 365)),
+                             mode=mode or "full")
+
+
+@app.post("/admin/auto-consolidate")
+async def auto_consolidate_endpoint(force: bool = True):
+    """Trigger the auto-sleep cycle now (same as the nightly scheduler)."""
+    from .scheduler import run_auto_consolidate
+    return await run_auto_consolidate(force=force)
+
+
+@app.get("/admin/export/obsidian")
+async def export_obsidian(project: str, include_archived: bool = False):
+    """Export a project to Markdown suitable for opening as an Obsidian vault.
+    Files land under /app/data/exports/<project>/."""
+    from pathlib import Path as _P
+    from .obsidian import export_project_markdown
+    if not project:
+        raise HTTPException(422, "project is required")
+    out = _P("/app/data/exports")
+    return export_project_markdown(
+        project, out, include_archived=include_archived, db_path=DB_PATH,
+    )
+
+
+@app.post("/admin/import/obsidian")
+async def import_obsidian(directory: str, project: str = ""):
+    """Import Markdown files from a directory into MemoryBrain."""
+    from pathlib import Path as _P
+    from .obsidian import import_markdown_dir
+    if not directory:
+        raise HTTPException(422, "directory is required")
+    return await import_markdown_dir(
+        _P(directory), project=project or None, db_path=DB_PATH,
+    )
+
+
+@app.get("/timeline")
+async def timeline_endpoint(project: str = "", days: int = 30, limit: int = 100):
+    from .timeline import get_timeline
+    return get_timeline(project=project or None, days=days, limit=limit,
+                        db_path=DB_PATH)
+
+
+@app.get("/entities")
+async def entities_endpoint(project: str = "", limit: int = 40):
+    from .timeline import get_entities
+    return get_entities(project=project or None, limit=limit, db_path=DB_PATH)
 
 
 # ── Web UI (v2.0.0) — local, read-only, server-rendered ─────────────────────

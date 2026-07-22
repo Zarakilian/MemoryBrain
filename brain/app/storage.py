@@ -355,6 +355,31 @@ def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PA
     return _row_to_entry(row) if row else None
 
 
+def get_meta(key: str, default: str = "", db_path: Path = DB_PATH) -> str:
+    """Read a brain_meta key (v2.3). Missing table/key → default."""
+    with _connect(db_path) as conn:
+        try:
+            row = conn.execute(
+                "SELECT value FROM brain_meta WHERE key = ?", (key,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return default
+    return row["value"] if row else default
+
+
+def set_meta(key: str, value: str, db_path: Path = DB_PATH) -> None:
+    """Upsert a brain_meta key (v2.3)."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO brain_meta (key, value, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                   value=excluded.value, updated_at=excluded.updated_at""",
+            (key, value, now),
+        )
+        conn.commit()
+
+
 def get_next_session_notes(project: str = "", db_path: Path = DB_PATH) -> str:
     with _connect(db_path) as conn:
         if project:

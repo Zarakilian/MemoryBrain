@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from .conflicts import list_conflicts
 from .pins import list_pins
+from .policy import get_policy
 from .storage import DB_PATH, _connect, get_next_session_notes, get_project
 
 DEFAULT_BRIEF_CHARS = 3500
@@ -26,26 +27,12 @@ def _preview(text: str, n: int = 220) -> str:
 
 
 def _policy(project: str, db_path: Path) -> dict[str, Any]:
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM project_policy WHERE project = ?", (project,)
-        ).fetchone()
-    if row is None:
-        return {
-            "include_system": 1,
-            "max_brief_chars": DEFAULT_BRIEF_CHARS,
-            "default_tags": [],
-            "notes": "",
-        }
-    try:
-        tags = json.loads(row["default_tags"] or "[]")
-    except (ValueError, TypeError):
-        tags = []
+    p = get_policy(project, db_path=db_path)
     return {
-        "include_system": int(row["include_system"]),
-        "max_brief_chars": int(row["max_brief_chars"] or DEFAULT_BRIEF_CHARS),
-        "default_tags": tags,
-        "notes": row["notes"] or "",
+        "include_system": 1 if p.get("include_system") else 0,
+        "max_brief_chars": p.get("max_brief_chars") or DEFAULT_BRIEF_CHARS,
+        "default_tags": p.get("default_tags") or [],
+        "notes": p.get("notes") or "",
     }
 
 

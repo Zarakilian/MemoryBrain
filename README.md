@@ -1,205 +1,186 @@
-# MemoryBrain
+<p align="center">
+  <img src="docs/assets/memorybrain-logo.jpg" alt="MemoryBrain logo" width="160" height="160" />
+</p>
 
-Persistent searchable memory service for AI assistants (Claude Code, Gemini/Antigravity) via MCP.
+<h1 align="center">MemoryBrain</h1>
 
-Replaces flat MEMORY.md files with a FastAPI + SQLite (FTS5 + sqlite-vec) + Ollama service
-that gives your AI assistant automatic context on every new session, with on-demand semantic search,
-an automatic memory graph, and a local web UI at http://localhost:7741/ui.
+<p align="center">
+  <strong>Your local multi-AI memory bank</strong><br/>
+  Persistent, project-scoped context for Claude, Grok, Codex, Gemini — and anything that speaks MCP or REST.
+</p>
 
-MemoryBrain works with **any AI assistant**: MCP over SSE (Claude Code),
-MCP over stdio (Gemini, Codex, Kimi, Grok, Cline — any MCP client, via a
-one-line Docker command), or plain REST for assistants without MCP.
-See [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md).
+<p align="center">
+  <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
+  <img alt="Version" src="https://img.shields.io/badge/version-2.3.0-ffd98a?style=flat-square" />
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-22-7c9cff?style=flat-square" />
+  <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
+</p>
 
-MemoryBrain is a **passive store** — it stores what your assistant saves via `add_memory`. No polling,
-no plugin credentials. Works identically on any machine with any MCP tools registered.
+---
 
-## Quick Start
+MemoryBrain replaces flat `MEMORY.md` files with a **shared operational memory** every assistant can read and write:
+
+- **FastAPI + SQLite** (FTS5 + sqlite-vec) + Ollama (or Gemini / OpenAI)
+- **MCP** over streamable HTTP (`/mcp`), classic SSE (`/sse`), and Docker **stdio**
+- **Nebula Atlas UI** at http://localhost:7741/ui
+- **Passive store** — assistants save via `add_memory`; no polling of external systems
+
+It is **not** a full Obsidian replacement. It is the brain your AIs share across projects, sessions, and tools. Optional Obsidian export/import bridges the two.
+
+## Why MemoryBrain
+
+| Need | MemoryBrain |
+|------|-------------|
+| Same context for Grok + Claude + Codex + Gemini | One MCP surface, three transports |
+| Survive context-window compaction | Durable SQLite memory + briefs |
+| Stop contradictory “facts” | Supersession + conflict edges + verdicts |
+| Compress noise over time | Consolidation (“sleep”) → beliefs, decay ranking |
+| Start every session oriented | `get_startup_summary` + `get_project_brief` |
+| Pin what must never sink | Working-set pins excluded from decay |
+
+## Quick start
 
 ```bash
 git clone https://github.com/Zarakilian/MemoryBrain ~/memorybrain
 cd ~/memorybrain
 cp .env.example .env
-# One command does everything (Docker, models, MCP, hooks, skills):
+# One command: Docker, models, MCP, hooks, skills
 python3 cli/brain.py setup --auto-detect
 ```
 
-Or manually, step by step — see [HOW_IT_WORKS.md](HOW_IT_WORKS.md) for the full setup guide.
+Open **http://localhost:7741/ui** · MCP SSE **http://localhost:7741/sse** · Grok HTTP **http://localhost:7741/mcp**
 
-**Installing or migrating with an AI assistant?** Paste one of the strict,
-model-agnostic prompts from [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md)
-into any assistant (Claude, Gemini, ChatGPT, a local model) and it will drive
-the install or the v0.5.x → v2.0.0 migration step-by-step with verified
-checkpoints and a mandatory backup.
+Full guide: [HOW_IT_WORKS.md](HOW_IT_WORKS.md) · AI install prompts: [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) · Connect any assistant: [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md)
+
+## Architecture (short)
+
+```text
+Assistants ──MCP/REST──► MemoryBrain (loopback :7741)
+                              │
+                     ┌────────┴────────┐
+                     │   brain.db      │  FTS5 + vectors + graph + pins
+                     │   Ollama/LLM    │  embed · summarise · consolidate
+                     └────────┬────────┘
+                              ▼
+                     Atlas UI  ·  briefs  ·  sleep cycle
+```
+
+## Multi-AI doors
+
+| Client | Transport | Config sketch |
+|--------|-----------|----------------|
+| **Grok** | Streamable HTTP | `url = "http://localhost:7741/mcp"` |
+| **Claude Code** | SSE | `claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse` |
+| **Codex / Gemini** | stdio | `docker exec -i memorybrain-brain-1 python stdio_server.py` |
+| **Any script** | REST | `/project-brief`, `/ingest/note`, `/status`, … |
+
+`GET /status` returns version, tool list, scheduler state, and recommended client configs.
+
+## MCP tools (22)
+
+### Core
+`search_memory` · `get_memory` · `add_memory` · `delete_memory` · `get_recent_context` · `list_projects` · `get_startup_summary` · `get_related_memories` · `get_memory_graph` · `consolidate_memory`
+
+### Context bank (v2.2+)
+`get_project_brief` · `list_conflicts` · `resolve_conflict` · `dismiss_conflict` · `pin_memory` · `unpin_memory` · `list_pins`
+
+### Ops & orientation (v2.3)
+`record_retrieval` · `get_timeline` · `get_entities` · `get_project_policy` · `set_project_policy`
+
+### Recommended agent protocol
+
+1. `get_startup_summary`
+2. `get_project_brief(project=…)`
+3. Work with typed writes: `fact` / `decision` / `open_loop` / `session`
+4. `pin_memory` for env truths and current goals
+5. After heavy weeks: `consolidate_memory` → `list_conflicts` → resolve
+6. When a search result was *actually used*: `record_retrieval(..., chosen_id=…)`
+
+## What's new
+
+### v2.3.0 — ops, feedback, bridges
+- **Nightly light auto-sleep** (`MEMORYBRAIN_AUTO_CONSOLIDATE=true`) — repair, conflicts, loops, decay; optional full LLM beliefs
+- **`record_retrieval`** + ranking feedback from chosen results
+- **Project brief policy** — Atlas ⚙ policy + MCP get/set
+- **Obsidian export/import** — `GET /admin/export/obsidian`, `POST /admin/import/obsidian`
+- **Timeline & entity cards** — MCP + REST + `/api/ui/*`
+- Professional **logo** for README and Atlas brand
+
+### v2.2.0 — multi-AI context bank
+Token-budgeted `get_project_brief`, pins, conflict MCP tools, write policy (`decision` / `open_loop`). See [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md).
+
+### v2.1.0 — the brain that sleeps
+Beliefs, `conflicts_with`, strength/decay, Atlas ☾ sleep. Provenance via `derived_from`.
+
+### v2.0.0 — one database + Nebula
+sqlite-vec in `brain.db`, automatic graph, local Atlas UI (Stream / Constellation / Chronicle).
 
 ## Project detection
 
-Every memory stored in MemoryBrain belongs to a **project**. The project slug is a short label
-(e.g. `api-service`, `mobile-app`) that scopes memories so they don't bleed across unrelated work.
+1. **`.brainproject`** in the repo root (recommended) — file contains only the slug  
+2. Else last meaningful path segment of the working directory  
 
-When Claude calls `add_memory`, it tags the memory with the current project slug. When it calls
-`get_recent_context` or `search_memory`, it can filter by that slug — so your API service memories
-stay separate from your infrastructure memories, and each session starts with context that is
-actually relevant to what you are working on right now.
+## Skills
 
-**Two ways the slug is determined, in priority order:**
+| Skill | What it does |
+|-------|----------------|
+| `log-everything` | Session summary → MemoryBrain (+ project log suites where configured) |
+| `handover` | Full session handover document |
+| `map-project-files` | Authoritative file map as a reference memory |
 
-1. **`.brainproject` file** — create a file in your project root containing just the slug name.
-   This is explicit and reliable. MemoryBrain reads it every session.
+## Ops cheatsheet
 
-   ```bash
-   echo "my-project-name" > /path/to/project/.brainproject
-   ```
-
-2. **Automatic fallback** — if no `.brainproject` file is present, MemoryBrain uses the last
-   meaningful segment of your current working directory path as the slug. For example, if you are
-   working in `/home/user/projects/api-service`, the slug becomes `api-service`.
-
-The `.brainproject` file approach is recommended for any project you work in regularly, because
-it gives you a stable, intentional slug that won't change if you rename or move the directory.
-
-## Skills included
-
-| Skill | Trigger | What it does |
-|---|---|---|
-| `log-everything` | `/log-everything` | Generates session summary → saves via `add_memory` → prompts for next-session notes |
-| `handover` | `/handover` | Creates comprehensive session handover document → saves to MemoryBrain or file |
-| `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a reference memory so future sessions know exactly where to look |
-
-## MCP Tools available in Claude, Gemini, Grok & Codex
-
-**17 tools** (v2.2 context bank). Same surface on SSE, streamable HTTP, and stdio.
-
-| Tool | Description |
-|---|---|
-| `search_memory` | Hybrid keyword+semantic search — returns summaries |
-| `get_memory` | Full content fetch by ID (beliefs include source citations) |
-| `add_memory` | Store a memory (`fact`/`decision`/`open_loop`/`session`/…) |
-| `delete_memory` | Hard delete (prefer supersession for stale truths) |
-| `get_recent_context` | Recent entries by project |
-| `list_projects` | All projects + last activity |
-| `get_startup_summary` | Compact session-start injection |
-| `get_related_memories` | Graph neighbours for a memory |
-| `get_memory_graph` | Project/global memory graph |
-| `consolidate_memory` | One sleep cycle (beliefs, conflicts, decay) |
-| `get_project_brief` | **v2.2** token-budgeted multi-AI context pack |
-| `list_conflicts` / `resolve_conflict` / `dismiss_conflict` | **v2.2** contradiction workflow |
-| `pin_memory` / `unpin_memory` / `list_pins` | **v2.2** working-set pins |
-
-See [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md) and [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md).
-
-> **Session start rule:** At session start, Claude checks the auto-loaded `MEMORY.md` for a
-> `**MemoryBrain Last Active:**` timestamp. If fresh (< 7 days), it calls `get_startup_summary`
-> then `get_recent_context` — and then **stops**. No project files are read. The timestamp is
-> written by the session-start hook every time MemoryBrain is confirmed healthy, giving Claude an
-> explicit signal to trust MemoryBrain over stale file-based memory. See [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
-
-## What's New in v2.0.0
-
-- **One database file.** Embeddings moved from embedded ChromaDB into `brain.db`
-  (sqlite-vec): exact cosine KNN, one transaction boundary, `cp` is a backup.
-  Auto-migrates existing data at first startup — see [MIGRATION.md](MIGRATION.md).
-- **Automatic memory graph.** Semantic, tag (IDF-weighted), reference
-  (supersession / shared source / UUID mentions) and session-chain edges,
-  derived at ingest, fully rebuildable via `POST /admin/rebuild-graph`.
-- **3 new MCP tools** (10 total): `get_related_memories`, `get_memory_graph`,
-  and `consolidate_memory` (v2.1.0 — runs one consolidation cycle).
-  The existing 7 contracts are unchanged.
-- **Local web UI — the MemoryBrain Nebula** at `/ui`: one living world.
-  A single full-screen three.js scene (vendored r170 module, no CDN)
-  breathes behind the whole interface — deep space, slow gas clouds,
-  cursor-parallax star dust — and the UI floats inside it as translucent
-  glass: left project rail, `Ctrl+K` command palette, sliding glass
-  inspector, and three lenses on the same data. **Stream** (reverse-
-  chronological daily feed, server-rendered, fully usable with JS
-  disabled), **Constellation** (the memories as luminous stars joined by
-  weighted filaments, laid out in 3D by d3-force-3d *inside the world
-  itself*; click a star and the camera flies into a slowly turning glass
-  orb wrapped in the memory's own text; remembered 2D switch plus
-  automatic 2D fallback via the vendored force-graph canvas build), and
-  **Chronicle** (a horizontal time axis of sessions and handovers per
-  project). Keys `1/2/3` switch lenses. Ambience and the cursor familiar
-  each have remembered toggles in the rail; everything ambient is
-  pointer-inert, stands still under reduced-motion, and the constellation
-  keeps breathing dimly behind the other lenses. Fully offline, zero
-  telemetry; every read path stays on query-only connections.
-- **The consolidation cycle — the brain that sleeps (v2.1.0).** On demand
-  (`POST /admin/consolidate`, or the `consolidate_memory` MCP tool), the
-  brain digests what it has stored: clusters of tightly-linked memories
-  are distilled by your local LLM into **belief** memories that carry
-  `derived_from` edges back to every source (provenance, always);
-  consolidated sources sink in ranking but stay searchable; pairs of very
-  similar, coexisting facts/beliefs are flagged with `conflicts_with`
-  edges and surface in the UI for a human verdict (never auto-resolved);
-  unfinished business (TODO / "next session" / open-question lines) is
-  extracted into `open-loop` notes; and everything unrecalled for two
-  weeks decays a little in **strength** — forgetting is ranking, never
-  deletion. Retrieval reinforces: MCP fetches and inspector opens
-  strengthen a memory (Ebbinghaus, inverted). Strength sways hybrid
-  search through a bounded multiplier (`MEMORYBRAIN_STRENGTH_WEIGHT`,
-  0 disables). Beliefs auto-supersede only prior beliefs, never sources.
-  In the UI, the **☾ sleep** button in the rail runs a cycle and reports
-  what the brain dreamt up; an opt-in setting runs it automatically once
-  a day when you open the Nebula.
-- **Editing from the UI.** The Nebula can add, edit, archive and delete
-  memories and projects: "+ note" in the stage head (notes, facts,
-  references, or a text-file upload), "+ new project" in the rail, and
-  Edit / Archive / Delete actions in the inspector. All writes go through
-  `/api/ui/edit/*`, which — unlike the read-only UI endpoints — enforces
-  `X-Brain-Key` whenever `BRAIN_API_KEY` is set (the UI asks once and
-  remembers it in your browser). Guardrails: archive is the default,
-  reversible "remove"; hard delete demands typing the memory id's first 8
-  characters; a project cannot be deleted while it still holds memories.
-  Reads everywhere else remain on query-only connections.
-- **UI diagnostics.** `GET /api/ui/version` returns the build stamp baked at
-  `docker compose build` time; the same stamp appears in the UI footer and in
-  static asset URLs (automatic cache-busting — no manual `?v=` bumps).
-  `http://localhost:7741/ui/doctor` is a dependency-free diagnostics page that
-  checks every UI JSON endpoint, canvas/WebGL, pointer events, full-viewport
-  overlays, and captures JS errors — with a copy-paste report button. If the
-  UI ever misbehaves, open the doctor first and check the footer stamp matches
-  the freshly built container.
-- Rollback safety: `MEMORYBRAIN_VECTOR_BACKEND=chroma` switches back to the
-  untouched legacy store; `MEMORYBRAIN_GRAPH_ENABLED=false` disables the linker.
-
-## What's New in v0.5.0
-
-- **Semantic supersession** — Auto-archives stale memories using type-aware similarity thresholds (e.g., facts need higher confidence than sessions). Audit trail preserved; nothing is deleted.
-- **Recency decay** — Recent memories rank higher in search results. Configurable via `RECENCY_DECAY_RATE` env var.
-- **Tag + type filters** — `search_memory` gains `tags` and `type_filter` parameters for faster, more precise lookups.
-- **Multi-AI provider support** — Use Ollama (local, default), Gemini, or OpenAI-compatible endpoints for summarization and embeddings. Provider auto-selected from env vars.
-- **Versioned migrations** — Schema changes apply automatically at container startup. No manual SQL needed.
-- **`brain update` command** — One-step upgrade: pulls latest, rebuilds Docker, reinstalls hooks and skills.
-- **`delete_memory` MCP tool** — Hard delete for wrong entries (vs. supersession for stale ones).
-- **Per-project session context** — `get_startup_summary` now shows the most recent memory for each project.
-
-## AI Provider — Ollama, Gemini, or OpenAI?
-
-MemoryBrain **defaults to Ollama** (local, private, no keys needed). You can optionally switch:
-
-| Provider | Key needed? | Speed | Cost | Privacy | Setup time |
-|---|---|---|---|---|---|
-| **Ollama** (default) | ❌ No | Medium | Free | 100% local | Auto-downloads models |
-| **Gemini** | ✅ Yes (free) | ⚡ Fast | Free tier (15k/mo) | Cloud | 5 minutes |
-| **OpenAI** | ✅ Yes (paid) | ⚡ Fast | Pay per use | Cloud | 5 minutes |
-
-**Want to use Gemini?** The setup wizard will guide you through getting a free Google API key:
 ```bash
-python3 cli/brain.py setup
-# Interactive prompt: "Would you like to set up Gemini? (y/N)"
+# Health
+curl -s localhost:7741/health
+curl -s localhost:7741/readiness
+
+# Status (add -H "X-Brain-Key: …" when BRAIN_API_KEY is set)
+curl -s localhost:7741/status
+
+# Brief
+curl -s "localhost:7741/project-brief?project=my-app"
+
+# Export project to Markdown (Obsidian-friendly)
+curl -s -X GET "localhost:7741/admin/export/obsidian?project=my-app" \
+  -H "X-Brain-Key: $BRAIN_API_KEY"
+
+# Rebuild after git pull
+cd ~/memorybrain && git pull && docker compose build brain && docker compose up -d
 ```
 
-See **[GEMINI_SETUP_GUIDE.md](docs/GEMINI_SETUP_GUIDE.md)** for detailed walkthrough, why you might want it, and troubleshooting.
+**Never** `docker compose down -v` on a live install — that drops the data volume.
 
-## Architecture
+## Configuration (names only)
 
-- **FastAPI** on port 7741
-- **SQLite FTS5** for keyword search + storage
-- **ChromaDB** for semantic vector search
-- **Provider-based AI backend:** Ollama (default, local), Gemini, or OpenAI-compatible for embeddings + summarisation
-- **Hybrid search**: FTS5 keywords + ChromaDB cosine → Reciprocal Rank Fusion, with recency decay
-- **Semantic supersession engine**: Type-aware thresholds, audit trail, automatic archive on ingest
-- **Migration system**: Versioned SQL migrations in `brain/migrations/` — applied at startup, idempotent
-- **MCP SSE** at `http://localhost:7741/sse`
-- **Data**: machine-local only — not synced across machines
-- **`GET /mcp-tools`**: Reports registered MCP servers from `~/.claude.json`; called by the session-start hook
+See [`.env.example`](.env.example). Highlights:
+
+| Variable | Purpose |
+|----------|---------|
+| `BRAIN_API_KEY` | Protects writes/admin (MCP loopback stays open) |
+| `MEMORYBRAIN_AUTO_CONSOLIDATE` | Nightly light sleep |
+| `MEMORYBRAIN_RETRIEVAL_FEEDBACK_WEIGHT` | Ranking lift from chosen results |
+| `MEMORYBRAIN_VECTOR_BACKEND` | `sqlite_vec` (default) or `chroma` rollback |
+| `OLLAMA_*` / `GOOGLE_*` / `OPENAI_*` | Provider selection |
+
+## Docs
+
+| Doc | Contents |
+|-----|----------|
+| [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | Architecture & portable setup |
+| [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md) | Wire any AI |
+| [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md) | Briefs, pins, conflicts |
+| [MIGRATION.md](MIGRATION.md) | Upgrades & backups |
+| [GROK.md](GROK.md) | Grok-specific ops on this workstation |
+
+## License & philosophy
+
+Local-first, single-user, loopback-bound. Your memories stay on your machine.  
+Code is the product; **your data volume is irreplaceable** — back it up.
+
+---
+
+<p align="center">
+  <img src="docs/assets/memorybrain-logo.jpg" alt="" width="48" height="48" /><br/>
+  <sub>MemoryBrain — the brain that sleeps, and wakes up ready for every assistant.</sub>
+</p>

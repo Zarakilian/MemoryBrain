@@ -33,6 +33,12 @@ TOOL_NAMES = [
     "pin_memory",
     "unpin_memory",
     "list_pins",
+    # v2.3
+    "record_retrieval",
+    "get_timeline",
+    "get_entities",
+    "get_project_policy",
+    "set_project_policy",
 ]
 
 MEMORY_TYPE_ENUM = [
@@ -73,6 +79,18 @@ async def handle_search_memory(
     try:
         record_recall([r["id"] for r in results],
                       boost=RECALL_BOOST_SEARCH, db_path=DB_PATH)
+    except Exception:
+        pass
+    # v2.3: log impression for ranking feedback (no chosen_id yet)
+    try:
+        from ..retrieval import record_retrieval
+        record_retrieval(
+            query=query,
+            result_ids=[r["id"] for r in results if r.get("id")],
+            project=project,
+            source="search_memory",
+            db_path=DB_PATH,
+        )
     except Exception:
         pass
     return json.dumps(results, default=str)
@@ -218,9 +236,11 @@ async def handle_get_related_memories(
 
 
 async def handle_consolidate_memory(project: Optional[str] = None,
-                                    idle_days: int = 14) -> str:
+                                    idle_days: int = 14,
+                                    mode: str = "full") -> str:
     from ..consolidate import consolidate
-    report = await consolidate(project=project or None, idle_days=idle_days)
+    report = await consolidate(project=project or None, idle_days=idle_days,
+                               mode=mode or "full")
     return json.dumps(report, default=str)
 
 
@@ -296,6 +316,57 @@ async def handle_list_pins(project: str) -> str:
     from ..pins import list_pins
     return json.dumps({"project": project, "pins": list_pins(project, db_path=DB_PATH)},
                       default=str)
+
+
+async def handle_record_retrieval(
+    query: str,
+    result_ids: Optional[list] = None,
+    chosen_id: Optional[str] = None,
+    project: Optional[str] = None,
+    source: str = "mcp",
+) -> str:
+    from ..retrieval import record_retrieval
+    return json.dumps(record_retrieval(
+        query=query, result_ids=result_ids or [], chosen_id=chosen_id,
+        project=project, source=source or "mcp", db_path=DB_PATH,
+    ))
+
+
+async def handle_get_timeline(project: Optional[str] = None,
+                              days: int = 30, limit: int = 100) -> str:
+    from ..timeline import get_timeline
+    return json.dumps(get_timeline(project=project, days=days, limit=limit,
+                                   db_path=DB_PATH), default=str)
+
+
+async def handle_get_entities(project: Optional[str] = None,
+                              limit: int = 40) -> str:
+    from ..timeline import get_entities
+    return json.dumps(get_entities(project=project, limit=limit,
+                                   db_path=DB_PATH), default=str)
+
+
+async def handle_get_project_policy(project: str) -> str:
+    from ..policy import get_policy
+    return json.dumps(get_policy(project, db_path=DB_PATH), default=str)
+
+
+async def handle_set_project_policy(
+    project: str,
+    include_system: Optional[bool] = None,
+    max_brief_chars: Optional[int] = None,
+    default_tags: Optional[list] = None,
+    notes: Optional[str] = None,
+) -> str:
+    from ..policy import set_policy
+    return json.dumps(set_policy(
+        project,
+        include_system=include_system,
+        max_brief_chars=max_brief_chars,
+        default_tags=default_tags,
+        notes=notes,
+        db_path=DB_PATH,
+    ), default=str)
 
 
 # ── MCP Server wiring ─────────────────────────────────────────────────────────
@@ -416,13 +487,14 @@ async def list_tools() -> list[types.Tool]:
             description=("Run one consolidation cycle (the brain's sleep): distil "
                          "clusters into cited beliefs, flag contradictions, extract "
                          "open loops, decay unrecalled memories. Pins are not decayed. "
-                         "Additive — never deletes."),
+                         "mode=light skips LLM beliefs (nightly-safe). Additive — never deletes."),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "project": {"type": "string"},
                     "idle_days": {"type": "integer", "default": 14,
                                   "description": "Memories unrecalled this long decay a little"},
+                    "mode": {"type": "string", "enum": ["full", "light"], "default": "full"},
                 },
             },
         ),
@@ -521,6 +593,71 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["project"],
             },
         ),
+        types.Tool(
+            name="record_retrieval",
+            description=(
+                "Log a search impression and optional chosen memory id so ranking "
+                "can learn which results agents actually used."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "result_ids": {"type": "array", "items": {"type": "string"}},
+                    "chosen_id": {"type": "string"},
+                    "project": {"type": "string"},
+                    "source": {"type": "string"},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="get_timeline",
+            description="Chronological project (or global) activity: sessions, decisions, facts, beliefs, open loops.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "days": {"type": "integer", "default": 30},
+                    "limit": {"type": "integer", "default": 100},
+                },
+            },
+        ),
+        types.Tool(
+            name="get_entities",
+            description="Entity cards for a project: tags, names, services, graph entities with mention counts.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "limit": {"type": "integer", "default": 40},
+                },
+            },
+        ),
+        types.Tool(
+            name="get_project_policy",
+            description="Read per-project brief policy (include_system, max_brief_chars, notes, default_tags).",
+            inputSchema={
+                "type": "object",
+                "properties": {"project": {"type": "string"}},
+                "required": ["project"],
+            },
+        ),
+        types.Tool(
+            name="set_project_policy",
+            description="Update per-project brief policy for get_project_brief.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "include_system": {"type": "boolean"},
+                    "max_brief_chars": {"type": "integer"},
+                    "default_tags": {"type": "array", "items": {"type": "string"}},
+                    "notes": {"type": "string"},
+                },
+                "required": ["project"],
+            },
+        ),
     ]
 
 
@@ -549,7 +686,7 @@ _TOOL_ARGS = {
     "get_startup_summary":  ([], []),
     "get_related_memories": (["memory_id"], ["limit", "min_weight", "kinds", "include_archived"]),
     "get_memory_graph":     ([], ["project", "min_weight", "max_nodes", "include_archived"]),
-    "consolidate_memory":   ([], ["project", "idle_days"]),
+    "consolidate_memory":   ([], ["project", "idle_days", "mode"]),
     "get_project_brief":    (["project"], ["intent", "max_chars", "include_system", "days"]),
     "list_conflicts":       ([], ["project", "limit"]),
     "resolve_conflict":     (["winner_id", "loser_id"], []),
@@ -557,6 +694,11 @@ _TOOL_ARGS = {
     "pin_memory":           (["project", "memory_id"], ["kind", "label", "priority"]),
     "unpin_memory":         (["project", "memory_id"], []),
     "list_pins":            (["project"], []),
+    "record_retrieval":     (["query"], ["result_ids", "chosen_id", "project", "source"]),
+    "get_timeline":         ([], ["project", "days", "limit"]),
+    "get_entities":         ([], ["project", "limit"]),
+    "get_project_policy":   (["project"], []),
+    "set_project_policy":   (["project"], ["include_system", "max_brief_chars", "default_tags", "notes"]),
 }
 
 
@@ -599,6 +741,11 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         "pin_memory":           lambda a: handle_pin_memory(**a),
         "unpin_memory":         lambda a: handle_unpin_memory(**a),
         "list_pins":            lambda a: handle_list_pins(**a),
+        "record_retrieval":     lambda a: handle_record_retrieval(**a),
+        "get_timeline":         lambda a: handle_get_timeline(**a),
+        "get_entities":         lambda a: handle_get_entities(**a),
+        "get_project_policy":   lambda a: handle_get_project_policy(**a),
+        "set_project_policy":   lambda a: handle_set_project_policy(**a),
     }
     result = await handlers[name](clean)
     return [types.TextContent(type="text", text=result)]

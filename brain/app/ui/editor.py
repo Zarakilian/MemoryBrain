@@ -135,6 +135,35 @@ def resolve_conflict(body: ResolveBody):
 
 # ------------------------------------------------------------- memories
 
+# ------------------------------------------------------------- policy
+
+class PolicyBody(BaseModel):
+    project: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    include_system: bool | None = None
+    max_brief_chars: int | None = Field(default=None, ge=800, le=12000)
+    default_tags: list[str] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+@router.get("/api/ui/policy/{project}")
+def get_project_policy(project: str):
+    from ..policy import get_policy
+    return get_policy(project, db_path=DB_PATH)
+
+
+@router.put("/api/ui/edit/policy")
+def put_project_policy(body: PolicyBody):
+    from ..policy import set_policy
+    return set_policy(
+        body.project,
+        include_system=body.include_system,
+        max_brief_chars=body.max_brief_chars,
+        default_tags=body.default_tags,
+        notes=body.notes,
+        db_path=DB_PATH,
+    )
+
+
 @router.post("/api/ui/edit/memories/{memory_id}/recall")
 def recall_memory(memory_id: str):
     """Reinforcement signal from the UI: opening a memory in the inspector
