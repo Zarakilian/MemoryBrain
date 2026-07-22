@@ -75,10 +75,12 @@ async def hybrid_search(
     days: Optional[int] = None,
     tags: Optional[list] = None,
     include_history: bool = False,
+    db_path=None,
 ) -> list[dict]:
+    path = db_path or DB_PATH
     kw_results = keyword_search(
         query, limit=20, project=project, type_filter=type_filter,
-        days=days, tags=tags, include_history=include_history, db_path=DB_PATH,
+        days=days, tags=tags, include_history=include_history, db_path=path,
     )
 
     embedding = await embed(query)
@@ -91,11 +93,11 @@ async def hybrid_search(
     if type_filter:
         vec_filters["type"] = type_filter
 
-    sem_results = vec_search(embedding, n_results=20, filters=vec_filters, db_path=DB_PATH)
+    sem_results = vec_search(embedding, n_results=20, filters=vec_filters, db_path=path)
 
     candidate_ids = list({r["id"] for r in kw_results}
                          | {r["id"] for r in sem_results})
-    strengths = get_strengths(candidate_ids, db_path=DB_PATH)
+    strengths = get_strengths(candidate_ids, db_path=path)
 
     merged_ids = reciprocal_rank_fusion(kw_results, sem_results,
                                         strengths=strengths)[:limit]
@@ -106,7 +108,7 @@ async def hybrid_search(
         if id_ in kw_by_id:
             output.append(kw_by_id[id_])
         else:
-            entry = get_memory(id_, db_path=DB_PATH)
+            entry = get_memory(id_, db_path=path)
             if entry:
                 output.append({
                     "id": entry.id, "summary": entry.summary,

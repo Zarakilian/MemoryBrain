@@ -15,7 +15,7 @@ from typing import Any, Optional
 from ..storage import DB_PATH
 
 VALID_TYPES = ("session", "handover", "note", "fact", "file", "reference",
-               "belief")
+               "belief", "decision", "open_loop")
 VALID_SORTS = {
     "recent": "timestamp DESC",
     "importance": "importance DESC, timestamp DESC",

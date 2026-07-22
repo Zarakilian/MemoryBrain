@@ -6,6 +6,7 @@ from .models import MemoryEntry, Project, validate_entry
 from .storage import add_memory, delete_memory, upsert_project, archive_memory, set_supersedes, get_memory, DB_PATH
 from .vector import vec_add, vec_search, vec_update_metadata
 from .summarise import embed, summarise, score_importance
+from .write_policy import apply_write_policy
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,8 @@ SUPERSESSION_THRESHOLDS: dict[str, dict] = {
     "handover":  {"auto": 0.80, "warn": 0.70},
     "note":      {"auto": 0.90, "warn": 0.75},
     "fact":      {"auto": 0.92, "warn": 0.78},
+    "decision":  {"auto": 0.92, "warn": 0.78},  # v2.2: durable choices
+    "open_loop": {"auto": 0.88, "warn": 0.75},
     "file":      {"auto": 0.85, "warn": 0.72},
     "reference": {"auto": None, "warn": 0.80},
     "belief":    {"auto": 0.95, "warn": 0.85},
@@ -72,6 +75,10 @@ async def ingest(entry: MemoryEntry) -> MemoryEntry:
 
 async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     validate_entry(entry)
+    # v2.2 write policy: structured types, size limits, auto-tags
+    write_warnings = apply_write_policy(entry)
+    if write_warnings:
+        logger.info("write_policy %s: %s", entry.project, "; ".join(write_warnings))
 
     if not entry.summary:
         entry.summary = await summarise(entry.content)
@@ -84,6 +91,10 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     superseded_ids, potential = await _check_supersession(entry, embedding)
     entry.superseded = superseded_ids
     entry.potential_supersessions = potential
+    # Transient warnings for MCP clients (not persisted)
+    entry.potential_supersessions = potential  # keep field stable
+    # Attach warnings via a dynamic attribute consumed by MCP handlers
+    entry._write_warnings = write_warnings  # type: ignore[attr-defined]
 
     # Persist new memory
     add_memory(entry, db_path=DB_PATH)

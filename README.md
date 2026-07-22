@@ -66,16 +66,27 @@ it gives you a stable, intentional slug that won't change if you rename or move 
 | `handover` | `/handover` | Creates comprehensive session handover document → saves to MemoryBrain or file |
 | `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a reference memory so future sessions know exactly where to look |
 
-## MCP Tools available in Claude & Gemini
+## MCP Tools available in Claude, Gemini, Grok & Codex
+
+**17 tools** (v2.2 context bank). Same surface on SSE, streamable HTTP, and stdio.
 
 | Tool | Description |
 |---|---|
 | `search_memory` | Hybrid keyword+semantic search — returns summaries |
-| `get_memory` | Full content fetch by ID |
-| `add_memory` | Store a new note/fact |
+| `get_memory` | Full content fetch by ID (beliefs include source citations) |
+| `add_memory` | Store a memory (`fact`/`decision`/`open_loop`/`session`/…) |
+| `delete_memory` | Hard delete (prefer supersession for stale truths) |
 | `get_recent_context` | Recent entries by project |
 | `list_projects` | All projects + last activity |
 | `get_startup_summary` | Compact session-start injection |
+| `get_related_memories` | Graph neighbours for a memory |
+| `get_memory_graph` | Project/global memory graph |
+| `consolidate_memory` | One sleep cycle (beliefs, conflicts, decay) |
+| `get_project_brief` | **v2.2** token-budgeted multi-AI context pack |
+| `list_conflicts` / `resolve_conflict` / `dismiss_conflict` | **v2.2** contradiction workflow |
+| `pin_memory` / `unpin_memory` / `list_pins` | **v2.2** working-set pins |
+
+See [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md) and [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md).
 
 > **Session start rule:** At session start, Claude checks the auto-loaded `MEMORY.md` for a
 > `**MemoryBrain Last Active:**` timestamp. If fresh (< 7 days), it calls `get_startup_summary`

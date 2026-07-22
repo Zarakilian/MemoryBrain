@@ -11,7 +11,8 @@ def test_health_returns_ok():
     assert resp.json() == {"status": "ok"}
 
 
-def test_status_endpoint_returns_structure(tmp_db):
+def test_status_endpoint_returns_structure(tmp_db, monkeypatch):
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
     with patch("app.main.DB_PATH", tmp_db):
         with patch("app.storage.DB_PATH", tmp_db):
             resp = client.get("/status")
@@ -19,6 +20,11 @@ def test_status_endpoint_returns_structure(tmp_db):
             data = resp.json()
             assert "project_count" in data
             assert "version" in data
+            assert data["version"] == "2.2.0"
+            assert "mcp" in data
+            assert data["mcp"]["tool_count"] == 17
+            assert "get_project_brief" in data["mcp"]["tools"]
+            assert "recommended" in data["mcp"]
             assert "active_plugins" not in data
             assert "inactive_plugins" not in data
 

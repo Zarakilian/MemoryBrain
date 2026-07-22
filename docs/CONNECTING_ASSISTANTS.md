@@ -14,10 +14,16 @@ snippet lands in.
 | MCP over stdio | `docker exec -i memorybrain-brain-1 python /app/stdio_server.py` | your client only launches local MCP commands |
 | REST | `http://localhost:7741/...` | no MCP support at all |
 
-Both MCP doors expose the same 10 tools (`search_memory`, `get_memory`,
-`add_memory`, `get_recent_context`, `list_projects`, `get_startup_summary`,
-`delete_memory`, `get_related_memories`, `get_memory_graph`,
-`consolidate_memory`).
+Both MCP doors expose the same **17 tools** (v2.2 context bank):
+
+Core: `search_memory`, `get_memory`, `add_memory`, `delete_memory`,
+`get_recent_context`, `list_projects`, `get_startup_summary`,
+`get_related_memories`, `get_memory_graph`, `consolidate_memory`.
+
+Context bank: `get_project_brief`, `list_conflicts`, `resolve_conflict`,
+`dismiss_conflict`, `pin_memory`, `unpin_memory`, `list_pins`.
+
+See [CONTEXT_BANK_V2.2.md](CONTEXT_BANK_V2.2.md) for the multi-AI protocol.
 
 If your container has a different name, find it with `docker ps`
 (look for the image built from this repo).

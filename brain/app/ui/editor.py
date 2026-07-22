@@ -105,33 +105,15 @@ class ConflictBody(BaseModel):
     b_id: str = Field(min_length=1, max_length=64)
 
 
-def _conflict_edge_exists(conn, a: str, b: str) -> bool:
-    lo, hi = min(a, b), max(a, b)
-    return conn.execute(
-        """SELECT 1 FROM memory_links
-           WHERE kind = 'conflicts_with' AND src_id = ? AND dst_id = ?""",
-        (lo, hi)).fetchone() is not None
-
-
 @router.post("/api/ui/edit/conflicts/dismiss")
 def dismiss_conflict(body: ConflictBody):
-    """'Keep both' — the pair looks similar but genuinely coexists.
-    Removes ONLY the conflicts_with edge; both memories stay untouched
-    and the pair will not be re-flagged (the flagger skips known pairs
-    only while the edge exists, so dismissal deletes it and writes a
-    tombstone meta edge instead)."""
-    lo, hi = min(body.a_id, body.b_id), max(body.a_id, body.b_id)
-    with _rw() as conn:
-        if not _conflict_edge_exists(conn, lo, hi):
-            raise HTTPException(404, "No such contradiction")
-        # tombstone: same edge, weight epsilon, meta.dismissed — the
-        # consolidation flagger sees the pair as known and skips it
-        conn.execute(
-            """UPDATE memory_links SET weight = 0.01, meta = ?
-               WHERE kind = 'conflicts_with' AND src_id = ? AND dst_id = ?""",
-            (json.dumps({"dismissed": True}), lo, hi))
-        conn.commit()
-    return {"dismissed": [lo, hi]}
+    """'Keep both' — shared logic with MCP dismiss_conflict."""
+    from ..conflicts import dismiss_conflict as _dismiss
+    result = _dismiss(body.a_id, body.b_id, db_path=DB_PATH)
+    if "error" in result:
+        code = 422 if "differ" in result["error"] else 404
+        raise HTTPException(code, result["error"])
+    return result
 
 
 class ResolveBody(BaseModel):
@@ -141,28 +123,14 @@ class ResolveBody(BaseModel):
 
 @router.post("/api/ui/edit/conflicts/resolve")
 def resolve_conflict(body: ResolveBody):
-    """'This one is right' — the loser is archived (reversible, as always)
-    with superseded_by pointing at the winner, exactly like automatic
-    supersession. The pair leaves the conflict list because it only shows
-    pairs where both sides are still active."""
-    if body.winner_id == body.loser_id:
-        raise HTTPException(422, "winner and loser must differ")
-    winner = get_memory(body.winner_id, db_path=DB_PATH)
-    loser = get_memory(body.loser_id, db_path=DB_PATH)
-    if winner is None or loser is None:
-        raise HTTPException(404, "Memory not found")
-    with _rw() as conn:
-        if not _conflict_edge_exists(conn, body.winner_id, body.loser_id):
-            raise HTTPException(404, "No such contradiction")
-    from ..storage import archive_memory
-    archive_memory(body.loser_id, superseded_by=body.winner_id,
-                   db_path=DB_PATH)
-    try:
-        from ..vector import vec_update_metadata
-        vec_update_metadata(body.loser_id, {"status": "archived"})
-    except Exception:
-        logger.warning("vector status update failed for %s", body.loser_id)
-    return {"winner": body.winner_id, "archived": body.loser_id}
+    """'This one is right' — shared logic with MCP resolve_conflict."""
+    from ..conflicts import resolve_conflict as _resolve
+    result = _resolve(body.winner_id, body.loser_id, db_path=DB_PATH)
+    if "error" in result:
+        err = result["error"]
+        code = 422 if "differ" in err else 404
+        raise HTTPException(code, err)
+    return result
 
 
 # ------------------------------------------------------------- memories

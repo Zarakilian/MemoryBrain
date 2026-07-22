@@ -8,8 +8,12 @@ import uuid
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
-VALID_TYPES = {"note", "fact", "session", "handover", "file", "reference",
-               "belief"}   # belief: synthesised by the consolidation cycle
+VALID_TYPES = {
+    "note", "fact", "session", "handover", "file", "reference",
+    "belief",      # synthesised by the consolidation cycle
+    "decision",    # durable choice / policy (v2.2 write policy)
+    "open_loop",   # unfinished actionable item (v2.2)
+}
 MAX_CONTENT_LENGTH = 100_000
 MAX_TAGS = 20
 MAX_TAG_LENGTH = 100

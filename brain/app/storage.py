@@ -238,17 +238,41 @@ def record_recall(memory_ids: list[str], boost: float = RECALL_BOOST_DIRECT,
 def decay_strengths(idle_days: int = 14, factor: float = 0.9,
                     db_path: Path = DB_PATH) -> int:
     """Decay: memories nothing has recalled within idle_days lose strength
-    (floored). Called by the consolidation cycle — the brain's sleep."""
+    (floored). Called by the consolidation cycle — the brain's sleep.
+
+    v2.2: pinned memories are excluded — the working set refuses to sink.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=idle_days)).isoformat()
     with _connect(db_path) as conn:
-        cur = conn.execute(
-            """UPDATE memories
-               SET strength = max(?, strength * ?)
-               WHERE status = 'active'
-                 AND COALESCE(last_recalled, timestamp) < ?
-                 AND strength > ?""",
-            (STRENGTH_FLOOR, factor, cutoff, STRENGTH_FLOOR),
-        )
+        # project_pins may not exist on pre-005 DBs mid-migration; tolerate.
+        try:
+            pinned = {
+                r[0] for r in conn.execute(
+                    "SELECT memory_id FROM project_pins"
+                ).fetchall()
+            }
+        except sqlite3.OperationalError:
+            pinned = set()
+        if pinned:
+            placeholders = ",".join("?" * len(pinned))
+            cur = conn.execute(
+                f"""UPDATE memories
+                   SET strength = max(?, strength * ?)
+                   WHERE status = 'active'
+                     AND COALESCE(last_recalled, timestamp) < ?
+                     AND strength > ?
+                     AND id NOT IN ({placeholders})""",
+                [STRENGTH_FLOOR, factor, cutoff, STRENGTH_FLOOR, *pinned],
+            )
+        else:
+            cur = conn.execute(
+                """UPDATE memories
+                   SET strength = max(?, strength * ?)
+                   WHERE status = 'active'
+                     AND COALESCE(last_recalled, timestamp) < ?
+                     AND strength > ?""",
+                (STRENGTH_FLOOR, factor, cutoff, STRENGTH_FLOOR),
+            )
         conn.commit()
         return cur.rowcount
 

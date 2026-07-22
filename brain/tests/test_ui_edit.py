@@ -123,6 +123,9 @@ def test_hard_delete_requires_typed_confirmation(edit_client):
 
 def test_edit_endpoints_enforce_api_key(edit_client, monkeypatch):
     c, _ = edit_client
+    # Pure ASGI auth middleware reads BRAIN_API_KEY from the environment
+    # on each request (not the import-time app.auth._API_KEY snapshot).
+    monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
     monkeypatch.setattr("app.auth._API_KEY", "sekrit")
     # writes: locked without the key
     assert c.post("/api/ui/edit/projects",

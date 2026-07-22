@@ -140,7 +140,7 @@ class PureASGIAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-app = FastAPI(title="MemoryBrain", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="2.2.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 # Pure ASGI middleware first so it wraps the whole stack without body buffering.
@@ -258,14 +258,41 @@ async def readiness():
 
 @app.get("/status")
 async def status():
+    """Runtime matrix for multi-AI adapters (Grok/Claude/Codex/Gemini)."""
+    from .mcp.tools import TOOL_NAMES
+    from pathlib import Path as _P
+    stamp = ""
+    stamp_path = _P(__file__).parent / "BUILD_STAMP"
+    if stamp_path.exists():
+        try:
+            stamp = stamp_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            stamp = ""
     return {
-        "version": "2.0.0",
+        "version": "2.2.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
+        "build_stamp": stamp,
         "mcp": {
             "sse": "/sse",
             "sse_messages": "/messages/",
             "streamable_http": "/mcp",
             "stdio": "docker exec -i memorybrain-brain-1 python stdio_server.py",
+            "tool_count": len(TOOL_NAMES),
+            "tools": TOOL_NAMES,
+            "recommended": {
+                "grok": {"transport": "streamable_http", "url": "http://localhost:7741/mcp"},
+                "claude": {"transport": "sse", "url": "http://localhost:7741/sse"},
+                "codex": {
+                    "transport": "stdio",
+                    "command": "docker",
+                    "args": ["exec", "-i", "memorybrain-brain-1", "python", "stdio_server.py"],
+                },
+                "gemini": {
+                    "transport": "stdio",
+                    "command": "docker",
+                    "args": ["exec", "-i", "memorybrain-brain-1", "python", "/app/stdio_server.py"],
+                },
+            },
         },
     }
 
@@ -274,6 +301,34 @@ async def status():
 async def startup_summary():
     summary = await handle_get_startup_summary()
     return {"summary": summary}
+
+
+@app.get("/project-brief")
+async def project_brief_endpoint(
+    project: str,
+    intent: str = "",
+    max_chars: int = 3500,
+    include_system: bool = True,
+    days: int = 14,
+):
+    """REST twin of get_project_brief for non-MCP clients."""
+    from .brief import build_project_brief
+    if not project:
+        raise HTTPException(422, "project is required")
+    return await build_project_brief(
+        project=project,
+        intent=intent or None,
+        max_chars=max_chars,
+        include_system=include_system,
+        days=days,
+        db_path=DB_PATH,
+    )
+
+
+@app.get("/conflicts")
+async def conflicts_endpoint(project: str = "", limit: int = 50):
+    from .conflicts import list_conflicts
+    return list_conflicts(project=project or None, limit=limit, db_path=DB_PATH)
 
 
 @app.post("/admin/backfill-vectors")
