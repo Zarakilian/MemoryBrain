@@ -9,7 +9,9 @@ There is no separate “v2 branch” to checkout — clone `master` and you have
 
 ## License
 
-MIT — you may fork and use it freely. See [LICENSE](../LICENSE).
+**MIT** — free for individuals and companies (including commercial use).  
+See [LICENSE](../LICENSE). Optional paid support / commercial deals:
+[COMMERCIAL.md](../COMMERCIAL.md).
 
 ## What you get
 

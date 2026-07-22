@@ -201,7 +201,14 @@ git checkout master    # this is MemoryBrain 2
 
 ## License & philosophy
 
-**MIT License** — free to use, fork, modify, and ship. See [LICENSE](LICENSE).
+**MIT License** — free to use, fork, modify, and ship for everyone, including
+companies. See [LICENSE](LICENSE).
+
+**Corporations / enterprise:** you may use MemoryBrain under MIT at no cost.
+If you want paid support, an SLA, custom features, consulting, or a formal
+commercial agreement with the author, that is welcome — see
+[COMMERCIAL.md](COMMERCIAL.md). Paid deals are **optional**; they do not replace
+the free MIT license unless both parties sign something else.
 
 Local-first, single-user, loopback-bound. Your memories stay on your machine.  
 Code is the product; **your data volume is irreplaceable** — back it up.  
