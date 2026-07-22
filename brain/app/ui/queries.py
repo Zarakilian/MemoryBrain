@@ -14,7 +14,8 @@ from typing import Any, Optional
 
 from ..storage import DB_PATH
 
-VALID_TYPES = ("session", "handover", "note", "fact", "file", "reference")
+VALID_TYPES = ("session", "handover", "note", "fact", "file", "reference",
+               "belief")
 VALID_SORTS = {
     "recent": "timestamp DESC",
     "importance": "importance DESC, timestamp DESC",
@@ -187,6 +188,47 @@ def stream(conn, project: Optional[str] = None, mtype: Optional[str] = None,
         days[-1]["items"].append(m)
     next_before = rows[-1]["timestamp"] if (has_more and rows) else None
     return {"days": days, "next_before": next_before}
+
+
+# -------------------------------------------------------------- conflicts
+
+def conflicts(conn, project: Optional[str] = None,
+              limit: int = 50) -> dict[str, Any]:
+    """Unresolved contradiction pairs flagged by the consolidation cycle:
+    conflicts_with edges where BOTH sides are still active. Resolving one
+    (archive / supersede / delete) silences the pair naturally."""
+    sql = """SELECT l.src_id, l.dst_id, l.weight, l.meta,
+                    a.summary AS src_summary, a.type AS src_type,
+                    a.project AS src_project, a.timestamp AS src_timestamp,
+                    b.summary AS dst_summary, b.type AS dst_type,
+                    b.timestamp AS dst_timestamp
+             FROM memory_links l
+             JOIN memories a ON a.id = l.src_id AND a.status = 'active'
+             JOIN memories b ON b.id = l.dst_id AND b.status = 'active'
+             WHERE l.kind = 'conflicts_with'
+               AND l.weight > 0.05"""   # dismissed pairs are tombstoned low
+    params: list[Any] = []
+    if project:
+        sql += " AND a.project = ?"
+        params.append(project)
+    sql += " ORDER BY l.weight DESC LIMIT ?"
+    params.append(limit)
+    pairs = []
+    for r in _rows(conn, sql, tuple(params)):
+        try:
+            meta = json.loads(r.get("meta") or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        pairs.append({
+            "a": {"id": r["src_id"], "summary": r["src_summary"],
+                  "type": r["src_type"], "timestamp": r["src_timestamp"]},
+            "b": {"id": r["dst_id"], "summary": r["dst_summary"],
+                  "type": r["dst_type"], "timestamp": r["dst_timestamp"]},
+            "project": r["src_project"],
+            "similarity": r["weight"],
+            "flagged_at": meta.get("flagged_at"),
+        })
+    return {"pairs": pairs, "total": len(pairs)}
 
 
 # ---------------------------------------------------------------- chronicle

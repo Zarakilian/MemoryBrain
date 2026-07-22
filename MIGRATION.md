@@ -155,3 +155,13 @@ directory to reclaim disk: `docker compose exec brain rm -rf /app/data/chroma`
 |---|---|---|
 | `MEMORYBRAIN_VECTOR_BACKEND` | `sqlite_vec` | `chroma` = legacy rollback |
 | `MEMORYBRAIN_GRAPH_ENABLED` | `true` | `false` disables the linker |
+
+
+## v2.1.0 — the consolidation cycle
+
+Migration `004_consolidation.sql` applies automatically at startup: adds
+`strength` (default 1.0) and `last_recalled` to `memories`, and rebuilds
+`memory_links` to accept the new `derived_from` and `conflicts_with` edge
+kinds. No action needed; fully backward compatible — existing memories
+start at strength 1.0 and behave exactly as before until a consolidation
+run or a recall touches them.

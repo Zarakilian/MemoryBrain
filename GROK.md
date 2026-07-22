@@ -164,6 +164,7 @@ Known project slugs in this corpus (pre-migration sample):
 |------|---------|
 | `get_related_memories` | Graph neighbours with link-kind explanations |
 | `get_memory_graph` | Full node/edge payload for a project (or global) |
+| `consolidate_memory` | v2.1: one sleep cycle — beliefs, conflicts, loops, decay |
 
 ### HTTP fallbacks (when MCP handshake fails)
 

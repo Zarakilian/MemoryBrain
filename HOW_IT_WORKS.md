@@ -580,7 +580,18 @@ same storage/ingest layer as the MCP tools, and carries server-side
 guardrails (archive as the reversible default, typed confirmation for hard
 delete, no deleting projects that still hold memories).
 
-**MCP surface** grows from 7 to 9 tools with `get_related_memories` (ranked
+**MCP surface** grows from 7 to 10 tools with `get_related_memories` (ranked
 neighbours with per-kind explanations, direction included — backlinks are the
-`in` direction) and `get_memory_graph` (node/edge payload, per project or
-global). Existing tool contracts are byte-compatible with v0.5.x.
+`in` direction), `get_memory_graph` (node/edge payload, per project or
+global), and `consolidate_memory` (v2.1.0 — one consolidation cycle: distil
+clusters into cited beliefs, flag contradictions, extract open loops, decay
+the unrecalled; same behaviour as `POST /admin/consolidate`). Existing tool
+contracts are byte-compatible with v0.5.x.
+
+**The consolidation cycle (v2.1.0)** is the layer above storage: memories
+carry a `strength` that retrieval reinforces (MCP fetches, search hits, UI
+inspector opens) and consolidation decays when nothing has recalled them —
+bounded, floored, never deleting. Beliefs are typed `belief`, cite their
+sources via `derived_from` edges, and may auto-supersede only prior beliefs.
+Suspiciously-similar coexisting facts/beliefs get `conflicts_with` edges and
+wait for a human verdict in the UI (rail chip → review modal).

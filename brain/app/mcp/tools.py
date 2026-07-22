@@ -3,7 +3,10 @@ from typing import Optional
 from mcp.server import Server
 import mcp.types as types
 
-from ..storage import get_memory, get_recent, list_projects as storage_list_projects, delete_memory, get_project_recent_state, DB_PATH
+from ..storage import (get_memory, get_recent,
+                       list_projects as storage_list_projects, delete_memory,
+                       get_project_recent_state, record_recall,
+                       RECALL_BOOST_SEARCH, DB_PATH)
 from ..search import hybrid_search
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry
@@ -25,6 +28,12 @@ async def handle_search_memory(
         query, limit=limit, project=project, type_filter=type_filter,
         days=days, tags=tags, include_history=include_history,
     )
+    # reinforcement: being surfaced counts, lightly
+    try:
+        record_recall([r["id"] for r in results],
+                      boost=RECALL_BOOST_SEARCH, db_path=DB_PATH)
+    except Exception:
+        pass
     return json.dumps(results, default=str)
 
 
@@ -32,6 +41,11 @@ async def handle_get_memory(memory_id: str) -> str:
     entry = get_memory(memory_id, db_path=DB_PATH)
     if entry is None:
         return json.dumps({"error": f"Memory {memory_id} not found"})
+    # reinforcement: an explicit fetch is a strong signal
+    try:
+        record_recall([memory_id], db_path=DB_PATH)
+    except Exception:
+        pass
     return json.dumps({
         "id": entry.id, "content": entry.content, "summary": entry.summary,
         "type": entry.type, "project": entry.project, "tags": entry.tags,
@@ -126,6 +140,13 @@ async def handle_get_related_memories(
     if result is None:
         return json.dumps({"error": f"Memory {memory_id} not found"})
     return json.dumps(result, default=str)
+
+
+async def handle_consolidate_memory(project: Optional[str] = None,
+                                    idle_days: int = 14) -> str:
+    from ..consolidate import consolidate
+    report = await consolidate(project=project or None, idle_days=idle_days)
+    return json.dumps(report, default=str)
 
 
 async def handle_get_memory_graph(
@@ -246,6 +267,22 @@ async def list_tools() -> list[types.Tool]:
                 },
             },
         ),
+        types.Tool(
+            name="consolidate_memory",
+            description=("Run one consolidation cycle (the brain's sleep): distil "
+                         "clusters of related memories into cited 'belief' memories, "
+                         "flag contradictions, extract open loops, and decay "
+                         "unrecalled memories. Additive — never deletes. "
+                         "Optionally scoped to one project."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "idle_days": {"type": "integer", "default": 14,
+                                  "description": "Memories unrecalled this long decay a little"},
+                },
+            },
+        ),
     ]
 
 
@@ -274,6 +311,7 @@ _TOOL_ARGS = {
     "get_startup_summary": ([], []),
     "get_related_memories": (["memory_id"], ["limit", "min_weight", "kinds", "include_archived"]),
     "get_memory_graph":     ([], ["project", "min_weight", "max_nodes", "include_archived"]),
+    "consolidate_memory":   ([], ["project", "idle_days"]),
 }
 
 
@@ -302,6 +340,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         "get_startup_summary": lambda _: handle_get_startup_summary(),
         "get_related_memories": lambda a: handle_get_related_memories(**a),
         "get_memory_graph":     lambda a: handle_get_memory_graph(**a),
+        "consolidate_memory":   lambda a: handle_consolidate_memory(**a),
     }
     result = await handlers[name](clean)
     return [types.TextContent(type="text", text=result)]

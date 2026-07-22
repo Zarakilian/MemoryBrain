@@ -241,3 +241,12 @@ def api_memory(memory_id: str, conn: sqlite3.Connection = Depends(db)):
     if mem is None:
         raise HTTPException(404, "Memory not found")
     return mem
+
+
+@router.get("/api/ui/conflicts")
+def api_conflicts(project: str | None = None,
+                  limit: int = Query(50, ge=1, le=200),
+                  conn: sqlite3.Connection = Depends(db)):
+    """Unresolved contradiction pairs flagged by the consolidation cycle.
+    Additive endpoint (v2.1.0); read-only like all /api/ui reads."""
+    return q.conflicts(conn, project=project, limit=limit)

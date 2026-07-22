@@ -1,10 +1,30 @@
 import os
+import re
 from abc import ABC, abstractmethod
 from typing import Optional
 from urllib.parse import urlparse
 
 
 SHORT_CONTENT_THRESHOLD = 400
+
+# Chat models love announcing themselves ("Here is a summary of the
+# feedback in 3 sentences:") — which then gets STORED and becomes the
+# first thing every label, tooltip and stream row says. Strip such
+# preambles from every summarise() result, and repair old ones during
+# consolidation (see consolidate._repair_summaries).
+_PREAMBLE_RE = re.compile(
+    r"^(?:okay[,.!]?\s+|sure[,.!]?\s+)?"
+    r"(?:here(?:'s| is| are)\s+(?:a |the |your )?"
+    r"(?:concise |brief |short )?"
+    r"(?:summary|distillation|overview|breakdown|synopsis)"
+    r"[^:\n]{0,80}[:.]\s*)+",
+    re.IGNORECASE)
+
+
+def strip_preamble(text: str) -> str:
+    """Remove LLM throat-clearing from the front of a summary."""
+    cleaned = _PREAMBLE_RE.sub("", (text or "").strip()).strip()
+    return cleaned if cleaned else (text or "").strip()
 
 
 class SummariseProvider(ABC):
@@ -46,7 +66,8 @@ class OllamaProvider(SummariseProvider):
             return verbatim
         prompt = (
             f"Summarise the following in {max_sentences} sentences. "
-            f"Be specific — include key facts, names, and numbers:\n\n{content[:4000]}"
+            f"Be specific — include key facts, names, and numbers. "
+            f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{content[:4000]}"
         )
         response = await self._client.generate(model=self._summarise_model, prompt=prompt)
         return response["response"].strip()
@@ -85,7 +106,8 @@ class GeminiProvider(SummariseProvider):
         import asyncio
         prompt = (
             f"Summarise the following in {max_sentences} sentences. "
-            f"Be specific — include key facts, names, and numbers:\n\n{content[:4000]}"
+            f"Be specific — include key facts, names, and numbers. "
+            f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{content[:4000]}"
         )
         response = await asyncio.to_thread(
             self._client.models.generate_content, model=self._summarise_model, contents=prompt
@@ -132,7 +154,8 @@ class OpenAIProvider(SummariseProvider):
                 "role": "user",
                 "content": (
                     f"Summarise the following in {max_sentences} sentences. "
-                    f"Be specific — include key facts, names, and numbers:\n\n{content[:4000]}"
+                    f"Be specific — include key facts, names, and numbers. "
+                    f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{content[:4000]}"
                 ),
             }],
             max_tokens=200,
@@ -191,7 +214,7 @@ async def embed(text: str) -> list[float]:
 
 
 async def summarise(content: str, max_sentences: int = 3) -> str:
-    return await _get_provider().summarise(content, max_sentences)
+    return strip_preamble(await _get_provider().summarise(content, max_sentences))
 
 
 async def score_importance(content: str) -> int:

@@ -233,8 +233,11 @@ body[data-lens="constellation"] #world { pointer-events: auto; }
 .t-handover  { background: #e8a48f; }
 .t-note      { background: #9fd4a8; }
 .t-fact      { background: #e8d48f; }
-.t-file      { background: #bda8e8; }
+.t-file     { background: #bda8e8; }
 .t-reference { background: #8fe0d4; }
+.t-belief    { background: #ffe3a1;    /* consolidated truth: gold, like the
+                                          head stars it becomes */
+               box-shadow: 0 0 8px -2px #ffe3a1; }
 .badge.archived { background: #7a5c6c; color: var(--ink); }
 
 .imp { flex: none; font: 9px var(--mono); letter-spacing: 2px; color: var(--ink-faint); }
@@ -271,6 +274,12 @@ body[data-lens="constellation"] #world { pointer-events: auto; }
 }
 .lens-controls output { font: 11px var(--mono); }
 .lens-status { color: var(--ink-faint); font: 11px var(--mono); }
+.cst-legend { display: inline-flex; align-items: center; gap: 5px;
+              color: var(--ink-faint); font: 10px var(--mono); }
+.cst-legend i {
+  width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  background: var(--lc); box-shadow: 0 0 6px -1px var(--lc); margin-left: 7px;
+}
 
 /* the 3D constellation renders in #world; this host is only the 2D
    fallback's canvas, and then it becomes glass */
@@ -310,6 +319,10 @@ body[data-lens="constellation"] #world { pointer-events: auto; }
   box-shadow: 0 6px 24px rgba(2, 4, 10, .55);
 }
 .cst-tip .quiet { color: var(--ink-faint); margin: 2px 0 0; }
+.cst-tip .tip-head { margin: 0 0 5px; color: var(--ink-dim); font-size: 11px; }
+.cst-tip .tip-project { color: var(--ink); font-weight: 650; }
+.cst-tip .tip-crown { color: var(--star); }
+.cst-tip .badge { font-size: 9px; padding: 0 6px; vertical-align: 1px; }
 
 /* ------------------------------------------------------------ inspector
    The same glass as everything else — darker, closer, never a foreign
@@ -541,13 +554,15 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 }
 @keyframes fam-scuttle { from { transform: rotate(-5deg); } to { transform: rotate(5deg); } }
 
-/* the silk line the spider swings from — starlight, thin but unmissable */
-.fam-web {
-  position: absolute; height: 2px; pointer-events: none !important;
-  transform-origin: left center; border-radius: 1px;
-  background: linear-gradient(90deg, rgba(230, 240, 255, .9),
-                              rgba(190, 214, 255, .45));
-  filter: drop-shadow(0 0 4px rgba(160, 195, 240, .6));
+/* the silk the spider swings from — an SVG path so it sags and bows */
+.fam-web-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none !important; overflow: visible;
+}
+.fam-web-path {
+  fill: none; stroke: rgba(222, 236, 255, .8); stroke-width: 1.6;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 4px rgba(160, 195, 240, .55));
 }
 
 .fam-print {
@@ -561,6 +576,46 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
   background: none; border: 1px solid var(--glass-edge); border-radius: 8px;
   color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px; cursor: pointer;
 }
+#conflicts-chip {
+  background: rgba(255, 217, 138, .08);
+  border: 1px solid rgba(255, 217, 138, .35); border-radius: 8px;
+  color: var(--star); font: 11px var(--sans); padding: 3px 9px;
+  cursor: pointer; text-align: left;
+}
+#conflicts-chip:hover { background: rgba(255, 217, 138, .16); }
+#sleep-btn {
+  background: none; border: 1px solid var(--glass-edge); border-radius: 8px;
+  color: var(--ink-dim); font: 11px var(--sans); padding: 3px 9px;
+  cursor: pointer; text-align: left;
+}
+#sleep-btn:hover { color: var(--star); border-color: var(--star-dim); }
+#sleep-btn:disabled { opacity: .6; cursor: progress; }
+.sleep-report { margin: 8px 0 12px; padding-left: 20px; color: var(--ink); }
+.sleep-report li { margin: 3px 0; font-size: 13px; }
+.sleep-report strong { color: var(--star); }
+.conflict-pair {
+  border: 1px solid var(--glass-edge); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.conflict-side { padding: 4px 2px; }
+.conflict-text {
+  padding: 4px 6px; border-radius: 7px; cursor: pointer; font-size: 13px;
+}
+.conflict-text:hover { background: var(--glass-hi); }
+.conflict-date { font: 10px var(--mono); color: var(--ink-faint); margin-left: 8px; }
+.conflict-vs {
+  font: 10px var(--mono); color: var(--star-dim);
+  padding: 4px 6px; letter-spacing: .05em;
+}
+.conflict-btns { display: flex; gap: 8px; padding: 2px 6px 4px; }
+.conflict-btns button {
+  background: var(--glass-hi); color: var(--ink);
+  border: 1px solid var(--glass-edge); border-radius: 7px;
+  padding: 3px 10px; font: 11px var(--sans); cursor: pointer;
+}
+.conflict-btns button:hover { border-color: var(--star-dim); color: var(--star); }
+.conflict-both { justify-content: center; margin-top: 4px; }
+.conflict-done { text-align: center; padding: 8px 0; }
 #familiar-toggle:hover, #ambience-toggle:hover {
   color: var(--star); border-color: var(--star-dim);
 }

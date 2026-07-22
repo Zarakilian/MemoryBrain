@@ -19,6 +19,7 @@ SUPERSESSION_THRESHOLDS: dict[str, dict] = {
     "fact":      {"auto": 0.92, "warn": 0.78},
     "file":      {"auto": 0.85, "warn": 0.72},
     "reference": {"auto": None, "warn": 0.80},
+    "belief":    {"auto": 0.95, "warn": 0.85},
 }
 _DEFAULT_THRESHOLDS = {"auto": 0.90, "warn": 0.75}
 
@@ -36,6 +37,12 @@ async def _check_supersession(
         filters={"project": entry.project, "status": "active"},
         db_path=DB_PATH,
     )
+
+    # A belief is distilled FROM raw memories, so it naturally embeds close
+    # to them — it must only ever supersede prior beliefs, never sources.
+    if entry.type == "belief":
+        candidates = [c for c in candidates
+                      if c["metadata"].get("type") == "belief"]
 
     superseded: list[str] = []
     potential: list[dict] = []

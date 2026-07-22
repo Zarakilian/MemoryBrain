@@ -28,7 +28,8 @@ from pydantic import BaseModel, Field
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry, Project
 from ..storage import (DB_PATH, add_memory, delete_memory, get_memory,
-                       get_memory_by_content_hash, get_project, upsert_project)
+                       get_memory_by_content_hash, get_project, record_recall,
+                       upsert_project)
 from ..vector import vec_delete
 from . import queries as q
 
@@ -78,7 +79,103 @@ def delete_project(slug: str):
     return {"deleted": True, "slug": slug}
 
 
+# ------------------------------------------------------- consolidation
+
+class SleepBody(BaseModel):
+    project: str = Field(default="", max_length=64)
+    idle_days: int = Field(default=14, ge=1, le=365)
+
+
+@router.post("/api/ui/edit/consolidate")
+async def run_consolidation(body: SleepBody | None = None):
+    """The Sleep button: run one consolidation cycle from the UI. Same
+    behaviour as POST /admin/consolidate, but living under /api/ui/edit/*
+    so the UI keeps exactly one write path and one auth story
+    (X-Brain-Key when set)."""
+    from ..consolidate import consolidate
+    body = body or SleepBody()
+    return await consolidate(project=body.project or None,
+                             idle_days=body.idle_days)
+
+
+# ----------------------------------------------------------- conflicts
+
+class ConflictBody(BaseModel):
+    a_id: str = Field(min_length=1, max_length=64)
+    b_id: str = Field(min_length=1, max_length=64)
+
+
+def _conflict_edge_exists(conn, a: str, b: str) -> bool:
+    lo, hi = min(a, b), max(a, b)
+    return conn.execute(
+        """SELECT 1 FROM memory_links
+           WHERE kind = 'conflicts_with' AND src_id = ? AND dst_id = ?""",
+        (lo, hi)).fetchone() is not None
+
+
+@router.post("/api/ui/edit/conflicts/dismiss")
+def dismiss_conflict(body: ConflictBody):
+    """'Keep both' — the pair looks similar but genuinely coexists.
+    Removes ONLY the conflicts_with edge; both memories stay untouched
+    and the pair will not be re-flagged (the flagger skips known pairs
+    only while the edge exists, so dismissal deletes it and writes a
+    tombstone meta edge instead)."""
+    lo, hi = min(body.a_id, body.b_id), max(body.a_id, body.b_id)
+    with _rw() as conn:
+        if not _conflict_edge_exists(conn, lo, hi):
+            raise HTTPException(404, "No such contradiction")
+        # tombstone: same edge, weight epsilon, meta.dismissed — the
+        # consolidation flagger sees the pair as known and skips it
+        conn.execute(
+            """UPDATE memory_links SET weight = 0.01, meta = ?
+               WHERE kind = 'conflicts_with' AND src_id = ? AND dst_id = ?""",
+            (json.dumps({"dismissed": True}), lo, hi))
+        conn.commit()
+    return {"dismissed": [lo, hi]}
+
+
+class ResolveBody(BaseModel):
+    winner_id: str = Field(min_length=1, max_length=64)
+    loser_id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/api/ui/edit/conflicts/resolve")
+def resolve_conflict(body: ResolveBody):
+    """'This one is right' — the loser is archived (reversible, as always)
+    with superseded_by pointing at the winner, exactly like automatic
+    supersession. The pair leaves the conflict list because it only shows
+    pairs where both sides are still active."""
+    if body.winner_id == body.loser_id:
+        raise HTTPException(422, "winner and loser must differ")
+    winner = get_memory(body.winner_id, db_path=DB_PATH)
+    loser = get_memory(body.loser_id, db_path=DB_PATH)
+    if winner is None or loser is None:
+        raise HTTPException(404, "Memory not found")
+    with _rw() as conn:
+        if not _conflict_edge_exists(conn, body.winner_id, body.loser_id):
+            raise HTTPException(404, "No such contradiction")
+    from ..storage import archive_memory
+    archive_memory(body.loser_id, superseded_by=body.winner_id,
+                   db_path=DB_PATH)
+    try:
+        from ..vector import vec_update_metadata
+        vec_update_metadata(body.loser_id, {"status": "archived"})
+    except Exception:
+        logger.warning("vector status update failed for %s", body.loser_id)
+    return {"winner": body.winner_id, "archived": body.loser_id}
+
+
 # ------------------------------------------------------------- memories
+
+@router.post("/api/ui/edit/memories/{memory_id}/recall")
+def recall_memory(memory_id: str):
+    """Reinforcement signal from the UI: opening a memory in the inspector
+    counts as a recall (fire-and-forget from the client; a lost signal is
+    harmless). The only 'write' is strength/last_recalled."""
+    if record_recall([memory_id], db_path=DB_PATH) == 0:
+        raise HTTPException(404, "Memory not found")
+    return {"recalled": memory_id}
+
 
 class NoteBody(BaseModel):
     content: str = Field(min_length=1, max_length=200_000)
