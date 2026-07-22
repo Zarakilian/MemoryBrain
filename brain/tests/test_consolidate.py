@@ -266,6 +266,39 @@ async def test_open_loops_extracted_once(cdb, mock_ollama):
     assert second["projects"][0]["loops"] == 0
 
 
+@pytest.mark.asyncio
+async def test_oversized_component_is_split(cdb, mock_ollama):
+    """A 30-memory connected blob must NOT become one 30-source belief:
+    it splits (tighter thresholds, then time chunks) into ≤12-source
+    truths."""
+    ids = [f"big{i:02d}" for i in range(30)]
+    _seed_cluster(cdb, ids)          # one chain: all weight-1.0 edges
+    with patch("app.ingest_pipeline._check_supersession", NO_SUPERSESSION):
+        report = await consolidate(project="proj-a", db_path=cdb)
+    beliefs = report["projects"][0]["beliefs"]
+    assert len(beliefs) == 3                      # 12 + 12 + 6
+    assert all(b["sources"] <= 12 for b in beliefs)
+    assert sum(b["sources"] for b in beliefs) == 30
+
+
+@pytest.mark.asyncio
+async def test_bloated_beliefs_are_retired(cdb, mock_ollama):
+    """Beliefs from before the size cap get archived on the next sleep."""
+    upsert_project(Project(slug="proj-a", name="A"), db_path=cdb)
+    add_memory(_mem("fat", type_="belief"), db_path=cdb)
+    src_ids = [f"s{i:02d}" for i in range(13)]
+    for s in src_ids:
+        add_memory(_mem(s), db_path=cdb)
+    _write_edges([{"src": "fat", "dst": s, "kind": "derived_from",
+                   "weight": 1.0, "directed": 1, "meta": {}}
+                  for s in src_ids], cdb)
+    with patch("app.ingest_pipeline._check_supersession", NO_SUPERSESSION):
+        report = await consolidate(project="proj-a", db_path=cdb)
+    assert report["projects"][0]["beliefs_retired"] == 1
+    from app.storage import get_memory
+    assert get_memory("fat", db_path=cdb).status == "archived"
+
+
 # --------------------------------------------------------- summary hygiene
 
 def test_strip_preamble_variants():
@@ -381,6 +414,54 @@ def test_ui_sleep_endpoint_requires_key_when_set(api_client, monkeypatch):
     r = api_client.post("/api/ui/edit/consolidate", json={},
                         headers={"X-Brain-Key": "sekrit"})
     assert r.status_code == 200
+
+
+def _flag_pair(db, a="c1", b="c2"):
+    upsert_project(Project(slug="proj-a", name="A"), db_path=db)
+    add_memory(_mem(a, type_="fact"), db_path=db)
+    add_memory(_mem(b, type_="fact"), db_path=db)
+    _write_edges([{"src": min(a, b), "dst": max(a, b),
+                   "kind": "conflicts_with", "weight": 0.85, "directed": 0,
+                   "meta": {"cos_sim": 0.85}}], db)
+
+
+def test_conflict_dismiss_keeps_both_and_stays_silenced(api_client, cdb):
+    _flag_pair(cdb)
+    r = api_client.post("/api/ui/edit/conflicts/dismiss",
+                        json={"a_id": "c1", "b_id": "c2"})
+    assert r.status_code == 200
+    assert api_client.get("/api/ui/conflicts").json()["total"] == 0
+    from app.storage import get_memory, _connect
+    assert get_memory("c1", db_path=cdb).status == "active"
+    assert get_memory("c2", db_path=cdb).status == "active"
+    # the tombstone stays, so the flagger will never re-raise the pair
+    with _connect(cdb) as conn:
+        row = conn.execute("""SELECT weight FROM memory_links
+                              WHERE kind='conflicts_with'""").fetchone()
+    assert row is not None and row["weight"] == pytest.approx(0.01)
+    # dismissing again: gone from the list, edge already tombstoned
+    assert api_client.post("/api/ui/edit/conflicts/dismiss",
+                           json={"a_id": "c1", "b_id": "c2"}).status_code == 200
+
+
+def test_conflict_resolve_archives_the_loser(api_client, cdb):
+    _flag_pair(cdb)
+    r = api_client.post("/api/ui/edit/conflicts/resolve",
+                        json={"winner_id": "c1", "loser_id": "c2"})
+    assert r.status_code == 200
+    from app.storage import get_memory
+    loser = get_memory("c2", db_path=cdb)
+    assert loser.status == "archived"
+    assert loser.superseded_by == "c1"
+    assert get_memory("c1", db_path=cdb).status == "active"
+    assert api_client.get("/api/ui/conflicts").json()["total"] == 0
+    # guardrails
+    assert api_client.post("/api/ui/edit/conflicts/resolve",
+                           json={"winner_id": "c1", "loser_id": "c1"}
+                           ).status_code == 422
+    assert api_client.post("/api/ui/edit/conflicts/resolve",
+                           json={"winner_id": "c1", "loser_id": "nope"}
+                           ).status_code == 404
 
 
 def test_ui_recall_endpoint(api_client, cdb):

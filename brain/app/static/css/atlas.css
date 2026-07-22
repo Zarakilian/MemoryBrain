@@ -597,14 +597,25 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
   border: 1px solid var(--glass-edge); border-radius: 10px;
   padding: 10px 12px; margin-bottom: 10px;
 }
-.conflict-side {
-  padding: 5px 6px; border-radius: 7px; cursor: pointer; font-size: 13px;
+.conflict-side { padding: 4px 2px; }
+.conflict-text {
+  padding: 4px 6px; border-radius: 7px; cursor: pointer; font-size: 13px;
 }
-.conflict-side:hover { background: var(--glass-hi); }
+.conflict-text:hover { background: var(--glass-hi); }
+.conflict-date { font: 10px var(--mono); color: var(--ink-faint); margin-left: 8px; }
 .conflict-vs {
   font: 10px var(--mono); color: var(--star-dim);
-  padding: 2px 6px; letter-spacing: .05em;
+  padding: 4px 6px; letter-spacing: .05em;
 }
+.conflict-btns { display: flex; gap: 8px; padding: 2px 6px 4px; }
+.conflict-btns button {
+  background: var(--glass-hi); color: var(--ink);
+  border: 1px solid var(--glass-edge); border-radius: 7px;
+  padding: 3px 10px; font: 11px var(--sans); cursor: pointer;
+}
+.conflict-btns button:hover { border-color: var(--star-dim); color: var(--star); }
+.conflict-both { justify-content: center; margin-top: 4px; }
+.conflict-done { text-align: center; padding: 8px 0; }
 #familiar-toggle:hover, #ambience-toggle:hover {
   color: var(--star); border-color: var(--star-dim);
 }

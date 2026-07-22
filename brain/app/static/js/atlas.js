@@ -135,51 +135,19 @@ window.addEventListener("DOMContentLoaded", function () {
 
 /* ---------------------------------------------------------- conflicts
    The consolidation cycle flags contradictions; the brain never resolves
-   them silently. A chip appears when any await a human verdict. */
+   them silently. The chip counts them; editor.js owns the review modal
+   (it has the write path for the verdicts). */
 (function () {
   var chip = document.getElementById("conflicts-chip");
   if (!chip) return;
-  var data = null;
 
   function openConflicts() {
-    if (!data || !data.pairs.length) return;
-    var veil = document.createElement("div");
-    veil.className = "modal-veil";
-    var esc = Atlas.esc;
-    var h = ['<div class="modal-card" role="dialog" aria-label="Contradictions">',
-      "<h2>⚡ Unresolved contradictions</h2>",
-      '<p class="quiet">The consolidation cycle found memories that look like ',
-      "they disagree. Open a side, then Edit / Archive the one that is wrong — ",
-      "resolving either silences the pair.</p>"];
-    data.pairs.forEach(function (p) {
-      h.push('<div class="conflict-pair">',
-        '<div class="conflict-side" data-id="' + esc(p.a.id) + '">'
-          + '<span class="badge t-' + esc(p.a.type) + '">' + esc(p.a.type) + "</span> "
-          + esc(p.a.summary || p.a.id) + "</div>",
-        '<div class="conflict-vs">⚡ ' + (p.similarity * 100).toFixed(0)
-          + "% similar · " + esc(p.project || "") + "</div>",
-        '<div class="conflict-side" data-id="' + esc(p.b.id) + '">'
-          + '<span class="badge t-' + esc(p.b.type) + '">' + esc(p.b.type) + "</span> "
-          + esc(p.b.summary || p.b.id) + "</div>",
-        "</div>");
-    });
-    h.push('<div class="modal-actions"><button type="button" class="m-cancel">Close</button></div></div>');
-    veil.innerHTML = h.join("");
-    function close() { veil.remove(); document.removeEventListener("keydown", onEsc, true); }
-    function onEsc(ev) { if (ev.key === "Escape") { ev.stopPropagation(); close(); } }
-    veil.addEventListener("pointerdown", function (ev) { if (ev.target === veil) close(); });
-    veil.querySelector(".m-cancel").addEventListener("click", close);
-    veil.addEventListener("click", function (ev) {
-      var side = ev.target.closest(".conflict-side");
-      if (side) { close(); Atlas.inspect(side.dataset.id, null); }
-    });
-    document.addEventListener("keydown", onEsc, true);
-    document.body.appendChild(veil);
+    document.dispatchEvent(new CustomEvent("atlas:conflicts-open"));
   }
-
   chip.addEventListener("click", openConflicts);
 
-  window.addEventListener("DOMContentLoaded", async function () {
+  async function refresh() {
+    var data;
     try {
       data = await Atlas.getJSON("/api/ui/conflicts?limit=50");
     } catch (e) { return; }
@@ -187,10 +155,16 @@ window.addEventListener("DOMContentLoaded", function () {
       chip.textContent = "⚡ " + data.total + " contradiction"
         + (data.total === 1 ? "" : "s");
       chip.removeAttribute("hidden");
-      Atlas.extraCommands = (Atlas.extraCommands || []).concat([
-        { kind: "brain", label: "Contradictions: review", run: openConflicts },
-      ]);
+    } else {
+      chip.setAttribute("hidden", "");
     }
+  }
+  document.addEventListener("atlas:conflicts-changed", refresh);
+  window.addEventListener("DOMContentLoaded", function () {
+    refresh();
+    Atlas.extraCommands = (Atlas.extraCommands || []).concat([
+      { kind: "brain", label: "Contradictions: review", run: openConflicts },
+    ]);
   });
 })();
 

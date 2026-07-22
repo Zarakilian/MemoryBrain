@@ -623,6 +623,41 @@ if (renderer) {
       return;
     }
     if (graph.sim) graph.sim.stop();
+
+    /* nine projects must read as nine systems: each project is assigned
+       its own direction in the Space (golden-angle spiral, deterministic
+       by sorted order) and its head is drawn toward that anchor. Members
+       follow their head via the ring force below. */
+    var projectList = [];
+    graph.nodes.forEach(function (n) {
+      var p = n.project || "";
+      if (projectList.indexOf(p) < 0) projectList.push(p);
+    });
+    projectList.sort();
+    var anchors = {};
+    var GA = Math.PI * (3 - Math.sqrt(5));
+    projectList.forEach(function (p, i) {
+      if (projectList.length === 1) { anchors[p] = null; return; }
+      var t = (i + 0.5) / projectList.length;
+      var y = 1 - 2 * t, r = Math.sqrt(Math.max(0, 1 - y * y));
+      anchors[p] = { x: Math.cos(GA * i) * r, y: y * 0.7,
+                     z: Math.sin(GA * i) * r };
+    });
+    var anchorR = Math.max(120, 40 * Math.sqrt(graph.nodes.length));
+
+    function anchorForce(alpha) {
+      var k = 0.05 * alpha;
+      for (var i = 0; i < graph.nodes.length; i++) {
+        var n = graph.nodes[i];
+        var a = anchors[n.project || ""];
+        if (!a) continue;
+        var kk = (n._head === n) ? k * 2.2 : k * 0.35;
+        n.vx += (a.x * anchorR - n.x) * kk;
+        n.vy += (a.y * anchorR - n.y) * kk;
+        n.vz += (a.z * anchorR - n.z) * kk;
+      }
+    }
+
     /* the hierarchy force: children seek a ring around their project's
        head — level 1 close, deeper levels further out */
     function hierarchyForce(alpha) {
@@ -649,6 +684,7 @@ if (renderer) {
       .force("charge", window.d3.forceManyBody()
         .strength(function (n) { return n._head === n ? -520 : -110; }))
       .force("hierarchy", hierarchyForce)
+      .force("anchor", anchorForce)
       .force("center", window.d3.forceCenter(0, 0, 0))
       .stop();
     if (reduced) {                     // settle synchronously, render a still

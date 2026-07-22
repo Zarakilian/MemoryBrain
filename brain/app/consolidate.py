@@ -48,6 +48,10 @@ logger = logging.getLogger(__name__)
 # Clustering: edges at or above this combined weight bind a cluster.
 CLUSTER_MIN_WEIGHT = 0.30
 MIN_CLUSTER_SIZE = 3
+MAX_CLUSTER_SOURCES = 12     # a belief distilled from 45 memories is mush,
+                             # and its hub-degree eats the constellation:
+                             # oversized components get SPLIT (tighter edge
+                             # thresholds first, then time-ordered chunks)
 MAX_CLUSTERS_PER_PROJECT = 5
 MAX_CORPUS_CHARS = 6000
 SOURCE_DAMP = 0.8            # consolidated sources sink a little
@@ -83,15 +87,8 @@ def _active_rows(conn, project: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def _clusters(conn, member_ids: set[str]) -> list[list[str]]:
-    """Connected components over the existing memory graph, restricted to
-    the given ids and to organic edge kinds above the weight floor."""
-    edges = conn.execute(
-        """SELECT src_id, dst_id FROM memory_links_all
-           WHERE weight >= ? AND kind IN
-             ('semantic','tag','reference','session_chain')""",
-        (CLUSTER_MIN_WEIGHT,),
-    ).fetchall()
+def _components(member_ids: set[str], edges: list[tuple],
+                min_weight: float) -> list[list[str]]:
     parent = {m: m for m in member_ids}
 
     def find(x):
@@ -100,9 +97,8 @@ def _clusters(conn, member_ids: set[str]) -> list[list[str]]:
             x = parent[x]
         return x
 
-    for e in edges:
-        a, b = e["src_id"], e["dst_id"]
-        if a in parent and b in parent:
+    for a, b, w in edges:
+        if w >= min_weight and a in parent and b in parent:
             ra, rb = find(a), find(b)
             if ra != rb:
                 parent[ra] = rb
@@ -110,9 +106,69 @@ def _clusters(conn, member_ids: set[str]) -> list[list[str]]:
     groups: dict[str, list[str]] = {}
     for m in member_ids:
         groups.setdefault(find(m), []).append(m)
-    out = [g for g in groups.values() if len(g) >= MIN_CLUSTER_SIZE]
+    return list(groups.values())
+
+
+def _split_oversized(group: list[str], edges: list[tuple],
+                     rows_by_id: dict, min_weight: float) -> list[list[str]]:
+    """A component bigger than MAX_CLUSTER_SOURCES is not one truth.
+    Tighten the edge threshold until it falls apart; whatever refuses to
+    split gets chunked in time order."""
+    if len(group) <= MAX_CLUSTER_SOURCES:
+        return [group]
+    if min_weight < 0.85:
+        out = []
+        for sub in _components(set(group), edges, min_weight + 0.15):
+            out.extend(_split_oversized(sub, edges, rows_by_id,
+                                        min_weight + 0.15))
+        return out
+    ordered = sorted(group, key=lambda m: rows_by_id[m]["timestamp"])
+    return [ordered[i:i + MAX_CLUSTER_SOURCES]
+            for i in range(0, len(ordered), MAX_CLUSTER_SOURCES)]
+
+
+def _clusters(conn, member_ids: set[str],
+              rows_by_id: dict) -> list[list[str]]:
+    """Connected components over the existing memory graph, restricted to
+    the given ids and to organic edge kinds above the weight floor —
+    then split down to human-sized truths."""
+    edges = [(e["src_id"], e["dst_id"], e["weight"]) for e in conn.execute(
+        """SELECT src_id, dst_id, weight FROM memory_links_all
+           WHERE weight >= ? AND kind IN
+             ('semantic','tag','reference','session_chain')""",
+        (CLUSTER_MIN_WEIGHT,),
+    ).fetchall()]
+    out = []
+    for g in _components(member_ids, edges, CLUSTER_MIN_WEIGHT):
+        if len(g) < MIN_CLUSTER_SIZE:
+            continue
+        for sub in _split_oversized(g, edges, rows_by_id, CLUSTER_MIN_WEIGHT):
+            if len(sub) >= MIN_CLUSTER_SIZE:
+                out.append(sub)
     out.sort(key=len, reverse=True)
     return out[:MAX_CLUSTERS_PER_PROJECT]
+
+
+def _retire_bloated_beliefs(conn, project: str, db_path: Path) -> int:
+    """Beliefs from before the size cap (derived from more sources than
+    MAX_CLUSTER_SOURCES) are mush AND hub-monsters in the constellation.
+    Archive them; the next clusters re-distil their ground properly."""
+    from .storage import archive_memory
+    rows = conn.execute(
+        """SELECT b.id, COUNT(*) AS n FROM memories b
+           JOIN memory_links l ON l.src_id = b.id AND l.kind = 'derived_from'
+           WHERE b.status = 'active' AND b.type = 'belief' AND b.project = ?
+           GROUP BY b.id HAVING n > ?""",
+        (project, MAX_CLUSTER_SOURCES),
+    ).fetchall()
+    for r in rows:
+        archive_memory(r["id"], superseded_by=None, db_path=db_path)
+        try:
+            from .vector import vec_update_metadata
+            vec_update_metadata(r["id"], {"status": "archived"})
+        except Exception:
+            pass
+    return len(rows)
 
 
 def _corpus(rows_by_id: dict, cluster: list[str]) -> str:
@@ -268,11 +324,14 @@ async def consolidate(project: Optional[str] = None,
 
     for proj in projects:
         entry_report = {"project": proj, "beliefs": [], "conflicts": 0,
-                        "loops": 0, "skipped_clusters": 0}
+                        "loops": 0, "skipped_clusters": 0,
+                        "beliefs_retired": 0}
         with _connect(db_path) as conn:
+            entry_report["beliefs_retired"] = _retire_bloated_beliefs(
+                conn, proj, db_path)
             rows = _active_rows(conn, proj)
             rows_by_id = {r["id"]: r for r in rows}
-            clusters = _clusters(conn, set(rows_by_id))
+            clusters = _clusters(conn, set(rows_by_id), rows_by_id)
             skip = [c for c in clusters if _already_believed(conn, c)]
             todo = [c for c in clusters if c not in skip]
             entry_report["skipped_clusters"] = len(skip)

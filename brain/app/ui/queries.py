@@ -205,7 +205,8 @@ def conflicts(conn, project: Optional[str] = None,
              FROM memory_links l
              JOIN memories a ON a.id = l.src_id AND a.status = 'active'
              JOIN memories b ON b.id = l.dst_id AND b.status = 'active'
-             WHERE l.kind = 'conflicts_with'"""
+             WHERE l.kind = 'conflicts_with'
+               AND l.weight > 0.05"""   # dismissed pairs are tombstoned low
     params: list[Any] = []
     if project:
         sql += " AND a.project = ?"

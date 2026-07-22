@@ -291,6 +291,103 @@
     });
   });
 
+  /* ----------------------------- contradictions --------------------------
+     The review modal with VERDICT buttons. For each flagged pair:
+       ✓ keep this  — the other side is archived (reversible) with
+                      superseded_by set, exactly like auto-supersession
+       ✎ edit       — fix the wording of one side
+       ⇢ open       — read it in the inspector first
+       both are right — not a contradiction; dismissed permanently */
+  async function openConflicts() {
+    var data;
+    try {
+      var res = await fetch("/api/ui/conflicts?limit=50", { cache: "no-store" });
+      data = await res.json();
+    } catch (e) { return; }
+    if (!data.pairs.length) {
+      modal("⚡ Contradictions", '<p class="quiet">None await your verdict — '
+        + "the brain is at peace.</p>", []);
+      return;
+    }
+
+    var h = ['<p class="quiet">The sleep cycle found memories that look like '
+      + "they disagree. You decide — the brain never resolves these "
+      + "silently. Archiving is always reversible.</p>"];
+    data.pairs.forEach(function (p, i) {
+      function side(m, other) {
+        return '<div class="conflict-side">'
+          + '<div class="conflict-text" data-open="' + esc(m.id) + '">'
+          + '<span class="badge t-' + esc(m.type) + '">' + esc(m.type) + "</span> "
+          + esc((window.Atlas ? Atlas.cleanSummary(m.summary) : m.summary) || m.id)
+          + '<span class="conflict-date">' + esc((m.timestamp || "").slice(0, 10))
+          + "</span></div>"
+          + '<div class="conflict-btns">'
+          + '<button type="button" data-keep="' + esc(m.id) + '" data-lose="'
+          + esc(other.id) + '" data-pair="' + i + '">✓ keep this</button>'
+          + '<button type="button" data-edit="' + esc(m.id) + '">✎ edit</button>'
+          + "</div></div>";
+      }
+      h.push('<div class="conflict-pair" data-pair="' + i + '">',
+        side(p.a, p.b),
+        '<div class="conflict-vs">⚡ ' + (p.similarity * 100).toFixed(0)
+          + "% similar · " + esc(p.project || "") + "</div>",
+        side(p.b, p.a),
+        '<div class="conflict-btns conflict-both">'
+        + '<button type="button" data-both-a="' + esc(p.a.id)
+        + '" data-both-b="' + esc(p.b.id) + '" data-pair="' + i
+        + '">✚ both are right — keep separate</button></div>',
+        "</div>");
+    });
+
+    var m = modal("⚡ " + data.total + " contradiction"
+      + (data.total === 1 ? "" : "s") + " await your verdict", h.join(""), []);
+
+    function done(pairIndex, note) {
+      var el = m.el.querySelector('.conflict-pair[data-pair="' + pairIndex + '"]');
+      if (el) el.innerHTML = '<p class="quiet conflict-done">' + esc(note) + "</p>";
+      document.dispatchEvent(new CustomEvent("atlas:conflicts-changed"));
+    }
+
+    m.el.addEventListener("click", async function (ev) {
+      var b = ev.target.closest("button");
+      if (b && b.dataset.keep) {
+        b.textContent = "…";
+        var res1 = await writeFetch("/api/ui/edit/conflicts/resolve", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ winner_id: b.dataset.keep,
+                                 loser_id: b.dataset.lose }),
+        });
+        if (res1.ok) done(b.dataset.pair, "Kept one; the other is archived "
+          + "(reversible from its page).");
+        else b.textContent = "failed — retry";
+        return;
+      }
+      if (b && b.dataset.bothA) {
+        b.textContent = "…";
+        var res2 = await writeFetch("/api/ui/edit/conflicts/dismiss", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ a_id: b.dataset.bothA, b_id: b.dataset.bothB }),
+        });
+        if (res2.ok) done(b.dataset.pair, "Kept both — this pair will not be "
+          + "flagged again.");
+        else b.textContent = "failed — retry";
+        return;
+      }
+      if (b && b.dataset.edit) {
+        try {
+          var mem = await fetch("/api/ui/memories/"
+            + encodeURIComponent(b.dataset.edit)).then(function (r) { return r.json(); });
+          m.close();
+          openEditMemory(mem);
+        } catch (e) {}
+        return;
+      }
+      var open = ev.target.closest(".conflict-text");
+      if (open && window.Atlas) { m.close(); Atlas.inspect(open.dataset.open, null); }
+    });
+  }
+  document.addEventListener("atlas:conflicts-open", openConflicts);
+
   /* -------------------------------- sleep --------------------------------
      The consolidation cycle, one click away. Runs the cycle (can take a
      while — the local LLM writes the beliefs), then shows what the brain
