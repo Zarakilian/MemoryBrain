@@ -40,17 +40,29 @@ It is **not** a full Obsidian replacement. It is the brain your AIs share across
 
 ## Quick start
 
+**New here?** Start with the full first-run guide: **[docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)**  
+(prerequisites, verify steps, multi-AI wiring, backup, troubleshooting).
+
 ```bash
-git clone https://github.com/Zarakilian/MemoryBrain ~/memorybrain
+git clone https://github.com/Zarakilian/MemoryBrain.git ~/memorybrain
 cd ~/memorybrain
+# master = MemoryBrain 2.x (there is no separate v2 branch to checkout)
+git checkout master
 cp .env.example .env
 # One command: Docker, models, MCP, hooks, skills
 python3 cli/brain.py setup --auto-detect
 ```
 
+**Requirements:** Docker Desktop (or Compose v2), Git, ~4–8 GB free disk; Python 3.11+ recommended for `brain setup`.
+
 Open **http://localhost:7741/ui** · MCP SSE **http://localhost:7741/sse** · Grok HTTP **http://localhost:7741/mcp**
 
-Full guide: [HOW_IT_WORKS.md](HOW_IT_WORKS.md) · AI install prompts: [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) · Connect any assistant: [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md)
+| Doc | For |
+|-----|-----|
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | First-time install & verify |
+| [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | Architecture & portable setup |
+| [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) | Let an AI drive install/migrate |
+| [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md) | Claude / Grok / Codex / Gemini / REST |
 
 ## Architecture (short)
 
@@ -173,10 +185,24 @@ See [`.env.example`](.env.example). Highlights:
 | [MIGRATION.md](MIGRATION.md) | Upgrades & backups |
 | [GROK.md](GROK.md) | Grok-specific ops on this workstation |
 
+## Branch & version policy
+
+| Ref | Meaning |
+|-----|---------|
+| **`master`** (default) | **Only active branch** — MemoryBrain **2.x** (current: 2.3.0) |
+| Tags `v2.x.x` | Releases |
+| Old feature branches | Fully merged and removed; do not checkout `feature/memorybrain-2.0` |
+
+```bash
+git clone https://github.com/Zarakilian/MemoryBrain.git
+git checkout master    # this is MemoryBrain 2
+```
+
 ## License & philosophy
 
 Local-first, single-user, loopback-bound. Your memories stay on your machine.  
-Code is the product; **your data volume is irreplaceable** — back it up.
+Code is the product; **your data volume is irreplaceable** — back it up.  
+**Never** `docker compose down -v` on a machine you care about.
 
 ---
 

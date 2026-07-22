@@ -42,8 +42,9 @@ It replaces flat `MEMORY.md` files with searchable, project-scoped, durable memo
 | Status | `GET http://localhost:7741/status` |
 | Readiness | `GET http://localhost:7741/readiness` |
 
-**GitHub `master` is now v2.0.0** (merge commit `f2a4a35`, 2026-07-17).  
-Historical feature branch: `feature/memorybrain-2.0`. Pre-merge production was **v0.5.0**.
+**GitHub `master` is the only active branch** (MemoryBrain 2.x; v2.3.0+).  
+Historical `feature/memorybrain-2.0` and `merge-to-main` were fully merged and deleted.  
+Pre-2.0 production was **v0.5.0**.
 
 ---
 

@@ -2,8 +2,12 @@
 
 Copy-paste prompts for having **any AI assistant** (Claude, Gemini, ChatGPT,
 Copilot, a local model — anything that can run shell commands or guide you
-through them) perform a MemoryBrain install or a v0.5.x → v2.0.0 migration
+through them) perform a MemoryBrain install or a v0.5.x → **2.x** migration
 safely.
+
+**Default branch is `master` (MemoryBrain 2.x).** Do not instruct the assistant
+to checkout `feature/memorybrain-2.0` — that line is fully merged into `master`.
+New users should follow [GETTING_STARTED.md](GETTING_STARTED.md) after install.
 
 The prompts are deliberately strict. They assume nothing about the model:
 every command, every expected output, and every stop condition is spelled
@@ -49,7 +53,8 @@ STEPS
    EXPECT: all four print versions. If Docker is missing or the daemon is
    not running, STOP and tell me what to install/start first.
 2. Clone:
-     git clone https://github.com/Zarakilian/MemoryBrain ~/memorybrain
+     git clone https://github.com/Zarakilian/MemoryBrain.git ~/memorybrain
+     cd ~/memorybrain && git checkout master
      cd ~/memorybrain
    EXPECT: clone completes; directory contains docker-compose.yml, brain/,
    cli/, README.md. (If I already chose a different directory, use mine.)
