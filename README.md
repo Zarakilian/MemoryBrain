@@ -14,6 +14,7 @@
   <img alt="Version" src="https://img.shields.io/badge/version-2.3.0-ffd98a?style=flat-square" />
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-22-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
 </p>
 
 ---
@@ -199,6 +200,8 @@ git checkout master    # this is MemoryBrain 2
 ```
 
 ## License & philosophy
+
+**MIT License** — free to use, fork, modify, and ship. See [LICENSE](LICENSE).
 
 Local-first, single-user, loopback-bound. Your memories stay on your machine.  
 Code is the product; **your data volume is irreplaceable** — back it up.  

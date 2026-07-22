@@ -7,6 +7,10 @@ There is no separate “v2 branch” to checkout — clone `master` and you have
 
 ---
 
+## License
+
+MIT — you may fork and use it freely. See [LICENSE](../LICENSE).
+
 ## What you get
 
 - A **local** memory service on `127.0.0.1:7741` (not exposed to the internet)
