@@ -113,7 +113,7 @@ for name, status in checks.items():
 lines.append('')
 
 ollama_ok = all(checks.get(k) == 'ok' for k in ('ollama', 'embedding_model', 'summary_model'))
-chroma_ok = checks.get('chromadb') == 'ok'
+chroma_ok = checks.get('vector_store', checks.get('chromadb')) == 'ok'
 
 if not ollama_ok:
     lines.append('  Available:    read + keyword search (no Ollama needed)')
