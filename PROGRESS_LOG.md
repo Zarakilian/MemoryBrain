@@ -1,31 +1,43 @@
 # MemoryBrain — Progress Log
 
-**READ THIS FIRST at the start of every session.**
+**READ THIS FIRST at the start of every session.** Prefer MemoryBrain MCP over this file when Brain is healthy.
 
 ---
 
-## Status: v0.4.0 — FULLY OPERATIONAL ✅
+## Status: v2.3.1 — OPERATIONAL (2026-08-01)
 
-**GitHub:** https://github.com/Zarakilian/MemoryBrain
-**Latest tag:** `v0.4.0` (Session 9 changes committed — not re-tagged, no version bump)
-**Tests:** 109 passing
-**Docker:** Running (named volume), healthy, models pulled, /readiness endpoint live
-**MCP registered:** `http://localhost:7741/sse`
-**Hooks installed:** session-start + pre-compact
-**Skills installed:** `log-everything` (/log-everything in Claude)
-**Next action:** None — fully operational. Use `/log-everything` to save sessions.
+**GitHub:** https://github.com/Zarakilian/MemoryBrain  
+**Latest tag:** `v2.3.1` @ `4d5e004`  
+**Live install:** `C:\Users\Miguel\memorybrain` (same SHA)  
+**Dev clone:** `C:\git\_git\MemoryBrain`  
+**Docker:** brain + ollama up; `/readiness` all ok; version **2.3.1**; **22 MCP tools**  
+**Auto-sleep:** `MEMORYBRAIN_AUTO_CONSOLIDATE=true` (light mode, hour UTC 3); first light cycle ran on enable  
+**MCP:** Grok streamable HTTP `/mcp` · Claude SSE `/sse` · Codex stdio  
+**Next action:** None required. Optional: resolve BBB conflicts (8 flagged on light sleep), Dad UAT later today.
+
+---
+
+### [2026-08-01] - v2.3.1 release, auto-sleep on, multi-AI setup verified
+**Category**: Configuration | Improvement  
+**Status**: Completed  
+**Description**: Reviewed remote MemoryBrain 2.x updates (`ec8b058` vector_store readiness hook + MIT/docs). Pulled into dev and live. Clarified multi-AI transports in docs/hooks. Closed BBB Codex AI-assist open request (Miguel waiting Dad second UAT). Enabled nightly light auto-sleep. Released and tagged **v2.3.1**; rebuilt live brain container.  
+**Files Modified**: `hooks/session-ingest.sh`, `docs/CONNECTING_ASSISTANTS.md`, `CODEX.md`, `GROK.md`, `VERSION`, `brain/app/main.py`, `README.md`, `docs/GETTING_STARTED.md`; host: live `.env` auto-sleep vars, `~/.claude/hooks/*`, `~/.grok/rules/memorybrain-session.md`, `~/.codex/AGENTS.md`  
+**Commits / tags**: `cda3a9a` docs+hooks; `4d5e004` + tag `v2.3.1`  
+**Build Verification**: readiness ready; status version 2.3.1 tools=22; scheduler.enabled=true; grok mcp doctor OK; codex mcp stdio OK; light consolidate last_run 2026-08-01T07:56:49Z  
+**Notes**: Do not `docker compose down -v` on live. Scheduler is light-only (`FULL=false`). BBB AI-assist open IDs deleted; closed notes tagged status:done.
 
 ---
 
 ## IMMEDIATE NEXT STEP
 
-None. MemoryBrain is registered and tested. In any Claude session:
-- Session startup auto-injects Brain summary + next-session notes
-- `/log-everything` saves session to Brain and captures next-session plan
-- `search_memory`, `add_memory`, `list_projects`, `get_recent_context` available as MCP tools
+None for MemoryBrain core. In any assistant session:
+- Grok: `get_startup_summary` + `get_project_brief` via `/mcp`
+- Codex: same tools via stdio Docker MCP
+- Claude: SSE + session-start hooks
 
-**Possible future work:**
-- Add new memory types or search capabilities
+**Optional later:**
+- Resolve open conflicts (baby-bee-blossom has several from light sleep)
+- Nightly full sleep only if you want LLM beliefs (`MEMORYBRAIN_AUTO_CONSOLIDATE_FULL=true`)
 
 ---
 
