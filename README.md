@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.3.0-ffd98a?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-2.3.1-ffd98a?style=flat-square" />
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-22-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
@@ -111,6 +111,11 @@ Assistants ──MCP/REST──► MemoryBrain (loopback :7741)
 
 ## What's new
 
+### v2.3.1 — multi-AI transport clarity + hook hardening
+- Session-ingest readiness accepts modern `vector_store` (legacy `chromadb` still works)
+- Connecting-assistants docs: streamable HTTP `/mcp` (Grok), SSE (Claude), stdio (Codex)
+- CODEX/GROK guides aligned with recommended transports from `/status`
+
 ### v2.3.0 — ops, feedback, bridges
 - **Nightly light auto-sleep** (`MEMORYBRAIN_AUTO_CONSOLIDATE=true`) — repair, conflicts, loops, decay; optional full LLM beliefs
 - **`record_retrieval`** + ranking feedback from chosen results
@@ -190,7 +195,7 @@ See [`.env.example`](.env.example). Highlights:
 
 | Ref | Meaning |
 |-----|---------|
-| **`master`** (default) | **Only active branch** — MemoryBrain **2.x** (current: 2.3.0) |
+| **`master`** (default) | **Only active branch** — MemoryBrain **2.x** (current: 2.3.1) |
 | Tags `v2.x.x` | Releases |
 | Old feature branches | Fully merged and removed; do not checkout `feature/memorybrain-2.0` |
 

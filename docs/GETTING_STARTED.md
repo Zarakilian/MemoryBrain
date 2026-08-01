@@ -2,7 +2,7 @@
 
 This page is for **someone who just found the repo** and wants a working local brain for their AI assistants. No prior project history required.
 
-**Current line of development:** MemoryBrain **2.x** on the default branch `master` (v2.3.0+).  
+**Current line of development:** MemoryBrain **2.x** on the default branch `master` (v2.3.1+).  
 There is no separate “v2 branch” to checkout — clone `master` and you have MemoryBrain 2.
 
 ---
@@ -216,5 +216,5 @@ Doctor UI: http://localhost:7741/ui/doctor
 
 - **`master`** — only active line. MemoryBrain 2.x lives here.  
 - Feature work → short-lived branches → merge to `master` → delete branch.  
-- Release tags: `v2.3.0`, etc.  
+- Release tags: `v2.3.1`, `v2.3.0`, etc.  
 - Historical branches (`feature/memorybrain-2.0`, etc.) are removed once fully merged.

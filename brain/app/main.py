@@ -159,7 +159,7 @@ class PureASGIAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-app = FastAPI(title="MemoryBrain", version="2.3.0", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="2.3.1", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 # Pure ASGI middleware first so it wraps the whole stack without body buffering.
@@ -289,7 +289,7 @@ async def status():
             stamp = ""
     from .scheduler import scheduler_status
     return {
-        "version": "2.3.0",
+        "version": "2.3.1",
         "project_count": len(list_projects(db_path=DB_PATH)),
         "build_stamp": stamp,
         "scheduler": scheduler_status(db_path=DB_PATH),
