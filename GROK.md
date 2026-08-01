@@ -1,10 +1,10 @@
 # GROK.md — MemoryBrain Operating Guide for Grok
 
-**Last Updated:** 2026-07-17  
+**Last Updated:** 2026-08-01  
 **Assistant:** Grok (xAI Grok Build)  
 **Project slug:** `memorybrain` (see `.brainproject`)  
 **GitHub:** https://github.com/Zarakilian/MemoryBrain  
-**Purpose:** Authoritative Grok-facing context for this repo, the live install, multi-AI MCP wiring, and the v2.0 migration.
+**Purpose:** Authoritative Grok-facing context for this repo, the live install, multi-AI MCP wiring, and MemoryBrain 2.x ops.
 
 > Grok does **not** auto-load this file by name. Read it when working on MemoryBrain itself, when debugging MCP/memory, or when resuming migration/ops work.
 
@@ -15,7 +15,7 @@
 Local, **passive**, single-user memory service for AI assistants (Claude Code, Grok, Gemini/Antigravity, Codex, etc.).
 
 - **Stack:** FastAPI + SQLite (FTS5 + **sqlite-vec** in v2) + Ollama (default embeddings/summaries)
-- **Transport:** MCP over SSE at `http://localhost:7741/sse` (stdio via Docker wrapper for Gemini)
+- **Transport:** Streamable HTTP `/mcp` (Grok), classic SSE `/sse` (Claude), stdio via Docker (Codex/Gemini)
 - **Role:** Stores only what assistants save via `add_memory` / ingest APIs — no polling of external systems
 - **Human UI (v2):** MemoryBrain Atlas at http://localhost:7741/ui
 

@@ -1,15 +1,15 @@
 # CODEX.md — MemoryBrain for OpenAI Codex
 
-**Last Updated:** 2026-07-17  
+**Last Updated:** 2026-08-01  
 **Companion to:** [`GROK.md`](GROK.md), [`AGENTS.md`](AGENTS.md)
 
 ## Why Codex is different
 
 | Client | MCP transport |
 |--------|----------------|
-| Claude Code | SSE `http://localhost:7741/sse` |
-| Grok | SSE `http://localhost:7741/sse` + `X-Brain-Key` header |
-| **Codex** | **stdio only for MemoryBrain** — Codex supports stdio + streamable HTTP, **not** classic SSE |
+| Claude Code | Classic SSE `http://localhost:7741/sse` |
+| Grok | Streamable HTTP `http://localhost:7741/mcp` |
+| **Codex** | **stdio** via Docker — Codex supports stdio + streamable HTTP, **not** classic SSE |
 
 ## Working config (`~/.codex/config.toml`)
 

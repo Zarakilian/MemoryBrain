@@ -9,13 +9,16 @@ brain — Claude, Codex, Gemini, Grok, Kimi, Cline, local models, or whatever
 ships next. Nothing here is assistant-specific except the config file the
 snippet lands in.
 
-## The three doors
+## The four doors
 
 | Door | Address | Use when |
 |---|---|---|
-| MCP over SSE | `http://localhost:7741/sse` | your client supports remote/SSE MCP servers |
-| MCP over stdio | `docker exec -i memorybrain-brain-1 python /app/stdio_server.py` | your client only launches local MCP commands |
+| MCP streamable HTTP | `http://localhost:7741/mcp` | clients that speak MCP over HTTP (preferred for **Grok**) |
+| MCP over SSE | `http://localhost:7741/sse` | classic remote/SSE MCP (**Claude Code**) |
+| MCP over stdio | `docker exec -i memorybrain-brain-1 python /app/stdio_server.py` | clients that only launch local commands (**Codex**, Gemini, many IDEs) |
 | REST | `http://localhost:7741/...` | no MCP support at all |
+
+Do not point Grok at `/sse` — Grok POSTs initialize to the URL and classic SSE returns 405.
 
 Both MCP doors expose the same **22 tools** (v2.3):
 
@@ -66,7 +69,19 @@ the same fields in TOML). Use whichever door your client supports:
 ```
 
 ```jsonc
-// SSE form — for clients that take a server URL
+// Streamable HTTP — preferred for Grok Build
+{
+  "mcpServers": {
+    "memorybrain": {
+      "url": "http://localhost:7741/mcp",
+      "type": "http"
+    }
+  }
+}
+```
+
+```jsonc
+// Classic SSE — Claude Code and similar remote/SSE clients
 {
   "mcpServers": {
     "memorybrain": { "url": "http://localhost:7741/sse" }
@@ -74,12 +89,26 @@ the same fields in TOML). Use whichever door your client supports:
 }
 ```
 
-TOML equivalent (Codex-style config):
+TOML (Codex — stdio):
 
 ```toml
 [mcp_servers.memorybrain]
 command = "docker"
-args = ["exec", "-i", "memorybrain-brain-1", "python", "/app/stdio_server.py"]
+args = ["exec", "-i", "memorybrain-brain-1", "python", "stdio_server.py"]
+startup_timeout_sec = 45.0
+tool_timeout_sec = 180.0
+enabled = true
+```
+
+TOML (Grok — streamable HTTP):
+
+```toml
+[mcp_servers.memorybrain]
+url = "http://localhost:7741/mcp"
+type = "http"
+enabled = true
+startup_timeout_sec = 45
+tool_timeout_sec = 180
 ```
 
 Consult your assistant's own MCP documentation for the config file location —

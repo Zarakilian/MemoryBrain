@@ -113,14 +113,15 @@ for name, status in checks.items():
 lines.append('')
 
 ollama_ok = all(checks.get(k) == 'ok' for k in ('ollama', 'embedding_model', 'summary_model'))
-chroma_ok = checks.get('vector_store', checks.get('chromadb')) == 'ok'
+# Prefer modern key; fall back to legacy chromadb mirror from /readiness.
+vector_ok = checks.get('vector_store', checks.get('chromadb')) == 'ok'
 
 if not ollama_ok:
     lines.append('  Available:    read + keyword search (no Ollama needed)')
     lines.append('  Unavailable:  add_memory, semantic search')
     lines.append('')
     lines.append('  Fix Ollama:')
-elif not chroma_ok:
+elif not vector_ok:
     lines.append('  Available:    read + keyword search + add_memory')
     lines.append('  Unavailable:  semantic search')
 
