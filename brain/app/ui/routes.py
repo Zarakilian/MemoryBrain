@@ -267,3 +267,48 @@ def api_entities(project: str | None = None,
     """Entity cards: tags, names, services (v2.3)."""
     from ..timeline import get_entities
     return get_entities(project=project, limit=limit)
+
+
+# ------------------------------------------------- Synapse / agents (v2.4)
+
+@router.get("/ui/agents", response_class=HTMLResponse)
+def agents_page(request: Request, project: str | None = None,
+                days: int = Query(90, ge=1, le=365),
+                conn: sqlite3.Connection = Depends(db)):
+    """Synapse page: multi-AI analytics + the agent interaction network."""
+    projects = q.all_projects(conn)
+    proj = next((p for p in projects if p["slug"] == project), None)
+    if project and proj is None:
+        raise HTTPException(404, f"Unknown project: {project}")
+    return templates.TemplateResponse(request, "agents.html", {
+        "stats": q.stats(conn),
+        "projects": projects,
+        "current": proj,
+        "days": days,
+        "agents_page": True,
+    }, headers=_NO_STORE)
+
+
+@router.get("/api/ui/agents/stats")
+def api_agent_stats(project: str | None = None,
+                    days: int = Query(90, ge=1, le=365)):
+    """Per-agent usage totals and per-project shares (read-only)."""
+    from ..exchange import agent_stats
+    return agent_stats(project=project or None, days=days)
+
+
+@router.get("/api/ui/agents/network")
+def api_agent_network(project: str | None = None,
+                      days: int = Query(90, ge=1, le=365)):
+    """Agent interaction graph for the Synapse view (read-only)."""
+    from ..exchange import agent_network
+    return agent_network(project=project or None, days=days)
+
+
+@router.get("/api/ui/agents/threads")
+def api_agent_threads(project: str | None = None, status: str | None = None,
+                      limit: int = Query(50, ge=1, le=200)):
+    """Recent collaboration threads for the Synapse page (read-only)."""
+    from ..exchange import list_threads
+    return list_threads(project=project or None, status=status or None,
+                        limit=limit)

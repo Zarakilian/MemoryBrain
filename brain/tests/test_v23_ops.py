@@ -114,11 +114,13 @@ async def test_mcp_tool_count_v23():
     from app.mcp.tools import list_tools, TOOL_NAMES
     tools = await list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 22
+    assert len(names) == 29   # 22 (v2.3) + 7 Synapse tools (v2.4)
     assert set(names) == set(TOOL_NAMES)
     assert "record_retrieval" in names
     assert "get_timeline" in names
     assert "set_project_policy" in names
+    assert "post_task" in names
+    assert "get_agent_inbox" in names
 
 
 @pytest.mark.asyncio

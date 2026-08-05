@@ -7,7 +7,10 @@
 ## Non-negotiable session start
 
 1. Prefer **MemoryBrain MCP** (`memorybrain` server) when available.
-2. Call in order: `get_startup_summary` → `get_recent_context` (project=`memorybrain` or current workspace slug).
+2. Call in order: `get_startup_summary` → `get_agent_inbox(agent="<me>")` →
+   `get_recent_context` (project=`memorybrain` or current workspace slug).
+   Identify as exactly one of `claude` / `grok` / `codex` / `gemini`.
+   If the inbox has threads, surface them to the user before starting work.
 3. If MCP handshake fails: use HTTP `http://localhost:7741` (`/status`, `/readiness`, `/startup-summary`, `/next-session`, `/ingest/*`).
 4. Do **not** load stale `PROGRESS_LOG.md` as primary memory when Brain is healthy.
 5. **Never log secrets** (`.env`, `BRAIN_API_KEY`, tokens).
@@ -27,6 +30,18 @@
   `consolidate_memory` (run the consolidation cycle — beliefs, conflicts,
   open loops, decay).
 
+## Agent-to-agent collaboration (Synapse, v2.4)
+
+- Other agents may hand you work via exchange threads — that's what the inbox
+  call surfaces. Full protocol: `skills/agent-exchange/SKILL.md`,
+  design: `docs/AGENT_EXCHANGE.md`.
+- Handing off: save substance with `add_memory` first, then
+  `post_task(kind="review"/"task"/…, to_agent="codex"/…, refs=[memory ids])`.
+  Refs over blobs — never paste whole files into thread bodies.
+- Always pass `source="<me>"` on `add_memory` so the ⚡ Agents analytics
+  (`/ui/agents`) attribute your work correctly.
+
 ## End of session
 
 Use Grok skill **log-everything** (or stock Claude `/log-everything`) so sessions land in MemoryBrain.
+If you finished (or started) work another agent should pick up, post or reply to the exchange thread before ending.

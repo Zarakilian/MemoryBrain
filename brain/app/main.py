@@ -159,7 +159,7 @@ class PureASGIAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-app = FastAPI(title="MemoryBrain", version="2.3.1", lifespan=lifespan)
+app = FastAPI(title="MemoryBrain", version="2.4.0", lifespan=lifespan)
 sse_transport = SseServerTransport("/messages/")
 
 # Pure ASGI middleware first so it wraps the whole stack without body buffering.
@@ -289,7 +289,7 @@ async def status():
             stamp = ""
     from .scheduler import scheduler_status
     return {
-        "version": "2.3.1",
+        "version": "2.4.0",
         "project_count": len(list_projects(db_path=DB_PATH)),
         "build_stamp": stamp,
         "scheduler": scheduler_status(db_path=DB_PATH),
@@ -452,6 +452,109 @@ async def import_obsidian(directory: str, project: str = ""):
     return await import_markdown_dir(
         _P(directory), project=project or None, db_path=DB_PATH,
     )
+
+
+# ── Synapse — Agent Exchange (v2.4) — REST twins of the MCP tools ───────────
+from pydantic import BaseModel as _BaseModel
+from typing import Optional as _Optional
+
+
+class ThreadCreateRequest(_BaseModel):
+    project: str
+    title: str
+    body: str
+    from_agent: str
+    to_agent: str = ""
+    kind: str = "task"
+    priority: int = 0
+    refs: list[str] = []
+
+
+class ThreadReplyRequest(_BaseModel):
+    body: str
+    from_agent: str
+    to_agent: str = ""
+    intent: str = "update"
+    refs: list[str] = []
+    status: _Optional[str] = None
+
+
+class ThreadStatusRequest(_BaseModel):
+    status: str
+    agent: str = ""
+
+
+@app.post("/exchange/threads", status_code=201)
+async def exchange_create_thread(req: ThreadCreateRequest):
+    from .exchange import post_task
+    try:
+        return post_task(project=req.project, title=req.title, body=req.body,
+                         from_agent=req.from_agent, to_agent=req.to_agent,
+                         kind=req.kind, priority=req.priority, refs=req.refs,
+                         db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/exchange/threads")
+async def exchange_list_threads(project: str = "", status: str = "",
+                                agent: str = "", limit: int = 50):
+    from .exchange import list_threads
+    try:
+        return list_threads(project=project or None, status=status or None,
+                            agent=agent or None, limit=limit, db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/exchange/threads/{thread_id}")
+async def exchange_get_thread(thread_id: str):
+    from .exchange import get_thread
+    result = get_thread(thread_id, db_path=DB_PATH)
+    if result is None:
+        raise HTTPException(404, "Thread not found")
+    return result
+
+
+@app.post("/exchange/threads/{thread_id}/messages", status_code=201)
+async def exchange_reply(thread_id: str, req: ThreadReplyRequest):
+    from .exchange import reply_to_thread
+    try:
+        result = reply_to_thread(thread_id=thread_id, body=req.body,
+                                 from_agent=req.from_agent, to_agent=req.to_agent,
+                                 intent=req.intent, refs=req.refs,
+                                 status=req.status, db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    return result
+
+
+@app.post("/exchange/threads/{thread_id}/status")
+async def exchange_status(thread_id: str, req: ThreadStatusRequest):
+    from .exchange import update_task_status
+    try:
+        result = update_task_status(thread_id, req.status, agent=req.agent,
+                                    db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+    return result
+
+
+@app.get("/exchange/inbox")
+async def exchange_inbox(agent: str, project: str = "",
+                         include_broadcast: bool = True,
+                         mark_read: bool = True, limit: int = 20):
+    from .exchange import get_inbox
+    try:
+        return get_inbox(agent=agent, project=project or None,
+                         include_broadcast=include_broadcast,
+                         mark_read=mark_read, limit=limit, db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 @app.get("/timeline")

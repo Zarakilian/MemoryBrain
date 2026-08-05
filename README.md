@@ -11,8 +11,8 @@
 
 <p align="center">
   <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.3.1-ffd98a?style=flat-square" />
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-22-7c9cff?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-2.4.0-ffd98a?style=flat-square" />
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-29-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
 </p>
@@ -89,7 +89,7 @@ Assistants ──MCP/REST──► MemoryBrain (loopback :7741)
 
 `GET /status` returns version, tool list, scheduler state, and recommended client configs.
 
-## MCP tools (22)
+## MCP tools (29)
 
 ### Core
 `search_memory` · `get_memory` · `add_memory` · `delete_memory` · `get_recent_context` · `list_projects` · `get_startup_summary` · `get_related_memories` · `get_memory_graph` · `consolidate_memory`
@@ -100,16 +100,29 @@ Assistants ──MCP/REST──► MemoryBrain (loopback :7741)
 ### Ops & orientation (v2.3)
 `record_retrieval` · `get_timeline` · `get_entities` · `get_project_policy` · `set_project_policy`
 
+### Synapse — Agent Exchange (v2.4)
+`post_task` · `get_agent_inbox` · `reply_to_thread` · `update_task_status` · `list_threads` · `get_thread` · `get_agent_stats`
+
 ### Recommended agent protocol
 
 1. `get_startup_summary`
-2. `get_project_brief(project=…)`
-3. Work with typed writes: `fact` / `decision` / `open_loop` / `session`
-4. `pin_memory` for env truths and current goals
-5. After heavy weeks: `consolidate_memory` → `list_conflicts` → resolve
-6. When a search result was *actually used*: `record_retrieval(..., chosen_id=…)`
+2. `get_agent_inbox(agent=<me>)` — anything the other agents left for you?
+3. `get_project_brief(project=…)`
+4. Work with typed writes: `fact` / `decision` / `open_loop` / `session` (always pass `source=<me>`)
+5. `pin_memory` for env truths and current goals
+6. Handoffs: `post_task(kind=review, to_agent=codex, refs=[…])` instead of making the human copy-paste
+7. After heavy weeks: `consolidate_memory` → `list_conflicts` → resolve
+8. When a search result was *actually used*: `record_retrieval(..., chosen_id=…)`
 
 ## What's new
+
+### v2.4.0 — Synapse: the agents talk to each other
+- **Agent Exchange** — threads (task/review/question/handoff/discussion) +
+  addressed messages between Claude/Grok/Codex/Gemini; pull-based inbox with
+  read cursors. 7 new MCP tools, REST twins under `/exchange/*`.
+- **⚡ Agents page** (`/ui/agents`) — per-agent totals, per-project share
+  donuts, and the Synapse view: agents as neurons, messages as firings.
+- Protocol: `skills/agent-exchange/SKILL.md` · design: `docs/AGENT_EXCHANGE.md`.
 
 ### v2.3.1 — multi-AI transport clarity + hook hardening
 - Session-ingest readiness accepts modern `vector_store` (legacy `chromadb` still works)
@@ -145,6 +158,7 @@ sqlite-vec in `brain.db`, automatic graph, local Atlas UI (Stream / Constellatio
 | `log-everything` | Session summary → MemoryBrain (+ project log suites where configured) |
 | `handover` | Full session handover document |
 | `map-project-files` | Authoritative file map as a reference memory |
+| `agent-exchange` | Multi-AI collaboration protocol: inbox, handoffs, reviews (v2.4) |
 
 ## Ops cheatsheet
 

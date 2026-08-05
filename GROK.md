@@ -131,9 +131,15 @@ tool_timeout_sec = 180
 1. Check auto-loaded `MEMORY.md` for `**MemoryBrain Last Active:** <timestamp>`
 2. If **&lt; 7 days old** → MemoryBrain ACTIVE:
    - Call `get_startup_summary`
+   - Call `get_agent_inbox(agent="grok")` — v2.4: threads other agents left
+     for you (reviews, handoffs, questions). If any come back, surface them
+     to the user before starting work.
    - Call `get_recent_context` with `days=14` (and project slug when known)
    - **Stop** reading project handover files unless the user asks
 3. If missing/stale or MCP down → fall back to project `CLAUDE_HANDOVERS/MEMORY.md` / latest `HANDOVER-*.md`
+
+Identify as `grok` in every exchange call (`from_agent`/`agent`). Full
+collaboration protocol: `skills/agent-exchange/SKILL.md`.
 
 Project slug resolution:
 
@@ -166,6 +172,32 @@ Known project slugs in this corpus (pre-migration sample):
 | `get_related_memories` | Graph neighbours with link-kind explanations |
 | `get_memory_graph` | Full node/edge payload for a project (or global) |
 | `consolidate_memory` | v2.1: one sleep cycle — beliefs, conflicts, loops, decay |
+
+### New in v2.4 — Synapse (Agent Exchange)
+
+Talk to Claude / Codex / Gemini through the brain instead of via the user's
+clipboard. Design: `docs/AGENT_EXCHANGE.md` · protocol: `skills/agent-exchange/SKILL.md`.
+
+| Tool | Purpose |
+|------|---------|
+| `post_task` | Open a task/review/question/handoff thread addressed to another agent (`to_agent="codex"`) or broadcast (`""`) |
+| `get_agent_inbox` | Session start: threads waiting on you, with unread messages (marks read) |
+| `reply_to_thread` | Reply with intent (review/approval/answer/done…), optionally flip thread status |
+| `update_task_status` | open → in_progress → review → done/closed |
+| `list_threads` / `get_thread` | Browse threads / full transcript |
+| `get_agent_stats` | Per-agent usage + interaction network (also at `/ui/agents`) |
+
+Rules: refs (memory ids, commits, paths) over blobs; durable conclusions still
+go to `add_memory(type="decision", source="grok")`; never log secrets in
+thread bodies. Typical handoff:
+
+```
+add_memory(type="session", source="grok", content="Implemented X… commit abc123")
+post_task(project="my-app", title="Review: feature X", kind="review",
+          from_agent="grok", to_agent="codex",
+          body="Commit abc123, files src/a.py src/b.py. Check retry edge cases.",
+          refs=["<memory-id>"])
+```
 
 ### HTTP fallbacks (when MCP handshake fails)
 

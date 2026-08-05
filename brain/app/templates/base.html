@@ -30,9 +30,13 @@
       Memory<em>Brain</em>
     </a>
     <nav class="rail-nav" aria-label="Scope">
-      <a href="/ui" class="{{ 'on' if not current else '' }}">
+      <a href="/ui" class="{{ 'on' if not current and not agents_page else '' }}">
         <span class="pdot all"></span><span class="pname">All memories</span>
         <span class="count">{{ stats.total }}</span></a>
+      <a href="/ui/agents" class="{{ 'on' if agents_page else '' }}"
+         title="Synapse: multi-AI usage analytics and the agent interaction network">
+        <span class="pdot all" style="--ph:285"></span><span class="pname">⚡ Agents</span>
+      </a>
     </nav>
     <div class="rail-label">Projects</div>
     <nav class="rail-projects" aria-label="Projects">

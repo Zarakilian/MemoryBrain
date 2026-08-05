@@ -39,6 +39,14 @@ TOOL_NAMES = [
     "get_entities",
     "get_project_policy",
     "set_project_policy",
+    # v2.4 — Synapse (Agent Exchange)
+    "post_task",
+    "get_agent_inbox",
+    "reply_to_thread",
+    "update_task_status",
+    "list_threads",
+    "get_thread",
+    "get_agent_stats",
 ]
 
 MEMORY_TYPE_ENUM = [
@@ -369,6 +377,115 @@ async def handle_set_project_policy(
     ), default=str)
 
 
+# ── v2.4 Synapse — Agent Exchange handlers ───────────────────────────────────
+
+async def handle_post_task(
+    project: str,
+    title: str,
+    body: str,
+    from_agent: str,
+    to_agent: str = "",
+    kind: str = "task",
+    priority: int = 0,
+    refs: Optional[list] = None,
+) -> str:
+    from ..exchange import post_task
+    try:
+        return json.dumps(post_task(
+            project=project, title=title, body=body, from_agent=from_agent,
+            to_agent=to_agent, kind=kind, priority=priority, refs=refs,
+            db_path=DB_PATH,
+        ))
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+
+async def handle_get_agent_inbox(
+    agent: str,
+    project: Optional[str] = None,
+    include_broadcast: bool = True,
+    mark_read: bool = True,
+    limit: int = 20,
+) -> str:
+    from ..exchange import get_inbox
+    try:
+        return json.dumps(get_inbox(
+            agent=agent, project=project, include_broadcast=include_broadcast,
+            mark_read=mark_read, limit=limit, db_path=DB_PATH,
+        ), default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+
+async def handle_reply_to_thread(
+    thread_id: str,
+    body: str,
+    from_agent: str,
+    to_agent: str = "",
+    intent: str = "update",
+    refs: Optional[list] = None,
+    status: Optional[str] = None,
+) -> str:
+    from ..exchange import reply_to_thread
+    try:
+        return json.dumps(reply_to_thread(
+            thread_id=thread_id, body=body, from_agent=from_agent,
+            to_agent=to_agent, intent=intent, refs=refs, status=status,
+            db_path=DB_PATH,
+        ))
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+
+async def handle_update_task_status(
+    thread_id: str,
+    status: str,
+    agent: str = "",
+) -> str:
+    from ..exchange import update_task_status
+    try:
+        return json.dumps(update_task_status(
+            thread_id=thread_id, status=status, agent=agent, db_path=DB_PATH,
+        ))
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+
+async def handle_list_threads(
+    project: Optional[str] = None,
+    status: Optional[str] = None,
+    agent: Optional[str] = None,
+    limit: int = 50,
+) -> str:
+    from ..exchange import list_threads
+    try:
+        return json.dumps(list_threads(
+            project=project, status=status, agent=agent, limit=limit,
+            db_path=DB_PATH,
+        ), default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+
+async def handle_get_thread(thread_id: str) -> str:
+    from ..exchange import get_thread
+    result = get_thread(thread_id, db_path=DB_PATH)
+    if result is None:
+        return json.dumps({"error": f"Thread {thread_id} not found"})
+    return json.dumps(result, default=str)
+
+
+async def handle_get_agent_stats(
+    project: Optional[str] = None,
+    days: int = 90,
+) -> str:
+    from ..exchange import agent_stats, agent_network
+    stats = agent_stats(project=project, days=days, db_path=DB_PATH)
+    stats["network"] = agent_network(project=project, days=days,
+                                     db_path=DB_PATH)
+    return json.dumps(stats, default=str)
+
+
 # ── MCP Server wiring ─────────────────────────────────────────────────────────
 
 @server.list_tools()
@@ -658,6 +775,140 @@ async def list_tools() -> list[types.Tool]:
                 "required": ["project"],
             },
         ),
+        # v2.4 — Synapse (Agent Exchange)
+        types.Tool(
+            name="post_task",
+            description=(
+                "Open an agent-to-agent collaboration thread (task/review/"
+                "question/handoff/discussion) with its first message. Address "
+                "a specific agent via to_agent (claude/grok/codex/gemini) or "
+                "leave empty to broadcast. Pass refs (memory ids, commits, "
+                "file paths) instead of pasting large content."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "title": {"type": "string"},
+                    "body": {"type": "string"},
+                    "from_agent": {"type": "string",
+                                   "description": "Who you are (claude/grok/codex/gemini)"},
+                    "to_agent": {"type": "string",
+                                 "description": "Recipient agent; empty = broadcast"},
+                    "kind": {"type": "string",
+                             "enum": ["task", "review", "question", "handoff", "discussion"],
+                             "default": "task"},
+                    "priority": {"type": "integer", "default": 0},
+                    "refs": {"type": "array", "items": {"type": "string"},
+                             "description": "Memory ids / commit hashes / file paths"},
+                },
+                "required": ["project", "title", "body", "from_agent"],
+            },
+        ),
+        types.Tool(
+            name="get_agent_inbox",
+            description=(
+                "Threads waiting on you: open threads assigned/addressed to "
+                "you (or broadcast) with unread messages. Call at session "
+                "start, right after get_startup_summary. Marks items read by "
+                "default so they only reappear when someone writes again."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "agent": {"type": "string",
+                              "description": "Who you are (claude/grok/codex/gemini)"},
+                    "project": {"type": "string"},
+                    "include_broadcast": {"type": "boolean", "default": True},
+                    "mark_read": {"type": "boolean", "default": True},
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required": ["agent"],
+            },
+        ),
+        types.Tool(
+            name="reply_to_thread",
+            description=(
+                "Reply in a collaboration thread. intent conveys the move "
+                "(review/approval/answer/handoff/done…). Optionally set the "
+                "thread status in the same call (e.g. status=review when "
+                "requesting changes, status=done when finishing)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "thread_id": {"type": "string"},
+                    "body": {"type": "string"},
+                    "from_agent": {"type": "string"},
+                    "to_agent": {"type": "string"},
+                    "intent": {"type": "string",
+                               "enum": ["request", "update", "review", "approval",
+                                        "question", "answer", "handoff", "done"],
+                               "default": "update"},
+                    "refs": {"type": "array", "items": {"type": "string"}},
+                    "status": {"type": "string",
+                               "enum": ["open", "in_progress", "review", "done", "closed"]},
+                },
+                "required": ["thread_id", "body", "from_agent"],
+            },
+        ),
+        types.Tool(
+            name="update_task_status",
+            description="Move a thread through its lifecycle: open → in_progress → review → done/closed.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "thread_id": {"type": "string"},
+                    "status": {"type": "string",
+                               "enum": ["open", "in_progress", "review", "done", "closed"]},
+                    "agent": {"type": "string"},
+                },
+                "required": ["thread_id", "status"],
+            },
+        ),
+        types.Tool(
+            name="list_threads",
+            description=(
+                "Browse collaboration threads by project/status/agent. "
+                "status=any_open matches open, in_progress and review."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "status": {"type": "string",
+                               "enum": ["open", "in_progress", "review",
+                                        "done", "closed", "any_open"]},
+                    "agent": {"type": "string",
+                              "description": "Filter to threads created by or assigned to this agent"},
+                    "limit": {"type": "integer", "default": 50},
+                },
+            },
+        ),
+        types.Tool(
+            name="get_thread",
+            description="Full transcript of one collaboration thread, oldest message first.",
+            inputSchema={
+                "type": "object",
+                "properties": {"thread_id": {"type": "string"}},
+                "required": ["thread_id"],
+            },
+        ),
+        types.Tool(
+            name="get_agent_stats",
+            description=(
+                "Multi-AI analytics: per-agent memory/message counts, "
+                "per-project contribution shares, and the agent interaction "
+                "network (who talks to whom)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "project": {"type": "string"},
+                    "days": {"type": "integer", "default": 90},
+                },
+            },
+        ),
     ]
 
 
@@ -699,6 +950,16 @@ _TOOL_ARGS = {
     "get_entities":         ([], ["project", "limit"]),
     "get_project_policy":   (["project"], []),
     "set_project_policy":   (["project"], ["include_system", "max_brief_chars", "default_tags", "notes"]),
+    # v2.4 — Synapse (Agent Exchange)
+    "post_task":            (["project", "title", "body", "from_agent"],
+                             ["to_agent", "kind", "priority", "refs"]),
+    "get_agent_inbox":      (["agent"], ["project", "include_broadcast", "mark_read", "limit"]),
+    "reply_to_thread":      (["thread_id", "body", "from_agent"],
+                             ["to_agent", "intent", "refs", "status"]),
+    "update_task_status":   (["thread_id", "status"], ["agent"]),
+    "list_threads":         ([], ["project", "status", "agent", "limit"]),
+    "get_thread":           (["thread_id"], []),
+    "get_agent_stats":      ([], ["project", "days"]),
 }
 
 
@@ -746,6 +1007,13 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         "get_entities":         lambda a: handle_get_entities(**a),
         "get_project_policy":   lambda a: handle_get_project_policy(**a),
         "set_project_policy":   lambda a: handle_set_project_policy(**a),
+        "post_task":            lambda a: handle_post_task(**a),
+        "get_agent_inbox":      lambda a: handle_get_agent_inbox(**a),
+        "reply_to_thread":      lambda a: handle_reply_to_thread(**a),
+        "update_task_status":   lambda a: handle_update_task_status(**a),
+        "list_threads":         lambda a: handle_list_threads(**a),
+        "get_thread":           lambda a: handle_get_thread(**a),
+        "get_agent_stats":      lambda a: handle_get_agent_stats(**a),
     }
     result = await handlers[name](clean)
     return [types.TextContent(type="text", text=result)]
