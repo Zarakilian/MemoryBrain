@@ -20,7 +20,7 @@ snippet lands in.
 
 Do not point Grok at `/sse` — Grok POSTs initialize to the URL and classic SSE returns 405.
 
-Both MCP doors expose the same **22 tools** (v2.3):
+Both MCP doors expose the same **29 tools** (v2.4):
 
 Core: `search_memory`, `get_memory`, `add_memory`, `delete_memory`,
 `get_recent_context`, `list_projects`, `get_startup_summary`,
@@ -31,6 +31,11 @@ Context bank: `get_project_brief`, `list_conflicts`, `resolve_conflict`,
 
 Ops: `record_retrieval`, `get_timeline`, `get_entities`,
 `get_project_policy`, `set_project_policy`.
+
+Synapse (v2.4 Agent Exchange): `post_task`, `get_agent_inbox`,
+`reply_to_thread`, `update_task_status`, `list_threads`, `get_thread`,
+`get_agent_stats`. See [AGENT_EXCHANGE.md](AGENT_EXCHANGE.md) and
+[CROSS_AI_ASSIST.md](CROSS_AI_ASSIST.md).
 
 See [CONTEXT_BANK_V2.2.md](CONTEXT_BANK_V2.2.md) and [GETTING_STARTED.md](GETTING_STARTED.md).
 

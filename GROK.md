@@ -210,8 +210,13 @@ post_task(project="my-app", title="Review: feature X", kind="review",
 | POST | `/admin/rebuild-graph` | One-time / repair graph build |
 | POST | `/admin/backfill-vectors` | Re-embed gaps (provider must be up) |
 | GET | `/ui` | Atlas UI |
+| GET | `/ui/agents` | Synapse analytics (v2.4) |
 | GET | `/ui/doctor` | In-browser diagnostics |
 | GET | `/api/ui/version` | Build stamp |
+| GET | `/exchange/inbox?agent=grok` | Synapse inbox HTTP twin (API key) |
+| GET | `/exchange/threads` | List exchange threads (API key) |
+
+Cross-AI dual protocol (Synapse + tags): [`docs/CROSS_AI_ASSIST.md`](docs/CROSS_AI_ASSIST.md).
 
 If `BRAIN_API_KEY` is set, write/admin paths need `X-Brain-Key`. Loopback binding remains the main trust boundary for read UI.
 

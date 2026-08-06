@@ -34,12 +34,17 @@
 
 - Other agents may hand you work via exchange threads — that's what the inbox
   call surfaces. Full protocol: `skills/agent-exchange/SKILL.md`,
-  design: `docs/AGENT_EXCHANGE.md`.
+  design: `docs/AGENT_EXCHANGE.md`, dual-channel guide: `docs/CROSS_AI_ASSIST.md`.
 - Handing off: save substance with `add_memory` first, then
   `post_task(kind="review"/"task"/…, to_agent="codex"/…, refs=[memory ids])`.
   Refs over blobs — never paste whole files into thread bodies.
 - Always pass `source="<me>"` on `add_memory` so the ⚡ Agents analytics
   (`/ui/agents`) attribute your work correctly.
+- **Tag + pin trail** (companion, not replacement): for searchable Atlas history
+  and *standing* constraints, also use tags `ai-assist-request` /
+  `ai-assist-response`, `from:<me>`, `for:<target>`, `status:open|done`, and
+  pin open work. Archive + unpin when done. Synapse = conversation; memories =
+  conclusions.
 
 ## End of session
 
