@@ -59,8 +59,38 @@ SOURCE_DAMP = 0.8            # consolidated sources sink a little
 # Contradiction "warn zone": similar enough to worry, not similar enough
 # to have auto-superseded. Mirrors ingest_pipeline's thresholds.
 CONFLICT_MIN_SIM = 0.78
+# Fact–fact pairs are often sequential milestones (deploy tips, disk audits).
+# Require a tighter band so nightly sleep does not re-flag every new
+# "Prod tips BE abc SF def" against every prior deploy fact.
+CONFLICT_MIN_SIM_FACT = 0.88
 CONFLICT_MAX_SIM = 0.92
 CONFLICT_TYPES = ("fact", "belief")
+
+# Both sides look like historical timeline / status logs → not a contradiction.
+# Dismiss only tombstones the exact edge; without this, each new deploy tip
+# spawns a combinatorial fan-out of conflicts_with edges every night.
+_TIMELINE_FACT_RE = re.compile(
+    r"(?i)("
+    r"\bprod tips?\b|\bprod live\b|\bproduction live\b|"
+    r"\bproduction (backend|storefront)\b|"
+    r"\bBE [0-9a-f]{7}\b|\bSF [0-9a-f]{7}\b|"
+    r"\borigin/(dev|main)\b|\bAPPROVE MAIN\b|\bActions \d+\b|"
+    r"\d+(?:\.\d+)?\s*GB free\b|\bDocker VHDX\b"
+    r")"
+)
+
+
+def _is_timeline_fact_summary(summary: Optional[str]) -> bool:
+    return bool(_TIMELINE_FACT_RE.search(summary or ""))
+
+
+def _skip_as_timeline_pair(
+    type_a: str, type_b: str, sum_a: Optional[str], sum_b: Optional[str],
+) -> bool:
+    """Sequential deploy/status facts that should coexist as history."""
+    if type_a != "fact" or type_b != "fact":
+        return False
+    return _is_timeline_fact_summary(sum_a) and _is_timeline_fact_summary(sum_b)
 
 _LOOP_RE = re.compile(
     r"^.*(?:\bTODO\b|\bFIXME\b|\bnext session\b|\bstill need(?:s)? to\b"
@@ -199,16 +229,23 @@ def _already_believed(conn, cluster: list[str]) -> bool:
 # ----------------------------------------------------------- contradictions
 
 def _find_conflicts(conn, project: str, db_path: Path) -> list[dict]:
-    """Warn-zone pairs: very similar, coexisting, never superseded."""
+    """Warn-zone pairs: very similar, coexisting, never superseded.
+
+    Skips fact–fact pairs that look like sequential timeline milestones
+    (deploy tips, disk free-space audits) so nightly consolidation does not
+    keep re-flagging the same logging style under new SHA combinations.
+    """
     from .vector import vec_search, _connect_vec  # local import: optional dep
 
     rows = conn.execute(
-        f"""SELECT id, type FROM memories
+        f"""SELECT id, type, summary FROM memories
             WHERE status = 'active' AND project = ?
               AND type IN ({','.join('?' * len(CONFLICT_TYPES))})""",
         (project, *CONFLICT_TYPES),
     ).fetchall()
     ids = [r["id"] for r in rows]
+    types = {r["id"]: r["type"] for r in rows}
+    summaries = {r["id"]: r["summary"] for r in rows}
     if len(ids) < 2:
         return []
 
@@ -248,8 +285,15 @@ def _find_conflicts(conn, project: str, db_path: Path) -> list[dict]:
             key = (min(a, b), max(a, b))
             if key in existing:
                 continue
+            if _skip_as_timeline_pair(
+                types[a], types[b], summaries[a], summaries[b],
+            ):
+                continue
             sim = cos(vecs[a], vecs[b])
-            if CONFLICT_MIN_SIM <= sim < CONFLICT_MAX_SIM:
+            min_sim = CONFLICT_MIN_SIM
+            if types[a] == "fact" and types[b] == "fact":
+                min_sim = CONFLICT_MIN_SIM_FACT
+            if min_sim <= sim < CONFLICT_MAX_SIM:
                 out.append({"src": key[0], "dst": key[1], "kind": "conflicts_with",
                             "weight": round(sim, 4), "directed": 0,
                             "meta": {"cos_sim": round(sim, 4), "flagged_at": _now()}})
