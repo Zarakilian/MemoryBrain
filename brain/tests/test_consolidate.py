@@ -78,7 +78,7 @@ async def test_consolidate_distils_cluster_into_belief(cdb, mock_ollama):
     belief_id = pr["beliefs"][0]["id"]
     belief = get_memory(belief_id, db_path=cdb)
     assert belief.type == "belief"
-    assert belief.status == "active"
+    assert belief.status == "proposed"  # v3: waits for a human verdict
     assert "belief" in belief.tags
     assert belief.source == "consolidation"
 
@@ -89,7 +89,11 @@ async def test_consolidate_distils_cluster_into_belief(cdb, mock_ollama):
             (belief_id,)).fetchall()
     assert {r["dst_id"] for r in derived} == {"a1", "a2", "a3", "a4"}
 
-    # 2. the sources sank a little — the belief speaks first for them now
+    # 2. v3: sources sink a little only once the belief is approved
+    strengths = get_strengths(["a1", "a2", "a3", "a4"], db_path=cdb)
+    assert all(abs(s - 1.0) < 1e-6 for s in strengths.values())
+    from app.storage import set_belief_status
+    assert set_belief_status(belief_id, approve=True, actor="test", db_path=cdb)
     strengths = get_strengths(["a1", "a2", "a3", "a4"], db_path=cdb)
     assert all(abs(s - 0.8) < 1e-6 for s in strengths.values())
 
@@ -169,16 +173,15 @@ def test_decay_touches_only_the_unrecalled_and_floors(tmp_db):
     record_recall(["recalled1"], db_path=tmp_db)            # touched today
 
     n = decay_strengths(idle_days=14, db_path=tmp_db)
-    assert n == 1                                           # only old1
+    assert n == 1                                           # only old1 is past its grace
     s = get_strengths(["old1", "fresh1", "recalled1"], db_path=tmp_db)
-    assert s["old1"] == pytest.approx(0.9)
+    assert s["old1"] == pytest.approx(0.5 ** (46 / 60), abs=0.01)  # v3: computed from time
     assert s["fresh1"] == 1.0
     assert s["recalled1"] == pytest.approx(1.25)
 
-    for _ in range(40):                                     # grind to the floor
+    for _ in range(40):                                     # running again changes nothing
         decay_strengths(idle_days=14, db_path=tmp_db)
-    assert get_strengths(["old1"], db_path=tmp_db)["old1"] == pytest.approx(
-        STRENGTH_FLOOR)
+    assert get_strengths(["old1"], db_path=tmp_db)["old1"] == pytest.approx(s["old1"])
 
 
 def test_strength_factor_bounds_and_ranking_effect():

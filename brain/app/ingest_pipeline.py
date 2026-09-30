@@ -228,7 +228,8 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     chunks = chunk_text(entry.content)
     model, parent, chunk_vectors = await _embed(entry, chunks, warnings)
     entry.embedded = parent is not None
-    superseded, potential = ([], []) if parent is None else \
+    # A proposal (a belief awaiting approval) never retires anything.
+    superseded, potential = ([], []) if parent is None or entry.status != "active" else \
         await _check_supersession(entry, parent, model)
     if entry.type in ("fact", "decision") and not entry.valid_from:
         entry.valid_from = entry.timestamp.isoformat()

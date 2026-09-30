@@ -18,7 +18,7 @@ import re
 from datetime import datetime, timezone
 from typing import Optional
 
-from .storage import DB_PATH, _connect, keyword_search
+from .storage import DB_PATH, DECAYING_TYPES, _connect, effective_strength, keyword_search
 from .summarise import embed, embed_model_id, embed_query
 from .vector import legacy_vector_count, vec_search_multi
 
@@ -33,7 +33,7 @@ STRENGTH_WEIGHT = float(os.getenv("MEMORYBRAIN_STRENGTH_WEIGHT", "0.4"))
 
 RRF_K = 60
 CANDIDATES = 30
-AGING_TYPES = frozenset({"session", "handover", "note"})
+AGING_TYPES = DECAYING_TYPES  # sessions, handovers, notes
 AGE_HALF_LIFE_DAYS = 45
 AGE_FLOOR = 0.5
 ADJUST_MIN, ADJUST_MAX = 0.7, 1.3
@@ -174,9 +174,11 @@ def _rows(ids: list[str], db_path) -> dict:
         return {}
     with _connect(db_path) as conn:
         rows = conn.execute(
-            f"""SELECT id, summary, content, type, project, source, importance, timestamp,
-                       status, valid_from, valid_to, strength
-                FROM memories WHERE id IN ({','.join('?' * len(ids))})""", ids).fetchall()
+            f"""SELECT m.id, m.summary, m.content, m.type, m.project, m.source, m.importance,
+                       m.timestamp, m.status, m.valid_from, m.valid_to, m.strength,
+                       m.last_recalled,
+                       EXISTS (SELECT 1 FROM project_pins p WHERE p.memory_id = m.id) AS pinned
+                FROM memories m WHERE m.id IN ({','.join('?' * len(ids))})""", ids).fetchall()
     return {r["id"]: r for r in rows}
 
 
@@ -287,8 +289,9 @@ async def search_with_status(
     for i in ids:
         fused = sum(1.0 / (RRF_K + ranks[i] + 1) for ranks in (kw_rank, sem_rank) if i in ranks)
         row = rows[i]
-        adjust = (age_factor(row["type"], row["timestamp"])
-                  * strength_factor(row["strength"] if row["strength"] is not None else 1.0)
+        strength = effective_strength(row["strength"], row["timestamp"], row["last_recalled"],
+                                      bool(row["pinned"]), memory_type=row["type"])
+        adjust = (age_factor(row["type"], row["timestamp"]) * strength_factor(strength)
                   * feedback.get(i, 1.0))
         scores[i] = fused * min(ADJUST_MAX, max(ADJUST_MIN, adjust))
     ranked = sorted(ids, key=lambda i: scores[i], reverse=True)

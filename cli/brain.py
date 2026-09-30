@@ -177,6 +177,27 @@ def _file_hash(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
+def cmd_beliefs(approve: str = None, reject: str = None, project: str = None) -> int:
+    """List proposed beliefs with their cited sources, or approve / reject one."""
+    from urllib.parse import quote, urlencode
+    if approve or reject:
+        verdict, memory_id = ("approve", approve) if approve else ("reject", reject)
+        reply = _post(f"/api/ui/edit/beliefs/{quote(memory_id)}/{verdict}", {})
+        print(f"{memory_id}: {reply.get('status', 'unchanged')}")
+        return 0
+    params = {"status": "proposed", **({"project": project} if project else {})}
+    beliefs = _get("/api/ui/beliefs?" + urlencode(params)).get("beliefs", [])
+    if not beliefs:
+        print("No beliefs are waiting for approval.")
+    for b in beliefs:
+        print(f"{b['id']}  [{b['project']}]  {b['content'][:200]}")
+        for source in b.get("sources", []):
+            print(f"    cites {source['id'][:8]}  {(source.get('summary') or '')[:120]}")
+    if beliefs:
+        print("Approve with: brain beliefs --approve <id>   Reject with: --reject <id>")
+    return 0
+
+
 def looks_like_google_key(key: str) -> bool:
     """Google AI Studio keys start with 'AIza'."""
     return key.startswith("AIza")
@@ -731,6 +752,13 @@ def main():
     # update
     sub.add_parser("update", help="Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills")
 
+    # beliefs (v3)
+    p_beliefs = sub.add_parser("beliefs", help="Review beliefs the sleep cycle proposed")
+    p_beliefs.add_argument("--list", action="store_true", help="List proposed beliefs (default)")
+    p_beliefs.add_argument("--approve", metavar="ID", help="Make a proposed belief active")
+    p_beliefs.add_argument("--reject", metavar="ID", help="Archive a proposed belief")
+    p_beliefs.add_argument("--project", help="Only this project")
+
     # eval (v3)
     p_eval = sub.add_parser("eval", help="Measure search quality on labelled questions")
     p_eval.add_argument("--export-log", help="Write past searches as JSONL, ready to label")
@@ -766,6 +794,8 @@ def main():
         cmd_status()
     elif args.command == "update":
         cmd_update()
+    elif args.command == "beliefs":
+        sys.exit(cmd_beliefs(approve=args.approve, reject=args.reject, project=args.project))
     elif args.command == "eval":
         from brain_eval import cmd_eval
         sys.exit(cmd_eval(args, _get, MEMORYBRAIN_DIR))

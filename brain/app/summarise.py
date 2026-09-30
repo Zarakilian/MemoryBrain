@@ -59,6 +59,10 @@ class SummariseProvider(ABC):
         """Embed several texts. Providers with a batch API override this."""
         return [await self.embed(t) for t in texts]
 
+    async def generate(self, prompt: str) -> str:
+        """The raw model answer to a prompt (no summary wrapper)."""
+        raise NotImplementedError
+
     @abstractmethod
     async def summarise(self, content: str, max_sentences: int = 3) -> str: ...
 
@@ -94,6 +98,10 @@ class OllamaProvider(SummariseProvider):
         # window instead of failing the whole write.
         response = await self._client.embed(model=self._embed_model, input=texts, truncate=True)
         return [list(v) for v in response["embeddings"]]
+
+    async def generate(self, prompt: str) -> str:
+        response = await self._client.generate(model=self._summarise_model, prompt=prompt)
+        return response["response"].strip()
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:
         verbatim = self._verbatim_if_short(content)
@@ -138,6 +146,13 @@ class GeminiProvider(SummariseProvider):
             contents=text[:GEMINI_EMBED_MAX_CHARS]
         )
         return result.embedding
+
+    async def generate(self, prompt: str) -> str:
+        import asyncio
+        response = await asyncio.to_thread(
+            self._client.models.generate_content, model=self._summarise_model, contents=prompt
+        )
+        return response.text.strip()
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:
         verbatim = self._verbatim_if_short(content)
@@ -193,6 +208,13 @@ class OpenAIProvider(SummariseProvider):
         response = await self._client.embeddings.create(
             model=self._embed_model, input=[t[:OPENAI_EMBED_MAX_CHARS] for t in texts])
         return [d.embedding for d in response.data]
+
+    async def generate(self, prompt: str) -> str:
+        response = await self._client.chat.completions.create(
+            model=self._summarise_model, messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+        )
+        return response.choices[0].message.content.strip()
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:
         verbatim = self._verbatim_if_short(content)
@@ -325,6 +347,12 @@ async def summarise(content: str, max_sentences: int = 3) -> str:
 
 async def score_importance(content: str) -> int:
     return await _get_provider().score_importance(content)
+
+
+async def complete(prompt: str) -> str:
+    """The raw model answer to a prompt, for tasks that need their own
+    instructions (cited beliefs, the contradiction judge)."""
+    return await _get_provider().generate(prompt)
 
 
 # Backward-compatible aliases used by main.py's /readiness endpoint.

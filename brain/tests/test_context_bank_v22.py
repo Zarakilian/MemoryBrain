@@ -115,8 +115,8 @@ def test_pin_rejects_missing(tmp_db):
 
 def test_decay_skips_pins(tmp_db):
     old = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    pinned = _add(tmp_db, content="pinned truth", project="demo", id="p1")
-    free = _add(tmp_db, content="free memory", project="demo", id="f1")
+    pinned = _add(tmp_db, content="pinned truth", project="demo", id="p1", type="note")
+    free = _add(tmp_db, content="free memory", project="demo", id="f1", type="note")
     with sqlite3.connect(tmp_db) as conn:
         conn.execute(
             "UPDATE memories SET strength = 1.0, last_recalled = ?, timestamp = ?",
@@ -127,12 +127,10 @@ def test_decay_skips_pins(tmp_db):
     pin_memory("demo", pinned.id, db_path=tmp_db)
     n = decay_strengths(idle_days=14, factor=0.5, db_path=tmp_db)
     assert n >= 1
-    with sqlite3.connect(tmp_db) as conn:
-        conn.row_factory = sqlite3.Row
-        ps = conn.execute("SELECT strength FROM memories WHERE id='p1'").fetchone()["strength"]
-        fs = conn.execute("SELECT strength FROM memories WHERE id='f1'").fetchone()["strength"]
-    assert ps == 1.0  # pinned unchanged
-    assert fs < 1.0   # free decayed
+    from app.storage import get_strengths  # v3: decay is computed at read time
+    strengths = get_strengths(["p1", "f1"], db_path=tmp_db)
+    assert strengths["p1"] == 1.0  # pinned unchanged
+    assert strengths["f1"] < 1.0   # free decayed
 
 
 def _seed_conflict(db, a_id="c-a", b_id="c-b", project="demo"):

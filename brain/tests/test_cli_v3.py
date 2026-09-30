@@ -54,6 +54,26 @@ def test_gemini_keys_are_recognised_by_their_real_prefix():
     assert not cli.looks_like_google_key("sk-" + "proj-" + "x" * 20)
 
 
+def test_brain_beliefs_lists_and_approves(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_brain_key", lambda: "")
+    seen = []
+
+    def fake(req, timeout=None):
+        seen.append((req.get_method(), req.full_url))
+        if "/api/ui/beliefs" in req.full_url:
+            return _response({"beliefs": [{"id": "b1", "project": "acme",
+                                            "content": "Exports run nightly [m:a1b2c3d4].",
+                                            "sources": [{"id": "a1b2c3d4e5", "summary": "x"}]}]})
+        return _response({"id": "b1", "status": "active"})
+
+    with patch("urllib.request.urlopen", side_effect=fake):
+        cli.cmd_beliefs()
+        cli.cmd_beliefs(approve="b1")
+    out = capsys.readouterr().out
+    assert "Exports run nightly" in out and "cites a1b2c3d4" in out and "b1: active" in out
+    assert seen[1] == ("POST", f"{cli.BRAIN_URL}/api/ui/edit/beliefs/b1/approve")
+
+
 # ------------------------------------------------------------- hook install map
 
 def _repo_with_hooks(tmp_path: Path) -> Path:

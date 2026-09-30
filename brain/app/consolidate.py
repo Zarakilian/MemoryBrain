@@ -19,12 +19,16 @@ digests what it ate. One run does four things, in order:
      they surface in the UI for a human verdict.
   4. OPEN LOOPS — unfinished business (TODO / FIXME / "next session" /
      open question lines) in recent sessions and handovers is extracted
-     into tagged `note` memories so the next session starts from what is
+     into `open_loop` memories so the next session starts from what is
      unfinished, not from silence. Deterministic (no LLM), deduplicated
-     by content hash.
+     by content hash. A loop closes (status done) when a later session
+     says, in one sentence, that most of it was done.
 
-Then the whole store DECAYS: anything unrecalled for `idle_days` loses a
-little strength (floored — forgetting is ranking, never deletion).
+v3: beliefs cite their sources sentence by sentence and wait as
+`proposed` until a human approves them; with MEMORYBRAIN_JUDGE=on the
+model confirms each contradiction; decay is computed from time at read
+time (storage.effective_strength), so a second run changes nothing; and
+only one run happens at a time.
 
 Everything here is additive and derived: no existing memory is deleted or
 archived by consolidation itself (supersession of stale beliefs happens
@@ -32,16 +36,18 @@ through the same pipeline rules as everything else).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from .models import MemoryEntry
-from .storage import (DB_PATH, decay_strengths, get_memory_by_content_hash,
-                      scale_strengths, _connect)
-from .summarise import summarise, strip_preamble
+from .storage import (DB_PATH, _audit, _connect, decay_strengths, get_memory_by_content_hash,
+                      get_meta, set_meta)
+from .summarise import complete, strip_preamble
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +60,6 @@ MAX_CLUSTER_SOURCES = 12     # a belief distilled from dozens of memories is mus
                              # thresholds first, then time-ordered chunks)
 MAX_CLUSTERS_PER_PROJECT = 5
 MAX_CORPUS_CHARS = 6000
-SOURCE_DAMP = 0.8            # consolidated sources sink a little
 
 # Contradiction "warn zone": similar enough to worry, not similar enough
 # to have auto-superseded. Mirrors ingest_pipeline's thresholds.
@@ -97,9 +102,27 @@ _LOOP_RE = re.compile(
     r"^.*(?:\bTODO\b|\bFIXME\b|\bnext session\b|\bstill need(?:s)? to\b"
     r"|\bopen question\b|\bunresolved\b|\bfollow[- ]up\b).*$",
     re.IGNORECASE | re.MULTILINE)
-LOOP_TAG = "open-loop"
+# "no follow-up needed", "nothing unresolved", "not a TODO": not loops at all.
+_NEGATED_LOOP_RE = re.compile(
+    r"\b(?:no|nothing|not(?: a| an)?|none|without)\b[^.\n]{0,24}?"
+    r"\b(?:follow[- ]ups?|todos?|fixmes?|unresolved|open questions?|next session)\b"
+    r"|\b(?:follow[- ]up|todo)\b[^.\n]{0,16}\bnot (?:needed|required)\b",
+    re.IGNORECASE)
+LOOP_TAG = "open_loop"
 LOOP_LOOKBACK_DAYS = 30
 MAX_LOOPS_PER_RUN = 12
+LOOP_CLOSE_SHARE = 0.6
+_DONE_WORDS = frozenset({"done", "fixed", "closed", "resolved", "completed", "merged", "shipped"})
+_LOOP_MARKER_WORDS = frozenset({"open", "loop", "todo", "fixme", "next", "session", "still",
+                                "need", "needs", "question", "unresolved", "follow", "up"})
+
+# One consolidation at a time: an in-process lock, plus a brain_meta marker
+# so another process (or a crashed run) is noticed. Stale after 2 hours.
+RUN_LOCK = asyncio.Lock()
+META_RUNNING = "consolidation_running_since"
+RUN_STALE_S = 2 * 3600
+_CITE_RE = re.compile(r"\[m:([^\]\s]{1,16})\]")
+_CITED_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]*(?:[ \t]*\[m:[^\]\s]{1,16}\])*[.!?]?")
 
 
 def _now() -> str:
@@ -203,29 +226,70 @@ def _retire_bloated_beliefs(conn, project: str, db_path: Path) -> int:
     return len(rows)
 
 
-def _corpus(rows_by_id: dict, cluster: list[str]) -> str:
-    parts = []
-    for mid in sorted(cluster, key=lambda m: rows_by_id[m]["timestamp"]):
-        r = rows_by_id[mid]
-        text = (r["summary"] or r["content"] or "").strip()
-        parts.append(f"[{(r['timestamp'] or '')[:10]} {r['type']}] {text}")
-    corpus = "\n".join(parts)
-    return corpus[:MAX_CORPUS_CHARS]
-
-
 def _already_believed(conn, cluster: list[str]) -> bool:
-    """True if an ACTIVE belief already derives from (most of) this cluster —
-    re-synthesising it would just churn tokens."""
+    """True if an active or proposed belief already derives from (most of)
+    this cluster — re-synthesising it would just churn tokens."""
     rows = conn.execute(
         f"""SELECT l.src_id, COUNT(*) AS n FROM memory_links l
             JOIN memories b ON b.id = l.src_id
-            WHERE l.kind = 'derived_from' AND b.status = 'active'
+            WHERE l.kind = 'derived_from' AND b.status IN ('active', 'proposed')
               AND l.dst_id IN ({','.join('?' * len(cluster))})
             GROUP BY l.src_id""",
         cluster,
     ).fetchall()
     best = max((r["n"] for r in rows), default=0)
     return best >= len(cluster)          # identical coverage → nothing new
+
+
+def _tag(memory_id: str) -> str:
+    return memory_id[:8]
+
+
+def belief_prompt(rows_by_id: dict, cluster: list[str]) -> str:
+    """Sources tagged [m:<id8>]; the model must end every sentence with the tag
+    of the source it came from, so each claim in a belief can be checked."""
+    lines = []
+    for mid in sorted(cluster, key=lambda m: rows_by_id[m]["timestamp"]):
+        r = rows_by_id[mid]
+        text = " ".join((r["summary"] or r["content"] or "").split())
+        lines.append(f"[m:{_tag(mid)}] {text}")
+    sources = "\n".join(lines)[:MAX_CORPUS_CHARS]
+    return ("Distil these related notes into their single current truth: the present "
+            "state of affairs, decisions that stand, how things work now.\n"
+            "Rules: at most 6 short sentences. Use only facts found in the sources. "
+            "End EVERY sentence with the tag of the source it comes from, for example "
+            "[m:1a2b3c4d]. Reply with the sentences only.\n\nSources:\n" + sources)
+
+
+def cited_sentences(text: str, tags: set[str]) -> list[str]:
+    """The sentences of a model answer that cite at least one real source and
+    no invented one. Everything uncited is dropped."""
+    kept = []
+    for raw in _CITED_SENTENCE_RE.findall(strip_preamble(text or "")):
+        sentence = raw.strip()
+        cited = _CITE_RE.findall(sentence)
+        if cited and all(c in tags for c in cited):
+            kept.append(sentence)
+    return kept
+
+
+async def _judge_conflicts(pairs: list[dict], summaries: dict) -> list[dict]:
+    """With MEMORYBRAIN_JUDGE=on, keep only pairs the model calls a real
+    contradiction (similar wording alone is not a conflict)."""
+    if os.getenv("MEMORYBRAIN_JUDGE", "").strip().lower() not in ("on", "1", "true", "yes"):
+        return pairs
+    kept = []
+    for pair in pairs:
+        prompt = ("Do these two statements contradict each other? Answer YES or NO only.\n\n"
+                  f"A: {summaries.get(pair['src'], '')}\nB: {summaries.get(pair['dst'], '')}")
+        try:
+            answer = await complete(prompt)
+        except Exception:
+            logger.warning("Consolidation: the contradiction judge failed", exc_info=True)
+            continue
+        if answer.strip().upper().startswith("YES"):
+            kept.append({**pair, "meta": {**pair.get("meta", {}), "judged": True}})
+    return kept
 
 
 # ----------------------------------------------------------- contradictions
@@ -304,9 +368,10 @@ def _find_conflicts(conn, project: str, db_path: Path) -> list[dict]:
 
 # -------------------------------------------------------------- open loops
 
-def _extract_loops(conn, project: str) -> list[str]:
+def _extract_loops(conn, project: str) -> list[tuple[str, str]]:
+    """(line, timestamp of the session it came from) for each unfinished item."""
     rows = conn.execute(
-        """SELECT content FROM memories
+        """SELECT content, timestamp FROM memories
            WHERE status = 'active' AND project = ?
              AND type IN ('session', 'handover')
              AND timestamp >= datetime('now', ?)
@@ -317,10 +382,55 @@ def _extract_loops(conn, project: str) -> list[str]:
     for r in rows:
         for m in _LOOP_RE.findall(r["content"] or ""):
             line = m.strip().lstrip("-*• ").strip()
+            if _NEGATED_LOOP_RE.search(line):
+                continue
             if 12 <= len(line) <= 300 and line.lower() not in seen:
                 seen.add(line.lower())
-                loops.append(line)
+                loops.append((line, r["timestamp"]))
     return loops[:MAX_LOOPS_PER_RUN]
+
+
+def _words(text: str) -> set[str]:
+    from .search import STOPWORDS
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if w not in STOPWORDS and w not in _LOOP_MARKER_WORDS and len(w) > 1}
+
+
+def _close_loops(conn, project: str) -> int:
+    """Close each active loop that a later session reports done: one sentence
+    holding a done-word and at least 60% of the loop's own words."""
+    loops = conn.execute(
+        """SELECT id, content, timestamp FROM memories
+           WHERE project = ? AND type = 'open_loop' AND status = 'active'""",
+        (project,)).fetchall()
+    closed = 0
+    for loop in loops:
+        wanted = _words(loop["content"])
+        if not wanted:
+            continue
+        later = conn.execute(
+            """SELECT id, content, timestamp FROM memories
+               WHERE project = ? AND type IN ('session', 'handover') AND timestamp > ?
+               ORDER BY timestamp ASC""",
+            (project, loop["timestamp"])).fetchall()
+        for session in later:
+            done = False
+            for sentence in re.split(r"(?<=[.!?])\s+|\n+", session["content"] or ""):
+                words = _words(sentence) | set(re.findall(r"[a-z]+", sentence.lower()))
+                if words & _DONE_WORDS and len(wanted & words) >= LOOP_CLOSE_SHARE * len(wanted):
+                    done = True
+                    break
+            if done:
+                conn.execute(
+                    """UPDATE memories SET status = 'done', valid_to = ?, invalidated_by = ?
+                       WHERE id = ? AND status = 'active'""",
+                    (session["timestamp"], session["id"], loop["id"]))
+                _audit(conn, loop["id"], "close", "consolidation", "a later session says done",
+                       {"by": session["id"]})
+                closed += 1
+                break
+    conn.commit()
+    return closed
 
 
 # ----------------------------------------------------------- summary repair
@@ -348,21 +458,47 @@ def _repair_summaries(db_path: Path) -> int:
 
 # --------------------------------------------------------------- the cycle
 
+def _marker_is_fresh(db_path: Path) -> bool:
+    since = get_meta(META_RUNNING, db_path=db_path)
+    if not since:
+        return False
+    try:
+        started = datetime.fromisoformat(since)
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - started).total_seconds() < RUN_STALE_S
+
+
 async def consolidate(project: Optional[str] = None,
                       idle_days: int = 14,
                       db_path: Path = None,
                       mode: str = "full") -> dict:
-    """Run one sleep cycle. Returns a plain-dict report.
+    """Run one sleep cycle. Returns a plain-dict report, or
+    {"skipped": "already running"} while another run is in progress.
 
     mode:
-      - "full"  — beliefs + conflicts + loops + decay (interactive / MCP)
-      - "light" — repair + conflicts + loops + decay; skip LLM belief
+      - "full"  — beliefs + conflicts + loops (interactive / MCP)
+      - "light" — repair + conflicts + loops; skip LLM belief
                   distillation (cheap enough for nightly auto-sleep)
     """
+    db_path = db_path or DB_PATH
+    if RUN_LOCK.locked() or _marker_is_fresh(db_path):
+        return {"skipped": "already running"}
+    async with RUN_LOCK:
+        set_meta(META_RUNNING, _now(), db_path=db_path)
+        try:
+            return await _consolidate(project, idle_days, db_path, mode)
+        finally:
+            set_meta(META_RUNNING, "", db_path=db_path)
+
+
+async def _consolidate(project: Optional[str], idle_days: int, db_path: Path,
+                       mode: str) -> dict:
     from .ingest_pipeline import ingest          # late: avoids cycles
     from .linker import _write_edges, _update_degrees
 
-    db_path = db_path or DB_PATH
     mode = (mode or "full").strip().lower()
     if mode not in ("full", "light"):
         mode = "full"
@@ -394,35 +530,34 @@ async def consolidate(project: Optional[str] = None,
             entry_report["skipped_clusters"] = len(skip)
             conflicts = _find_conflicts(conn, proj, db_path)
             loops = _extract_loops(conn, proj)
+            conflict_summaries = {r["id"]: r["summary"] for r in conn.execute(
+                "SELECT id, summary FROM memories WHERE project = ? AND status = 'active'",
+                (proj,))} if conflicts else {}
+        conflicts = await _judge_conflicts(conflicts, conflict_summaries)
 
         # 1. beliefs — full mode only (light auto-sleep skips LLM cost)
         if mode == "light":
             todo = []
             entry_report["skipped_clusters"] += len(clusters) - len(skip)
         for cluster in todo:
-            corpus = _corpus(rows_by_id, cluster)
-            prompt = ("Distil these related memories into their single current "
-                      "truth. State the present state of affairs, decisions "
-                      "that stand, and how things work now — not the history "
-                      "of getting there:\n\n" + corpus)
-            if len(prompt) <= 420:
-                # providers return short inputs verbatim (instruction and
-                # all) — a tiny cluster is its own distillation
-                text = corpus
-            else:
-                try:
-                    text = await summarise(prompt, max_sentences=6)
-                except Exception:
-                    logger.warning("Consolidation: summarise failed for a "
-                                   "cluster in %s — skipping", proj,
-                                   exc_info=True)
-                    continue
+            try:
+                answer = await complete(belief_prompt(rows_by_id, cluster))
+            except Exception:
+                logger.warning("Consolidation: the belief prompt failed for a "
+                               "cluster in %s — skipping", proj, exc_info=True)
+                continue
+            sentences = cited_sentences(answer, {_tag(m) for m in cluster})
+            if not sentences:
+                entry_report["skipped_uncited"] = entry_report.get("skipped_uncited", 0) + 1
+                continue
+            # A proposal waits for a human (Atlas or brain beliefs --approve):
+            # only active beliefs reach the brief and search.
             belief = MemoryEntry(
-                content=text.strip(),
+                content=" ".join(sentences),
                 type="belief", project=proj,
                 tags=["belief", "consolidated"],
                 source="consolidation",
-                importance=4,
+                importance=4, status="proposed",
                 writer="consolidation", trust="derived",
             )
             try:
@@ -442,8 +577,7 @@ async def consolidate(project: Optional[str] = None,
             except Exception:
                 logger.warning("Consolidation: degree refresh failed",
                                exc_info=True)
-            # 2. the belief speaks first for its sources now
-            scale_strengths(cluster, SOURCE_DAMP, db_path=db_path)
+            # 2. sources are damped only when the belief is approved
             entry_report["beliefs"].append(
                 {"id": belief.id, "sources": len(cluster)})
 
@@ -452,14 +586,19 @@ async def consolidate(project: Optional[str] = None,
             _write_edges(conflicts, db_path)
             entry_report["conflicts"] = len(conflicts)
 
-        # 4. open loops — deterministic, deduplicated
-        for line in loops:
+        # 4. open loops — deterministic, deduplicated; dated like their session
+        for line, session_ts in loops:
             content = f"Open loop: {line}"
             if get_memory_by_content_hash(content, proj, db_path=db_path):
                 continue
+            try:
+                when = datetime.fromisoformat(session_ts)
+                when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                when = datetime.now(timezone.utc)
             loop_entry = MemoryEntry(
                 content=content, summary=content,
-                type="note", project=proj,
+                type="open_loop", project=proj, timestamp=when,
                 tags=[LOOP_TAG], source="consolidation", importance=4,
                 writer="consolidation", trust="derived",
             )
@@ -478,9 +617,14 @@ async def consolidate(project: Optional[str] = None,
             logger.warning("Consolidation: description draft failed for %s", proj, exc_info=True)
             entry_report["description_drafted"] = False
 
-        report["projects"].append(entry_report)
+        # 4b. loops a later session reports done
+        with _connect(db_path) as conn:
+            entry_report["loops_closed"] = _close_loops(conn, proj)
 
-    # the whole store forgets a little, gracefully
+        report["projects"].append(entry_report)
+        set_meta(f"consolidation_last_run:{proj}", _now(), db_path=db_path)
+
+    # forgetting is computed at read time now; report what is past its grace
     report["decayed"] = decay_strengths(idle_days=idle_days, db_path=db_path)
     report["finished_at"] = _now()
     return report

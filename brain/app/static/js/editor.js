@@ -272,7 +272,12 @@
     } catch (e) {}
     var row = document.createElement("div");
     row.className = "insp-actions";
-    row.innerHTML = '<button type="button" data-act="edit">✎ Edit</button>'
+    var proposal = mem.type === "belief" && mem.status === "proposed";
+    row.innerHTML = (proposal
+        ? '<button type="button" class="primary" data-act="approve">✓ Approve belief</button>'
+          + '<button type="button" data-act="reject">✕ Reject belief</button>'
+        : "")
+      + '<button type="button" data-act="edit">✎ Edit</button>'
       + '<button type="button" data-act="' + (mem.status === "archived" ? "restore" : "archive")
       + '">' + (mem.status === "archived" ? "↑ Restore" : "⬇ Archive") + "</button>"
       + '<button type="button" class="danger" data-act="delete">✕ Delete</button>';
@@ -281,7 +286,11 @@
       var b = e.target.closest("button");
       if (!b) return;
       if (b.dataset.act === "edit") openEditMemory(mem);
-      else if (b.dataset.act === "archive") {
+      else if (b.dataset.act === "approve" || b.dataset.act === "reject") {
+        var rb = await writeFetch("/api/ui/edit/beliefs/" + encodeURIComponent(mem.id)
+                                  + "/" + b.dataset.act, { method: "POST" });
+        if (rb.ok) location.reload();
+      } else if (b.dataset.act === "archive") {
         var r = await writeFetch("/api/ui/edit/memories/" + encodeURIComponent(mem.id)
                                  + "/archive", { method: "POST" });
         if (r.ok) location.reload();
@@ -430,6 +439,33 @@
     showSleepReport(report, err);
   }
 
+  /* v3: consolidation proposes beliefs; a human approves them. Each proposal
+     lists its cited sources so the verdict is informed. */
+  async function openBeliefReview() {
+    var res = await fetch("/api/ui/beliefs?status=proposed&limit=50", { cache: "no-store" });
+    var data = res.ok ? await res.json() : { beliefs: [] };
+    var items = data.beliefs || [];
+    var body = items.length
+      ? items.map(function (b) {
+          return '<div class="belief-proposal" data-id="' + esc(b.id) + '">'
+            + "<p><strong>" + esc(b.project) + "</strong> " + esc(b.content) + "</p>"
+            + '<p class="quiet">cites: ' + (b.sources || []).map(function (s) {
+                return esc(s.summary || s.id); }).join(" · ") + "</p>"
+            + '<button type="button" class="primary" data-verdict="approve">✓ Approve</button> '
+            + '<button type="button" data-verdict="reject">✕ Reject</button></div>';
+        }).join("")
+      : '<p class="quiet">No beliefs are waiting for approval.</p>';
+    var m = modal("Proposed beliefs", body, []);
+    m.el.addEventListener("click", async function (ev) {
+      var btn = ev.target.closest("button[data-verdict]");
+      if (!btn) return;
+      var card = btn.closest(".belief-proposal");
+      var r = await writeFetch("/api/ui/edit/beliefs/" + encodeURIComponent(card.dataset.id)
+                               + "/" + btn.dataset.verdict, { method: "POST" });
+      if (r.ok) card.remove();
+    });
+  }
+
   function showSleepReport(report, err) {
     var beliefs = 0, conflicts = 0, loops = 0;
     (report && report.projects || []).forEach(function (p) {
@@ -441,24 +477,28 @@
       ? '<p class="quiet">The cycle failed: ' + esc(err) + "</p>"
       : '<p>The brain slept on it:</p><ul class="sleep-report">'
         + "<li><strong>" + beliefs + "</strong> belief" + (beliefs === 1 ? "" : "s")
-        + " distilled from clusters</li>"
+        + " proposed for your approval (each sentence cites its source)</li>"
         + "<li><strong>" + conflicts + "</strong> contradiction"
         + (conflicts === 1 ? "" : "s") + " flagged for your verdict</li>"
         + "<li><strong>" + loops + "</strong> open loop"
         + (loops === 1 ? "" : "s") + " extracted</li>"
         + "<li><strong>" + ((report && report.decayed) || 0)
-        + "</strong> unrecalled memories decayed a little</li></ul>"
-        + '<p class="quiet">Beliefs appear gold in the Stream and rise toward '
+        + "</strong> unrecalled memories past their grace period rank a little lower</li></ul>"
+        + '<p class="quiet">Approved beliefs appear gold in the Stream and rise toward '
         + "the head of their constellation.</p>";
     body += '<label class="field" style="flex-direction:row;align-items:center;gap:8px">'
       + '<input type="checkbox" id="f-autosleep"'
       + (autoSleepOn() ? " checked" : "")
       + '> run automatically once a day when I open the UI</label>';
-    var m = modal("☾ The sleep cycle", body,
-      (err || beliefs + conflicts + loops === 0)
-        ? []
-        : [{ label: "Reload to see it", primary: true,
-             run: function () { location.reload(); } }]);
+    var buttons = (err || beliefs + conflicts + loops === 0)
+      ? []
+      : [{ label: "Reload to see it", primary: !beliefs,
+           run: function () { location.reload(); } }];
+    if (!err && beliefs) {
+      buttons.unshift({ label: "Review proposed beliefs", primary: true,
+                        run: function () { m.close(); openBeliefReview(); } });
+    }
+    var m = modal("☾ The sleep cycle", body, buttons);
     m.q("#f-autosleep").addEventListener("change", function (ev) {
       try { localStorage.setItem(AUTO_SLEEP, ev.target.checked ? "on" : "off"); }
       catch (e) {}

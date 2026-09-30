@@ -200,6 +200,27 @@ def stream(conn, project: Optional[str] = None, mtype: Optional[str] = None,
 
 # -------------------------------------------------------------- conflicts
 
+def beliefs(conn, status: str = "proposed", project: Optional[str] = None,
+            limit: int = 50) -> dict[str, Any]:
+    """Beliefs by status (v3: consolidation proposes, a human approves), each
+    with the sources it cites."""
+    sql = """SELECT id, project, summary, content, timestamp, status FROM memories
+             WHERE type = 'belief' AND status = ?"""
+    params: list[Any] = [status]
+    if project:
+        sql += " AND project = ?"
+        params.append(project)
+    sql += " ORDER BY timestamp DESC LIMIT ?"
+    params.append(limit)
+    items = _rows(conn, sql, tuple(params))
+    for item in items:
+        item["sources"] = _rows(conn, """SELECT m.id, m.summary, m.type FROM memory_links l
+                                         JOIN memories m ON m.id = l.dst_id
+                                         WHERE l.src_id = ? AND l.kind = 'derived_from'""",
+                                (item["id"],))
+    return {"status": status, "beliefs": items}
+
+
 def conflicts(conn, project: Optional[str] = None,
               limit: int = 50) -> dict[str, Any]:
     """Unresolved contradiction pairs flagged by the consolidation cycle:

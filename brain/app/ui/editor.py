@@ -32,7 +32,7 @@ from ..models import MemoryEntry, Project, ValidationError
 from ..redact import redact
 from ..storage import (DB_PATH, DERIVED_EDGE_KINDS, archive_memory_audited, content_hash,
                        get_memory, get_project, hard_delete_memory, record_recall,
-                       restore_memory, upsert_project)
+                       restore_memory, set_belief_status, upsert_project)
 from ..vector import vec_delete
 from . import queries as q
 
@@ -104,6 +104,22 @@ async def run_consolidation(body: SleepBody | None = None):
 class ConflictBody(BaseModel):
     a_id: str = Field(min_length=1, max_length=64)
     b_id: str = Field(min_length=1, max_length=64)
+
+
+@router.post("/api/ui/edit/beliefs/{memory_id}/approve")
+def approve_belief(memory_id: str):
+    """A proposed belief becomes active: it reaches the brief and search."""
+    if not set_belief_status(memory_id, approve=True, actor="ui", db_path=DB_PATH):
+        raise HTTPException(404, "No proposed belief with that id")
+    return {"id": memory_id, "status": "active"}
+
+
+@router.post("/api/ui/edit/beliefs/{memory_id}/reject")
+def reject_belief(memory_id: str):
+    """A proposed belief is archived (reversible), never shown as truth."""
+    if not set_belief_status(memory_id, approve=False, actor="ui", db_path=DB_PATH):
+        raise HTTPException(404, "No proposed belief with that id")
+    return {"id": memory_id, "status": "archived"}
 
 
 @router.post("/api/ui/edit/conflicts/dismiss")

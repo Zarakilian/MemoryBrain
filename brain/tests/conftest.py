@@ -1,5 +1,6 @@
 # tests/conftest.py
 import os
+import re
 
 # FastAPI's TestClient sends Host: testserver; the v3 Host check only answers
 # loopback names unless a host is listed here. Host-check tests set their own.
@@ -42,11 +43,16 @@ def mock_ollama():
         return {"embeddings": [[0.1] * 768 for _ in texts]}
 
     mock_client.embed.side_effect = _embed
-    mock_client.generate.side_effect = AsyncMock(
-        side_effect=lambda model, prompt, **kwargs: {
-            "response": "3" if "Rate the importance" in prompt else "Short two sentence summary."
-        }
-    )
+    def _generate(model, prompt, **kwargs):
+        if "Rate the importance" in prompt:
+            return {"response": "3"}
+        sources = prompt.split("Sources:", 1)[1] if "Sources:" in prompt else ""
+        tags = re.findall(r"\[m:[^\]\s]+\]", sources)
+        if tags:  # a v3 belief prompt: cite the first real source
+            return {"response": f"Short cited summary {tags[0]}."}
+        return {"response": "Short two sentence summary."}
+
+    mock_client.generate.side_effect = AsyncMock(side_effect=_generate)
 
     provider = s.OllamaProvider.__new__(s.OllamaProvider)
     provider._client = mock_client

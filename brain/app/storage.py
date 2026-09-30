@@ -279,46 +279,57 @@ def record_recall(memory_ids: list[str], boost: float = RECALL_BOOST_DIRECT,
         return cur.rowcount
 
 
+DECAY_GRACE_DAYS = 14
+DECAY_HALF_LIFE_DAYS = 60
+STRENGTH_FLOOR, STRENGTH_MAX = 0.2, 3.0
+BELIEF_SOURCE_DAMP = 0.8  # an approved belief speaks first for its sources
+# Only narrative memories fade with disuse. Facts, decisions, references,
+# procedures, beliefs and open loops stay as strong as their reinforcement:
+# an old truth must keep beating a fresh loose match (search v3).
+DECAYING_TYPES = frozenset({"session", "handover", "note"})
+
+
+def effective_strength(stored: float, timestamp: str, last_recalled: Optional[str],
+                       pinned: bool, now: Optional[datetime] = None,
+                       memory_type: Optional[str] = None) -> float:
+    """Strength used for ranking (v3). The column holds reinforcement only;
+    forgetting is computed from time, so running consolidation again never
+    decays anything twice. Idle days count from the later of the last recall
+    and the write, minus a 14-day grace; strength halves every 60 idle days.
+    Pinned memories never decay, and only DECAYING_TYPES decay at all."""
+    stored = 1.0 if stored is None else float(stored)
+    if pinned or (memory_type is not None and memory_type not in DECAYING_TYPES):
+        return min(STRENGTH_MAX, max(STRENGTH_FLOOR, stored))
+    now = now or datetime.now(timezone.utc)
+    moments = []
+    for value in (timestamp, last_recalled):
+        try:
+            ts = datetime.fromisoformat(value) if value else None
+        except ValueError:
+            ts = None
+        if ts is not None:
+            moments.append(ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc))
+    last = max(moments) if moments else now
+    idle = max(0.0, (now - last).total_seconds() / 86400 - DECAY_GRACE_DAYS)
+    return min(STRENGTH_MAX, max(STRENGTH_FLOOR, stored * 0.5 ** (idle / DECAY_HALF_LIFE_DAYS)))
+
+
 def decay_strengths(idle_days: int = 14, factor: float = 0.9,
                     db_path: Path = DB_PATH) -> int:
-    """Decay: memories nothing has recalled within idle_days lose strength
-    (floored). Called by the consolidation cycle — the brain's sleep.
-
-    v2.2: pinned memories are excluded — the working set refuses to sink.
-    """
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=idle_days)).isoformat()
+    """v3: decay is computed at read time (effective_strength), so nothing is
+    multiplied here. Returns how many unpinned memories are past their grace
+    period, for the sleep report."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=DECAY_GRACE_DAYS)).isoformat()
     with _connect(db_path) as conn:
-        # project_pins may not exist on pre-005 DBs mid-migration; tolerate.
         try:
-            pinned = {
-                r[0] for r in conn.execute(
-                    "SELECT memory_id FROM project_pins"
-                ).fetchall()
-            }
+            return conn.execute(
+                f"""SELECT COUNT(*) FROM memories m
+                   WHERE m.status = 'active' AND COALESCE(m.last_recalled, m.timestamp) < ?
+                     AND m.type IN ({','.join('?' * len(DECAYING_TYPES))})
+                     AND NOT EXISTS (SELECT 1 FROM project_pins p WHERE p.memory_id = m.id)""",
+                (cutoff, *sorted(DECAYING_TYPES))).fetchone()[0]
         except sqlite3.OperationalError:
-            pinned = set()
-        if pinned:
-            placeholders = ",".join("?" * len(pinned))
-            cur = conn.execute(
-                f"""UPDATE memories
-                   SET strength = max(?, strength * ?)
-                   WHERE status = 'active'
-                     AND COALESCE(last_recalled, timestamp) < ?
-                     AND strength > ?
-                     AND id NOT IN ({placeholders})""",
-                [STRENGTH_FLOOR, factor, cutoff, STRENGTH_FLOOR, *pinned],
-            )
-        else:
-            cur = conn.execute(
-                """UPDATE memories
-                   SET strength = max(?, strength * ?)
-                   WHERE status = 'active'
-                     AND COALESCE(last_recalled, timestamp) < ?
-                     AND strength > ?""",
-                (STRENGTH_FLOOR, factor, cutoff, STRENGTH_FLOOR),
-            )
-        conn.commit()
-        return cur.rowcount
+            return 0
 
 
 def scale_strengths(memory_ids: list[str], factor: float,
@@ -339,17 +350,40 @@ def scale_strengths(memory_ids: list[str], factor: float,
 
 
 def get_strengths(memory_ids: list[str], db_path: Path = DB_PATH) -> dict[str, float]:
-    """Strength map for ranking — read-only, shape-neutral (results never
-    carry the column; hybrid_search folds it into scores internally)."""
+    """Effective strength map for ranking (see effective_strength) — read-only,
+    shape-neutral (results never carry the column)."""
     if not memory_ids:
         return {}
     with _connect(db_path) as conn:
         rows = conn.execute(
-            f"""SELECT id, strength FROM memories
-                WHERE id IN ({','.join('?' * len(memory_ids))})""",
+            f"""SELECT m.id, m.type, m.strength, m.timestamp, m.last_recalled,
+                       EXISTS (SELECT 1 FROM project_pins p WHERE p.memory_id = m.id) AS pinned
+                FROM memories m WHERE m.id IN ({','.join('?' * len(memory_ids))})""",
             memory_ids,
         ).fetchall()
-    return {r["id"]: r["strength"] for r in rows}
+    return {r["id"]: effective_strength(r["strength"], r["timestamp"], r["last_recalled"],
+                                        bool(r["pinned"]), memory_type=r["type"]) for r in rows}
+
+
+def set_belief_status(memory_id: str, approve: bool, actor: str,
+                      db_path: Path = DB_PATH) -> bool:
+    """Approve (active) or reject (archived) a proposed belief, audited. On
+    approval the belief speaks first for its sources, which sink a little."""
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE memories SET status = ? WHERE id = ? AND type = 'belief' AND status = 'proposed'",
+            ("active" if approve else "archived", memory_id))
+        if not cur.rowcount:
+            return False
+        _audit(conn, memory_id, "approve" if approve else "reject", actor)
+        if approve:
+            conn.execute(
+                """UPDATE memories SET strength = max(?, strength * ?)
+                   WHERE id IN (SELECT dst_id FROM memory_links
+                                WHERE src_id = ? AND kind = 'derived_from')""",
+                (STRENGTH_FLOOR, BELIEF_SOURCE_DAMP, memory_id))
+        conn.commit()
+    return True
 
 
 def _row_to_project(row: sqlite3.Row) -> Project:
