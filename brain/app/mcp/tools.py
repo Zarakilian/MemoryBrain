@@ -650,7 +650,9 @@ async def list_tools() -> list[types.Tool]:
             description=(
                 "Store a new memory. Prefer type=fact/decision for durable truths, "
                 "open_loop for unfinished work, session for narrative. "
-                "Auto-supersedes similar active memories. Pass description to skip LLM summariser."
+                "Near-identical facts and decisions replace the older one; other near "
+                "matches come back in potential_supersessions. Secrets are redacted. "
+                "Pass description to skip the LLM summariser."
             ),
             inputSchema={
                 "type": "object",

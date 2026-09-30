@@ -284,9 +284,17 @@ async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
     from ..vector import vec_get
 
     updated = get_memory(memory_id, db_path=DB_PATH)
-    if content_changed:
-        await index_memory_vectors(memory_id, updated.content, db_path=DB_PATH)
     try:
+        if content_changed:
+            result = await index_memory_vectors(memory_id, updated.content, db_path=DB_PATH)
+            if not result["embedded"]:
+                # The old vectors describe the old text: drop them so search
+                # stops using them. embedded=0 queues the re-embed job.
+                with _rw() as conn:
+                    conn.execute("DELETE FROM vec_chunks WHERE memory_id = ?", (memory_id,))
+                    conn.execute("DELETE FROM vec_memories WHERE memory_id = ?", (memory_id,))
+                    conn.commit()
+                return False
         with _rw() as conn:
             conn.execute(
                 f"""DELETE FROM memory_links WHERE (src_id = ? OR dst_id = ?)

@@ -233,13 +233,66 @@ def test_old_pre_compact_hook_request_still_works(ing_db, fake_provider, monkeyp
 
     monkeypatch.delenv("BRAIN_API_KEY", raising=False)
     body = {"content": "Session transcript tail: the car is fixed.", "project": "acme",
-            "source": "pre-compact-auto"}
+            "source": "pre-compact:2026-09-30T10:00:00+00:00"}
     first = TestClient(app).post("/ingest/session", json=body)
     assert first.status_code == 201
     assert set(first.json()) == REPORT_KEYS
     assert first.json()["writer"] == "hook"
     again = TestClient(app).post("/ingest/session", json=body)
     assert again.status_code == 200 and again.json()["duplicate"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_session_stored_while_embedding_is_down_still_chains(ing_db, fake_provider):
+    first = await ingest(MemoryEntry(content="Session one: the car.", type="session",
+                                     project="acme"))
+    fake_provider.fail_on = {"title: none"}
+    second = await ingest(MemoryEntry(content="Session two: the invoice.", type="session",
+                                      project="acme"))
+    assert second.embedded is False
+    conn = connect(ing_db)
+    try:
+        chained = conn.execute(
+            "SELECT COUNT(*) FROM memory_links WHERE kind = 'session_chain' "
+            "AND ((src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?))",
+            (second.id, first.id, first.id, second.id)).fetchone()[0]
+    finally:
+        conn.close()
+    assert chained == 1
+
+
+@pytest.mark.asyncio
+async def test_a_provider_that_cannot_start_never_loses_the_text(ing_db, monkeypatch):
+    import app.summarise as s
+
+    def broken():
+        raise ValueError("MEMORYBRAIN_PROVIDER must be one of ollama, gemini, openai")
+    monkeypatch.setattr(s, "_provider", None)
+    monkeypatch.setattr(s, "get_provider", broken)
+    result = await ingest(MemoryEntry(content="kept anyway", type="note", project="acme"))
+    report = write_report(result)
+    assert report["embedded"] is False and get_memory(result.id, db_path=ing_db) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_written_mid_flight_is_caught_before_storing(ing_db, fake_provider,
+                                                                       monkeypatch):
+    import app.ingest_pipeline as ip
+    real = ip._ensure_summary
+
+    async def racing(entry, warnings):
+        add_memory(MemoryEntry(content=entry.content, type=entry.type, project=entry.project,
+                               importance=3), db_path=ing_db)  # another call won the race
+        await real(entry, warnings)
+    monkeypatch.setattr(ip, "_ensure_summary", racing)
+    result = await ingest(MemoryEntry(content="sent twice", type="note", project="acme"))
+    assert result.duplicate is True
+    conn = connect(ing_db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM memories WHERE content = 'sent twice'"
+                            ).fetchone()[0] == 1
+    finally:
+        conn.close()
 
 
 @pytest.mark.asyncio

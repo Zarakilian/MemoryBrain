@@ -83,6 +83,8 @@ def _parse_tags(raw) -> list[str]:
 
 def _semantic_edges(entry_id: str, entry_type: str, embedding: list[float],
                     db_path: Path, allowed_ids: Optional[set] = None) -> list[dict]:
+    if not embedding:  # stored without a vector: no semantic neighbours yet
+        return []
     theta_self = THETA_LINK.get(entry_type, _THETA_DEFAULT)
     candidates = vec_search(embedding, n_results=K_SEMANTIC + 1,
                             filters={"status": "active"}, db_path=db_path)

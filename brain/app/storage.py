@@ -117,14 +117,17 @@ def add_memory(entry: MemoryEntry, db_path: Path = DB_PATH):
         conn.commit()
 
 
-def close_superseded(conn: sqlite3.Connection, old_id: str, new_id: str, at: str) -> None:
+def close_superseded(conn: sqlite3.Connection, old_id: str, new_id: str, at: str,
+                     actor: str = "ingest") -> None:
     """Close an active memory that a newer one replaces (the caller commits):
-    archived, pointing at its replacement, valid until `at`."""
-    conn.execute(
+    archived, pointing at its replacement, valid until `at`, audited."""
+    cur = conn.execute(
         """UPDATE memories SET status = 'archived', superseded_by = ?, invalidated_by = ?,
                   valid_to = ? WHERE id = ? AND status = 'active'""",
         (new_id, new_id, at, old_id),
     )
+    if cur.rowcount:
+        _audit(conn, old_id, "supersede", actor, "", {"by": new_id})
 
 
 def count_chunks(memory_id: str, db_path: Path = DB_PATH) -> int:
@@ -209,13 +212,17 @@ def get_recent(
     return [dict(row) for row in rows]
 
 
-def archive_memory(memory_id: str, superseded_by: str, db_path: Path = DB_PATH):
-    """Mark a memory as archived (superseded). Never deletes."""
+def archive_memory(memory_id: str, superseded_by: str, db_path: Path = DB_PATH,
+                   actor: str = "system", reason: str = ""):
+    """Mark a memory as archived (superseded) with an audit row. Never deletes."""
     with _connect(db_path) as conn:
-        conn.execute(
+        cur = conn.execute(
             "UPDATE memories SET status = 'archived', superseded_by = ? WHERE id = ?",
             (superseded_by, memory_id),
         )
+        if cur.rowcount:
+            _audit(conn, memory_id, "archive", actor, reason,
+                   {"superseded_by": superseded_by} if superseded_by else None)
         conn.commit()
 
 
@@ -415,8 +422,20 @@ def archive_memory_audited(memory_id: str, actor: str, reason: str = "",
 
 
 def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH) -> bool:
-    """Bring an archived memory back to active, with an audit row."""
-    return _set_status_audited(memory_id, "active", "restore", actor, "", db_path)
+    """Bring an archived memory back to active, with an audit row. A restored
+    memory is valid again, so its closure (superseded_by, invalidated_by,
+    valid_to) is cleared; the audit row keeps the old values."""
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT superseded_by, invalidated_by, valid_to FROM memories "
+                           "WHERE id = ?", (memory_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute("""UPDATE memories SET status = 'active', superseded_by = NULL,
+                        invalidated_by = NULL, valid_to = NULL WHERE id = ?""", (memory_id,))
+        _audit(conn, memory_id, "restore", actor, "",
+               {k: row[k] for k in ("superseded_by", "invalidated_by", "valid_to") if row[k]})
+        conn.commit()
+    return True
 
 
 def hard_delete_memory(memory_id: str, actor: str, reason: str = "",

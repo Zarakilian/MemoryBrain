@@ -227,3 +227,89 @@ def test_upsert_project_keeps_an_existing_one_liner(tmp_db):
                    db_path=tmp_db)
     upsert_project(Project(slug="acme", name="Acme"), db_path=tmp_db)
     assert get_project("acme", db_path=tmp_db).one_liner == "Invoices and exports"
+
+
+# ------------------------------------------------------------- review follow-ups
+
+def test_an_edit_while_the_model_is_down_drops_stale_vectors_and_queues_a_retry(
+        tmp_db, fake_provider, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.reembed import pending_count
+
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    monkeypatch.setattr("app.ui.editor.DB_PATH", tmp_db)
+    mid = _mem(tmp_db, "the car is red", vector=[1.0, 0.0, 0.0, 0.0])
+    fake_provider.fail_on = {"title: none"}  # document embedding is down
+    r = TestClient(app).patch(f"/api/ui/edit/memories/{mid}", json={"content": "the car is blue"})
+    assert r.status_code == 200 and r.json()["relinked"] is False
+    conn = connect(tmp_db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?",
+                            (mid,)).fetchone()[0] == 0
+        assert conn.execute("SELECT embedded FROM memories WHERE id = ?", (mid,)).fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert pending_count(db_path=tmp_db) >= 1
+
+
+def test_a_flagged_memory_with_a_current_vector_is_still_pending(tmp_db, fake_provider):
+    import app.summarise as s
+    from app.reembed import pending_count
+    mid = _mem(tmp_db, "flagged")
+    vec_add(mid, [0.3] * 8, {}, db_path=tmp_db, model=s.embed_model_id())
+    conn = connect(tmp_db)
+    try:
+        with conn:
+            conn.execute("UPDATE memories SET embedded = 0 WHERE id = ?", (mid,))
+    finally:
+        conn.close()
+    assert pending_count(db_path=tmp_db) == 1
+
+
+def test_resolving_a_conflict_audits_the_archive(tmp_db):
+    from app.conflicts import resolve_conflict
+    a, b, belief, (lo, hi) = _verdicts(tmp_db)
+    conn = connect(tmp_db)
+    try:
+        with conn:  # make it a live contradiction again
+            conn.execute("UPDATE memory_links SET weight = 0.9, meta = '{}' "
+                         "WHERE kind = 'conflicts_with'")
+    finally:
+        conn.close()
+    assert "error" not in resolve_conflict(lo, hi, db_path=tmp_db)  # lo wins, hi is archived
+    rows = _audit_rows(tmp_db, hi)
+    assert [r["action"] for r in rows] == ["archive"] and rows[0]["actor"] == "resolve_conflict"
+
+
+@pytest.mark.asyncio
+async def test_supersession_is_audited(tmp_db, fake_provider, monkeypatch):
+    import app.summarise as s
+    from app.ingest_pipeline import ingest
+
+    monkeypatch.setattr("app.ingest_pipeline.DB_PATH", tmp_db)
+    vector = await s.embed_document("The car is red.")
+    old = MemoryEntry(content="The car is green.", type="fact", project="acme", importance=4)
+    add_memory(old, db_path=tmp_db)
+    vec_add(old.id, vector, {}, db_path=tmp_db, model=s.embed_model_id())
+    new = await ingest(MemoryEntry(content="The car is red.", type="fact", project="acme",
+                                   writer="claude"))
+    rows = _audit_rows(tmp_db, old.id)
+    assert [r["action"] for r in rows] == ["supersede"] and rows[0]["actor"] == "claude"
+    assert new.superseded == [old.id]
+
+
+def test_restore_reopens_the_validity_window(tmp_db):
+    mid = _mem(tmp_db, "a fact that came back", type_="fact")
+    conn = connect(tmp_db)
+    try:
+        with conn:
+            conn.execute("UPDATE memories SET status = 'archived', superseded_by = 'x', "
+                         "invalidated_by = 'x', valid_to = '2026-09-01T00:00:00+00:00' "
+                         "WHERE id = ?", (mid,))
+    finally:
+        conn.close()
+    assert restore_memory(mid, actor="ui", db_path=tmp_db)
+    got = get_memory(mid, db_path=tmp_db)
+    assert (got.status, got.superseded_by, got.invalidated_by, got.valid_to) == \
+        ("active", None, None, None)

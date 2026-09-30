@@ -112,7 +112,8 @@ def resolve_conflict(winner_id: str, loser_id: str,
     if not conflict_edge_exists(winner_id, loser_id, db_path=db_path):
         # Still allow resolve if both active and user is sure? Prefer strict.
         return {"error": "No such contradiction"}
-    archive_memory(loser_id, superseded_by=winner_id, db_path=db_path)
+    archive_memory(loser_id, superseded_by=winner_id, db_path=db_path,
+                   actor="resolve_conflict", reason=f"contradiction resolved for {winner_id}")
     try:
         vec_update_metadata(loser_id, {"status": "archived"}, db_path=db_path)
     except TypeError:

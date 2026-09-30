@@ -193,7 +193,8 @@ def _retire_bloated_beliefs(conn, project: str, db_path: Path) -> int:
         (project, MAX_CLUSTER_SOURCES),
     ).fetchall()
     for r in rows:
-        archive_memory(r["id"], superseded_by=None, db_path=db_path)
+        archive_memory(r["id"], superseded_by=None, db_path=db_path,
+                       actor="consolidation", reason="belief cites too many sources")
         try:
             from .vector import vec_update_metadata
             vec_update_metadata(r["id"], {"status": "archived"})

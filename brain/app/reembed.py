@@ -25,8 +25,10 @@ TICK_S = 60            # one batch per tick, so the rate is per minute
 RETRY_AFTER_S = 1800   # a memory that failed waits this long before a retry
 _recent_failures: dict[str, float] = {}  # memory id -> time.monotonic() of the failure
 
+# Missing vector, a vector from another model, or flagged for a retry
+# (embedded = 0, e.g. an edit whose re-embed failed).
 _PENDING = """FROM memories m LEFT JOIN vec_memories v ON v.memory_id = m.id
-              WHERE v.memory_id IS NULL OR v.model != ?"""
+              WHERE v.memory_id IS NULL OR v.model != ? OR m.embedded = 0"""
 
 
 def pending_count(db_path: Optional[Path] = None) -> int:

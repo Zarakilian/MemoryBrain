@@ -139,19 +139,21 @@ async def _ensure_importance(entry: MemoryEntry) -> None:
 
 
 async def _embed(entry: MemoryEntry, chunks: list, warnings: list[str]):
-    """(parent vector, chunk vectors), or (None, []) when the model fails."""
+    """(model id, parent vector, chunk vectors); (\"\", None, []) when the
+    provider cannot start or the model fails. Never raises."""
     try:
+        model = embed_model_id()
         vectors = await embed_documents([entry.content] + [c.text for c in chunks])
     except Exception as exc:
         logger.warning("embedding failed for %s (%s); stored without vectors",
                        entry.id, type(exc).__name__)
         warnings.append(f"embedding failed: {type(exc).__name__}")
-        return None, []
-    return vectors[0], vectors[1:]
+        return "", None, []
+    return model, vectors[0], vectors[1:]
 
 
 def _store(entry: MemoryEntry, model: str, parent, chunks: list, chunk_vectors: list,
-           superseded: list[str]) -> None:
+           superseded: list[str], warnings: list[str]) -> None:
     """One transaction: the row, its vectors and any supersession closures.
     If it fails nothing is written and the error propagates."""
     on_sqlite_vec = get_backend() == "sqlite_vec"
@@ -164,12 +166,19 @@ def _store(entry: MemoryEntry, model: str, parent, chunks: list, chunk_vectors: 
                 insert_vectors(conn, entry.id, parent, model,
                                [(c.ix, c.start, c.end, v) for c, v in zip(chunks, chunk_vectors)])
             for old_id in superseded:
-                close_superseded(conn, old_id, entry.id, closed_at)
+                close_superseded(conn, old_id, entry.id, closed_at,
+                                 actor=entry.writer or "ingest")
     finally:
         conn.close()
     if parent is not None and not on_sqlite_vec:  # legacy Chroma rollback backend
-        vec_add(entry.id, parent, {"project": entry.project, "type": entry.type,
-                                   "status": "active"}, db_path=DB_PATH, model=model)
+        try:
+            vec_add(entry.id, parent, {"project": entry.project, "type": entry.type,
+                                       "status": "active"}, db_path=DB_PATH, model=model)
+        except Exception as exc:
+            logger.warning("Chroma write failed for %s (%s)", entry.id, type(exc).__name__)
+            warnings.append(f"embedding failed: {type(exc).__name__}")
+            entry.embedded = False
+            _flag_unembedded(entry.id)
     for old_id in superseded:
         try:
             vec_update_metadata(old_id, {"status": "archived"})  # no-op on sqlite-vec
@@ -177,17 +186,23 @@ def _store(entry: MemoryEntry, model: str, parent, chunks: list, chunk_vectors: 
             logger.warning("could not mark %s archived in the vector store", old_id)
 
 
+def _flag_unembedded(memory_id: str) -> None:
+    conn = connect(DB_PATH)
+    try:
+        with conn:
+            conn.execute("UPDATE memories SET embedded = 0 WHERE id = ?", (memory_id,))
+    finally:
+        conn.close()
+
+
 async def _link(entry: MemoryEntry, embedding, superseded: list[str]) -> None:
     """Graph edges and workspace file links are cache: a failure is logged and
-    never fails the write (the graph catches up on /admin/rebuild-graph)."""
+    never fails the write (the graph catches up on /admin/rebuild-graph).
+    Without a vector the tag, reference and session_chain edges still form."""
     try:
-        if embedding is not None:
-            from . import linker
-            await asyncio.to_thread(linker.link_new_memory, entry, embedding,
-                                    superseded_ids=superseded, db_path=DB_PATH)
-        else:
-            from .workspace.resolve import link_memory_files
-            await asyncio.to_thread(link_memory_files, entry, DB_PATH)
+        from . import linker
+        await asyncio.to_thread(linker.link_new_memory, entry, embedding,
+                                superseded_ids=superseded, db_path=DB_PATH)
     except Exception:
         logger.warning("linking failed for %s; run /admin/rebuild-graph", entry.id,
                        exc_info=True)
@@ -210,9 +225,8 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     await _ensure_summary(entry, warnings)
     await _ensure_importance(entry)
 
-    model = embed_model_id()
     chunks = chunk_text(entry.content)
-    parent, chunk_vectors = await _embed(entry, chunks, warnings)
+    model, parent, chunk_vectors = await _embed(entry, chunks, warnings)
     entry.embedded = parent is not None
     superseded, potential = ([], []) if parent is None else \
         await _check_supersession(entry, parent, model)
@@ -221,15 +235,28 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     if superseded:
         entry.supersedes = superseded[0]
 
-    _store(entry, model, parent, chunks, chunk_vectors, superseded)
+    # The model calls above can take seconds; another call may have stored the
+    # same text meanwhile. No await between this check and the write.
+    existing = get_memory_by_content_hash(entry.content, entry.project, db_path=DB_PATH,
+                                          active_only=True)
+    if existing:
+        existing.duplicate = True
+        existing.warnings = warnings
+        existing.chunks = count_chunks(existing.id, db_path=DB_PATH)
+        return existing
+
+    _store(entry, model, parent, chunks, chunk_vectors, superseded, warnings)
     entry.superseded = superseded
     entry.potential_supersessions = potential
     entry.chunks = len(chunk_vectors)
     entry.warnings = warnings
 
-    upsert_project(
-        Project(slug=entry.project, name=entry.project.replace("-", " ").title()),
-        db_path=DB_PATH,
-    )
+    try:
+        upsert_project(
+            Project(slug=entry.project, name=entry.project.replace("-", " ").title()),
+            db_path=DB_PATH,
+        )
+    except Exception:
+        logger.warning("project upsert failed for %s", entry.project, exc_info=True)
     await _link(entry, parent, superseded)
     return entry

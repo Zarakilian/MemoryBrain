@@ -16,6 +16,10 @@ GEMMA_QUERY_PREFIX = "task: search result | query: "
 PROVIDER_NAMES = ("ollama", "gemini", "openai")
 SUMMARY_HEAD = 3000
 SUMMARY_TAIL = 1000
+# Cloud embedders reject over-long input; cut it to stay inside their windows
+# (text-embedding-3-small: 8,191 tokens; text-embedding-004: 2,048 tokens).
+OPENAI_EMBED_MAX_CHARS = 24_000
+GEMINI_EMBED_MAX_CHARS = 6_000
 
 # Chat models love announcing themselves ("Here is a summary of the
 # feedback in 3 sentences:") — which then gets STORED and becomes the
@@ -128,7 +132,8 @@ class GeminiProvider(SummariseProvider):
     async def embed(self, text: str) -> list[float]:
         import asyncio
         result = await asyncio.to_thread(
-            self._client.models.embed_content, model=self._embed_model, contents=text
+            self._client.models.embed_content, model=self._embed_model,
+            contents=text[:GEMINI_EMBED_MAX_CHARS]
         )
         return result.embedding
 
@@ -176,11 +181,13 @@ class OpenAIProvider(SummariseProvider):
         self._summarise_model = os.getenv("OPENAI_SUMMARISE_MODEL", "gpt-4o-mini")
 
     async def embed(self, text: str) -> list[float]:
-        response = await self._client.embeddings.create(model=self._embed_model, input=text)
+        response = await self._client.embeddings.create(
+            model=self._embed_model, input=text[:OPENAI_EMBED_MAX_CHARS])
         return response.data[0].embedding
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        response = await self._client.embeddings.create(model=self._embed_model, input=texts)
+        response = await self._client.embeddings.create(
+            model=self._embed_model, input=[t[:OPENAI_EMBED_MAX_CHARS] for t in texts])
         return [d.embedding for d in response.data]
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:

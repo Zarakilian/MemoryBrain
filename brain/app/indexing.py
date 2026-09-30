@@ -96,9 +96,10 @@ async def index_memory_vectors(memory_id: str, content: str,
     Returns {"embedded", "model", "chunks", "error"}. Never raises for a
     provider error; storage errors still propagate."""
     path = db_path or _storage.DB_PATH
-    model = embed_model_id()
+    model = ""
     chunks = chunk_text(content)
     try:
+        model = embed_model_id()
         vectors = await embed_documents([content] + [c.text for c in chunks])
     except Exception as exc:  # provider down, model missing, bad input
         logger.debug("embedding failed for %s", memory_id, exc_info=True)
