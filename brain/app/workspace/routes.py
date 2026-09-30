@@ -122,6 +122,9 @@ async def workspace_bind(req: BindRequest):
         if resolved is None:
             return {"written": False, "reason": "path_outside_known_roots", "row": None, "conflict_with": ""}
         root_id, rel = resolved
+        if ".." in rel.replace("\\", "/").split("/"):
+            raise HTTPException(status_code=422,
+                                detail="abs_path must not climb out of its root with '..'")
     else:
         root_id, rel = req.root_id, req.rel_path
     if not root_id:

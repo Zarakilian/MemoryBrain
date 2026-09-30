@@ -91,28 +91,31 @@ async def handle_search_memory(
     include_history: bool = False,
     source: str = "search_memory",
     as_of: Optional[str] = None,
+    record: bool = True,
 ) -> str:
+    """record=False is a pure read: no recall boost, no retrieval row (GET /search)."""
     results, degraded = await search_with_status(
         query, limit=limit, project=project, type_filter=type_filter,
         days=days, tags=tags, include_history=include_history, as_of=as_of,
     )
-    try:
-        record_recall([r["id"] for r in results],
-                      boost=RECALL_BOOST_SEARCH, db_path=DB_PATH)
-    except Exception:
-        pass
-    # v2.3: log impression for ranking feedback (no chosen_id yet)
-    try:
-        from ..retrieval import record_retrieval
-        record_retrieval(
-            query=query,
-            result_ids=[r["id"] for r in results if r.get("id")],
-            project=project,
-            source=source,
-            db_path=DB_PATH,
-        )
-    except Exception:
-        pass
+    if record:
+        try:
+            record_recall([r["id"] for r in results],
+                          boost=RECALL_BOOST_SEARCH, db_path=DB_PATH)
+        except Exception:
+            pass
+        # v2.3: log impression for ranking feedback (no chosen_id yet)
+        try:
+            from ..retrieval import record_retrieval
+            record_retrieval(
+                query=query,
+                result_ids=[r["id"] for r in results if r.get("id")],
+                project=project,
+                source=source,
+                db_path=DB_PATH,
+            )
+        except Exception:
+            pass
     if degraded:
         # Keyword hits only; the object form tells the agent why.
         return json.dumps({"results": results, "degraded": degraded}, default=str)

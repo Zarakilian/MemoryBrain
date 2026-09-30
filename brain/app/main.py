@@ -11,7 +11,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.server.transport_security import TransportSecuritySettings
 
 from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
@@ -20,7 +19,7 @@ from .storage import init_db, list_projects, get_next_session_note, DB_PATH
 from .db import connect
 from .auth import require_api_key
 from .models import ValidationError
-from .security import HostCheckMiddleware, WriteGuardMiddleware
+from .security import HostCheckMiddleware, WriteGuardMiddleware, mcp_transport_security
 from .summarise import (_get_ollama_client, _get_embed_model, _get_summarise_model,
                         _get_provider, provider_warning)
 
@@ -54,26 +53,9 @@ MCP_PUBLIC_PREFIXES = ("/mcp/", "/messages", "/ui", "/api/ui", "/static")
 
 # Single process-wide streamable HTTP manager (required by the MCP SDK).
 # stateless=True: each request is independent — ideal for local single-user tools.
-# DNS-rebinding protection allows only loopback Host headers.
-_streamable_security = TransportSecuritySettings(
-    enable_dns_rebinding_protection=True,
-    allowed_hosts=[
-        "localhost",
-        "localhost:*",
-        "127.0.0.1",
-        "127.0.0.1:*",
-        "[::1]",
-        "[::1]:*",
-    ],
-    allowed_origins=[
-        "http://localhost",
-        "http://localhost:*",
-        "http://127.0.0.1",
-        "http://127.0.0.1:*",
-        "http://[::1]",
-        "http://[::1]:*",
-    ],
-)
+# DNS-rebinding protection allows the same Host names as the app: loopback
+# plus MEMORYBRAIN_ALLOWED_HOSTS.
+_streamable_security = mcp_transport_security()
 streamable_session_manager = StreamableHTTPSessionManager(
     app=mcp_server,
     json_response=False,
@@ -645,9 +627,10 @@ async def exchange_inbox(agent: str, project: str = "",
 @app.get("/search")
 async def search_endpoint(q: str, project: str = "", type: str = "", limit: int = 10,
                           as_of: str = ""):
-    """REST twin of MCP search_memory: the same result list, logged as a
-    retrieval event. X-Took-Ms carries the latency; X-Degraded is set when
-    semantic search was unavailable (keyword results only)."""
+    """REST twin of MCP search_memory: the same result list, but read-only. A GET
+    never changes state, so it records no retrieval event and boosts no recall
+    (a cross-site <img> must not steer ranking). X-Took-Ms carries the latency;
+    X-Degraded is set when semantic search was unavailable (keyword results only)."""
     import json as _json
     import time as _time
     from fastapi.responses import Response as _Response
@@ -655,7 +638,7 @@ async def search_endpoint(q: str, project: str = "", type: str = "", limit: int 
     started = _time.perf_counter()
     reply = _json.loads(await handle_search_memory(
         q, limit=max(1, min(int(limit), 100)), project=project or None,
-        type_filter=type or None, source="rest-search", as_of=as_of or None))
+        type_filter=type or None, source="rest-search", as_of=as_of or None, record=False))
     headers = {"X-Took-Ms": f"{(_time.perf_counter() - started) * 1000:.1f}"}
     if isinstance(reply, dict):  # degraded: {"results", "degraded"}
         headers["X-Degraded"] = reply.get("degraded", "")

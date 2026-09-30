@@ -29,6 +29,7 @@ ALLOWED_HOSTS = {"localhost", "127.0.0.1", "::1"}
 HANDOVER_MAX_AGE_S = 12 * 3600
 TAIL_MESSAGES = 40
 TAIL_CHARS = 20_000
+MESSAGE_CHARS = 4_000  # one pasted log or injected summary must not fill the tail
 
 
 def _log(msg: str) -> None:
@@ -86,8 +87,10 @@ def _message_text(event: dict) -> tuple[str, str]:
     content = message.get("content", "")
     if isinstance(content, str):
         return role, content.strip()
+    if not isinstance(content, list):
+        return role, ""
     parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
-    return role, "\n".join(t for t in parts if t).strip()
+    return role, "\n".join(t for t in parts if isinstance(t, str) and t).strip()
 
 
 def transcript_tail(path: Path, trigger: str) -> str:
@@ -102,10 +105,12 @@ def transcript_tail(path: Path, trigger: str) -> str:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(event, dict):
-            continue
+        if not isinstance(event, dict) or event.get("isMeta"):
+            continue  # isMeta lines are injected context, not the conversation
         role, text = _message_text(event)
         if text:
+            if len(text) > MESSAGE_CHARS:
+                text = text[:MESSAGE_CHARS] + " [...]"
             messages.append(f"[{role}] {text}")
     if not messages:
         return ""
@@ -124,14 +129,18 @@ def post_session(content: str, project: str, trigger: str) -> bool:
     req = urllib.request.Request(f"{BRAIN_URL}/ingest/session", data=payload, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
-            result = json.loads(resp.read())
+            raw = resp.read()
     except urllib.error.HTTPError as e:
         _log(f"brain answered HTTP {e.code}; session not ingested")
         return False
-    except (urllib.error.URLError, TimeoutError):
+    except (urllib.error.URLError, TimeoutError, OSError):
         _log("brain not running or timed out; session not ingested")
         return False
-    _log(f"session ingested, id={result.get('id', '?')}")
+    try:
+        result = json.loads(raw)
+    except ValueError:
+        result = {}
+    _log(f"session ingested, id={result.get('id', '?') if isinstance(result, dict) else '?'}")
     return True
 
 
@@ -152,6 +161,11 @@ def update_memory_timestamp(cwd: Path) -> None:
 
 
 def main(stdin=None) -> int:
+    if stdin is None:
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")  # cp1252 on Windows
+        except (AttributeError, ValueError):
+            pass
     if urlparse(BRAIN_URL).hostname not in ALLOWED_HOSTS:
         _log(f"MEMORYBRAIN_URL must be localhost; refusing to send to {BRAIN_URL}")
         return 0

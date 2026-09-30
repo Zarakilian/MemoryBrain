@@ -55,7 +55,18 @@ def render(pack: dict) -> str:
     return "\n".join(out)
 
 
+def _utf8_console() -> None:
+    """Windows Python reads and writes pipes as cp1252; the brief is UTF-8."""
+    for s in (sys.stdin, sys.stdout):
+        try:
+            s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(stream=None) -> int:
+    if stream is None:
+        _utf8_console()
     raw = (stream or sys.stdin).read()
     try:
         pack = json.loads(raw) if raw.strip() else {}

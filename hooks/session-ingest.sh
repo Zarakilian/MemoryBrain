@@ -9,6 +9,9 @@ BRAIN_URL="${MEMORYBRAIN_URL:-http://localhost:7741}"
 MEMORYBRAIN_DIR="${MEMORYBRAIN_DIR:-}"
 HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="$(command -v python3 || command -v python || echo python3)"
+# Windows Python reads and writes pipes as cp1252 unless told otherwise, which
+# garbles every non-ASCII note. The brain speaks UTF-8, so the hook does too.
+export PYTHONIOENCODING=utf-8
 CWD="${1:-}"
 # Claude Code does not expand template arguments such as {{cwd}}. The hook
 # runs with the project folder as its working directory and Claude Code
@@ -37,7 +40,8 @@ _dir="$SEARCH_DIR"
 for _ in 0 1 2 3 4; do
     if [ -f "${_dir}/.brainproject" ]; then
         PROJECT_SLUG=$(tr -cd '[:alnum:]_-' < "${_dir}/.brainproject" | tr 'A-Z' 'a-z')
-        break
+        # an empty marker names nothing: keep climbing, as the pre-compact hook does
+        [ -n "$PROJECT_SLUG" ] && break
     fi
     _parent="$(dirname "$_dir")"
     [ "$_parent" = "$_dir" ] && break
@@ -179,7 +183,7 @@ fi
 
 # ── This project's brief ──────────────────────────────────────────────────────
 # Pins, procedures, facts, open loops and beliefs of THIS project, rendered as
-# data. A folder the brain does not know yet falls back to the startup summary.
+# data. A project with nothing stored gets one line, never other projects' notes.
 
 BRIEF=""
 if [ -n "$PROJECT_SLUG" ] && [ -f "${HOOK_DIR}/render_brief.py" ]; then
@@ -189,13 +193,9 @@ fi
 if [ "$(printf '%s\n' "$BRIEF" | grep -c . || true)" -gt 1 ]; then
     echo ""
     echo "$BRIEF"
-else
-    SUMMARY=$("${CURL[@]}" "${BRAIN_URL}/startup-summary" \
-        | "$PY" -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null \
-        || echo "")
-    if [ -n "$SUMMARY" ]; then
-        echo "$SUMMARY"
-    fi
+elif [ -n "$PROJECT_SLUG" ]; then
+    echo ""
+    echo "MemoryBrain has no stored notes for ${PROJECT_SLUG} yet."
 fi
 
 # ── Next-session note ─────────────────────────────────────────────────────────

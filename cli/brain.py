@@ -621,6 +621,10 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
         return fail(f"The backup folder {backup_dir} is inside the repo. Brain data must never "
                     "sit in the repo; use a folder outside it (default ~/memorybrain-backups).")
 
+    if not (repo / ".env").is_file():
+        return fail(f"No .env in {repo}. Copy the .env from your old install folder into this "
+                    "one (it holds your settings and key), then run brain upgrade again.")
+
     # 2. The brain this folder's compose project owns must already exist.
     project = _compose_project(repo, run)
     volume, image = f"{project}_brain_data", f"{project}-brain"
@@ -640,6 +644,15 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_dir.mkdir(parents=True, exist_ok=True)
     name = f"brain-backup-{stamp}.tar.gz"
+    archive = backup_dir / name
+    restart = {
+        "backing up the volume": " The brain is stopped. Start it again with: "
+                                 "docker compose start brain",
+        "building the new image": f" The brain is stopped; the backup is {archive}. "
+                                  "Start it again with: docker compose up -d brain",
+        "starting the brain": f" The backup is {archive}. Start it again with: "
+                              "docker compose up -d brain",
+    }
     steps = [
         (["docker", "compose", "stop", "brain"], "stopping the brain"),
         (["docker", "run", "--rm", "--entrypoint", "tar", "-v", f"{volume}:/data:ro",
@@ -650,37 +663,47 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
     ]
     for cmd, what in steps:
         if run(cmd, cwd=repo).returncode:
-            return fail(f"Failed while {what}: {' '.join(cmd)}")
+            return fail(f"Failed while {what}: {' '.join(cmd)}.{restart.get(what, '')}")
         if what == "backing up the volume":
-            print(f"✅ Backup: {backup_dir / name}")
+            # tar can exit 0 while writing inside the Docker VM instead of onto this
+            # machine (a path the engine cannot see, another WSL distro, a remote context)
+            if not archive.is_file() or archive.stat().st_size == 0:
+                return fail(f"The backup did not reach {archive} on this machine, so nothing "
+                            f"was rebuilt.{restart[what]}")
+            print(f"✅ Backup: {archive}")
 
-    # 4. Wait for readiness, then prove nothing was lost.
+    # 4. Wait for readiness, then prove nothing was lost (count even if never ready).
     ready = {}
     for _ in range(36):
         ready = get_json(f"{BRAIN_URL}/readiness") or {}
         if ready.get("ready"):
             break
         sleep(5)
-    else:
-        return fail(f"The brain did not report ready within 180 seconds. The backup is "
-                    f"{backup_dir / name}.")
     try:
         after = _count_memories(["docker", "compose", "exec", "-T", "brain", "python", "-c",
                                  _COUNT_SQL.format(db="/app/data/brain.db")], run)
     except RuntimeError as e:
-        return fail(str(e))
+        return fail(f"{e}. The backup is {archive}.")
     if after < before:
         return fail(f"Memory count fell from {before} to {after}. Restore from "
-                    f"{backup_dir / name} before doing anything else.")
+                    f"{archive} before doing anything else.")
     print(f"✅ {after} memories after the upgrade (before: {before})")
-    print(f"   reembed_pending: {ready.get('reembed_pending', 'unknown')} "
-          "(old vectors are re-embedded in the background; search keeps working)")
+    if ready.get("ready"):
+        print(f"   reembed_pending: {ready.get('reembed_pending', 'unknown')} "
+              "(old vectors are re-embedded in the background; search keeps working)")
 
     # 5. Hooks under their installed names, and skills.
     for hook in install_hooks(repo, home / ".claude" / "hooks"):
         print(f"✅ Updated hook: {hook}")
     for skill in install_skills(repo, home / ".claude" / "skills"):
         print(f"✅ Updated skill: {skill}")
+    if not ready.get("ready"):
+        broken = ", ".join(f"{k}: {v}" for k, v in (ready.get("checks") or {}).items()
+                           if v != "ok")
+        return fail(f"The brain is running but not ready after 180 seconds "
+                    f"({broken or 'no answer from /readiness'}). Your memories are all there. "
+                    "Fix what /readiness reports (often a missing Ollama model), then check: "
+                    "curl -s http://localhost:7741/readiness")
     print("✅ Upgrade complete. Open a new session to use it.")
     return 0
 

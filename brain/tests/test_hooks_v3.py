@@ -3,6 +3,8 @@ import importlib.util
 import io
 import json
 import os
+import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -165,3 +167,139 @@ def test_project_comes_from_a_parent_brainproject(tmp_path):
     deep.mkdir(parents=True)
     assert pre_compact.detect_project(deep) == "reportflow"
     assert pre_compact.detect_project(tmp_path / "a") == "reportflow"
+
+
+def test_meta_events_are_skipped_and_long_messages_are_capped(tmp_path):
+    events = [
+        {"type": "user", "isMeta": True, "message": {"role": "user", "content": "INJECTED META"}},
+        {"type": "user", "message": {"role": "user", "content": "x" * 9000}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "text", "text": "short answer"}]}},
+    ]
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    tail = pre_compact.transcript_tail(path, "auto")
+    assert "INJECTED META" not in tail and "short answer" in tail
+    assert "x" * pre_compact.MESSAGE_CHARS in tail
+    assert "x" * (pre_compact.MESSAGE_CHARS + 1) not in tail
+
+
+def test_null_content_and_odd_replies_do_not_crash(tmp_path):
+    events = [{"type": "user", "message": {"role": "user", "content": None}},
+              {"type": "assistant", "message": {"role": "assistant", "content": [
+                  {"type": "text", "text": "done"}]}}]
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(json.dumps(e) for e in events), encoding="utf-8")
+    assert "done" in pre_compact.transcript_tail(path, "auto")
+
+    def not_json(req, timeout=None):
+        resp = MagicMock()
+        resp.read.return_value = b"<html>proxy page</html>"
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=None)
+        return resp
+
+    def reset(req, timeout=None):
+        raise ConnectionResetError(104, "Connection reset by peer")
+
+    with patch.object(pre_compact.urllib.request, "urlopen", not_json):
+        assert pre_compact.post_session("text", "acme", "auto") is True
+    with patch.object(pre_compact.urllib.request, "urlopen", reset):
+        assert pre_compact.post_session("text", "acme", "auto") is False
+
+
+# ------------------------------------------------------------- real brief, real renderer
+
+@pytest.mark.asyncio
+async def test_a_real_truncated_brief_names_the_sections_it_trimmed(tmp_db):
+    from app.brief import build_project_brief
+    from app.models import MemoryEntry
+    from app.storage import add_memory
+    for i in range(30):
+        add_memory(MemoryEntry(content=f"Session {i}: worked on the nightly export job.",
+                               type="session", project="acme",
+                               summary=f"Session {i} on the nightly export job"), db_path=tmp_db)
+    pack = await build_project_brief("acme", max_chars=900, db_path=tmp_db)
+    assert pack["truncated"]
+    last = render_brief.render(json.loads(json.dumps(pack, default=str))).splitlines()[-1]
+    assert last.startswith("Truncated to fit the budget: ") and "some sections" not in last
+    assert "recent" in last
+
+
+def test_render_brief_speaks_utf8_whatever_the_console_says():
+    pin = "⚠ check à la carte \U0001f9e0"
+    raw = json.dumps({"project": "acme", "pins": [{"summary": pin}]},
+                     ensure_ascii=False).encode("utf-8")
+    r = subprocess.run([sys.executable, str(HOOKS / "render_brief.py")], input=raw,
+                       env=dict(os.environ, PYTHONIOENCODING="cp1252"),
+                       capture_output=True, timeout=30)
+    assert pin in r.stdout.decode("utf-8", errors="replace")
+
+
+# ------------------------------------------------------------- the session hook itself
+
+STUB_CURL = """#!/usr/bin/env bash
+url=""
+for a in "$@"; do case "$a" in http://*) url="$a" ;; esac; done
+case "$url" in
+  */health) echo '{"status": "ok"}' ;;
+  */readiness) echo '{"ready": true}' ;;
+  */project-brief*) cat "$STUB_BRIEF" ;;
+  */next-session*) echo '{"notes": ""}' ;;
+  */startup-summary*) echo '{"summary": "GLOBAL SUMMARY OF EVERY PROJECT"}' ;;
+  *) echo '{}' ;;
+esac
+"""
+
+needs_bash = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+
+
+def _session_hook(tmp_path, brief: dict, project_dir: Path, extra_env=None):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    curl = bin_dir / "curl"
+    curl.write_text(STUB_CURL, encoding="utf-8")
+    curl.chmod(0o755)
+    brief_file = tmp_path / "brief.json"
+    brief_file.write_text(json.dumps(brief, ensure_ascii=False), encoding="utf-8")
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+           "HOME": str(tmp_path / "home"), "STUB_BRIEF": str(brief_file)}
+    env.update(extra_env or {})
+    return subprocess.run(["bash", str(HOOKS / "session-ingest.sh"), str(project_dir)],
+                          env=env, capture_output=True, timeout=60)
+
+
+def _project(tmp_path, slug="acme") -> Path:
+    folder = tmp_path / slug
+    folder.mkdir()
+    (folder / ".brainproject").write_text(slug + "\n", encoding="utf-8")
+    return folder
+
+
+@needs_bash
+def test_a_project_without_notes_gets_a_notice_not_the_global_summary(tmp_path):
+    r = _session_hook(tmp_path, {"project": "acme", "truncated": []}, _project(tmp_path))
+    out = r.stdout.decode("utf-8", errors="replace")
+    assert r.returncode == 0, r.stderr
+    assert "GLOBAL SUMMARY" not in out
+    assert "MemoryBrain has no stored notes for acme yet." in out
+
+
+@needs_bash
+def test_the_session_hook_keeps_utf8_under_a_cp1252_console(tmp_path):
+    pin = "⚠ check à la carte \U0001f9e0"
+    r = _session_hook(tmp_path, {"project": "acme", "pins": [{"summary": pin}]},
+                      _project(tmp_path), extra_env={"PYTHONIOENCODING": "cp1252"})
+    out = r.stdout.decode("utf-8", errors="replace")
+    assert "## Pinned" in out and pin in out
+
+
+@needs_bash
+def test_an_empty_marker_does_not_stop_the_search_in_either_hook(tmp_path):
+    (tmp_path / ".brainproject").write_text("acme\n", encoding="utf-8")
+    inner = tmp_path / "svc"
+    inner.mkdir()
+    (inner / ".brainproject").write_text("\n", encoding="utf-8")
+    assert pre_compact.detect_project(inner) == "acme"
+    r = _session_hook(tmp_path, {"project": "acme"}, inner, extra_env={"MEMORYBRAIN_DEBUG": "1"})
+    assert "slug=acme" in r.stderr.decode("utf-8", errors="replace")

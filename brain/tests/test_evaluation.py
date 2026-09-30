@@ -54,7 +54,9 @@ async def test_run_labels_with_a_stub_search(tmp_path):
 
 # ------------------------------------------------------------- REST search
 
-def test_rest_search_returns_the_mcp_list_and_logs_the_event(tmp_db, fake_provider, monkeypatch):
+def test_rest_search_returns_the_mcp_list_and_changes_nothing(tmp_db, fake_provider, monkeypatch):
+    """GET /search is read-only: no retrieval row, no recall boost. A cross-site
+    <img src=".../search?q=..."> must not be able to steer ranking feedback."""
     from fastapi.testclient import TestClient
     from app.db import connect
     from app.main import app
@@ -73,10 +75,13 @@ def test_rest_search_returns_the_mcp_list_and_logs_the_event(tmp_db, fake_provid
     assert float(r.headers["X-Took-Ms"]) >= 0
     conn = connect(tmp_db)
     try:
-        row = conn.execute("SELECT query, project, source FROM retrieval_events").fetchone()
+        events = conn.execute("SELECT COUNT(*) FROM retrieval_events").fetchone()[0]
+        recalled = conn.execute("SELECT last_recalled, strength FROM memories WHERE id = ?",
+                                (entry.id,)).fetchone()
     finally:
         conn.close()
-    assert (row["query"], row["project"], row["source"]) == ("invoice", "acme", "rest-search")
+    assert events == 0
+    assert recalled["last_recalled"] is None and recalled["strength"] == pytest.approx(1.0)
 
 
 def test_retrieval_log_groups_queries_for_labelling(tmp_db, monkeypatch):

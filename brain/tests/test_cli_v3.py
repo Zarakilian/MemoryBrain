@@ -114,10 +114,12 @@ class FakeRun:
     that brain upgrade reads (root commit, compose project, volume, counts)."""
 
     def __init__(self, root_subject="MemoryBrain 2.5.0: application only, clean start",
-                 counts=(120, 120), volume_exists=True):
+                 counts=(120, 120), volume_exists=True, backup_written=True, fail_on=None):
         self.root_subject = root_subject
         self.counts = list(counts)
         self.volume_exists = volume_exists
+        self.backup_written = backup_written
+        self.fail_on = fail_on
         self.calls: list[list[str]] = []
 
     def __call__(self, cmd, **kwargs):
@@ -131,14 +133,23 @@ class FakeRun:
             code = 0 if self.volume_exists else 1
         elif "SELECT COUNT(*) FROM memories" in " ".join(cmd):
             text = f"{self.counts.pop(0)}\n"
+        elif "czf" in cmd and self.backup_written:
+            # the tar container writes through the bind mount onto the host
+            host_dir = next(a for a in cmd if a.endswith(":/backup"))[:-len(":/backup")]
+            name = cmd[cmd.index("czf") + 1].split("/backup/", 1)[1]
+            (Path(host_dir) / name).write_bytes(b"backup")
+        if self.fail_on and self.fail_on in " ".join(cmd):
+            code = 1
         return subprocess.CompletedProcess(cmd, code, stdout=text, stderr="")
 
 
-def _upgrade(tmp_path, fake, backup_dir=None):
+def _upgrade(tmp_path, fake, backup_dir=None, env_file=True, ready=True):
     repo = _repo_with_hooks(tmp_path)
     (repo / "skills").mkdir()
+    if env_file:
+        (repo / ".env").write_text("MEMORYBRAIN_PROVIDER=ollama\n", encoding="utf-8")
     return cli.cmd_upgrade(repo=repo, backup_dir=backup_dir or tmp_path / "backups", run=fake,
-                           get_json=lambda url: {"ready": True, "reembed_pending": 7},
+                           get_json=lambda url: {"ready": ready, "reembed_pending": 7},
                            sleep=lambda s: None, home=tmp_path / "home")
 
 
@@ -184,3 +195,32 @@ def test_upgrade_backs_up_before_it_rebuilds(tmp_path, capsys):
     assert "memorybrain_brain_data" in joined[tar] and ":ro" in joined[tar]
     assert "reembed_pending: 7" in capsys.readouterr().out
     assert (tmp_path / "home" / ".claude" / "hooks" / "session-start-memory.sh").exists()
+
+
+def test_upgrade_needs_the_env_file_before_it_touches_anything(tmp_path, capsys):
+    fake = FakeRun()
+    assert _upgrade(tmp_path, fake, env_file=False) == 1
+    assert ".env" in capsys.readouterr().out
+    assert not any("compose stop" in c for c in _joined(fake))
+
+
+def test_upgrade_stops_when_the_backup_never_reached_this_machine(tmp_path, capsys):
+    fake = FakeRun(backup_written=False)
+    assert _upgrade(tmp_path, fake) == 1
+    out = capsys.readouterr().out
+    assert "did not reach" in out and "docker compose start brain" in out
+    assert not any("compose build" in c for c in _joined(fake))
+
+
+def test_a_failed_build_says_how_to_start_the_brain_again(tmp_path, capsys):
+    fake = FakeRun(fail_on="compose build")
+    assert _upgrade(tmp_path, fake) == 1
+    out = capsys.readouterr().out
+    assert "docker compose up -d brain" in out and "brain-backup-" in out
+
+
+def test_upgrade_still_counts_when_readiness_never_comes(tmp_path, capsys):
+    fake = FakeRun(counts=(120, 120))
+    assert _upgrade(tmp_path, fake, ready=False) == 1
+    out = capsys.readouterr().out
+    assert "120 memories after the upgrade" in out and "not ready" in out

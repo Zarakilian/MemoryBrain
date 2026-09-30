@@ -65,6 +65,7 @@ Also post a short note (optional tags via the note endpoint if available):
 
 ```text
 POST http://localhost:7741/ingest/note
+Content-Type: application/json
 X-Brain-Key: <from live .env if set>
 
 {

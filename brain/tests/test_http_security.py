@@ -55,6 +55,40 @@ def test_host_names_parse_with_ports_and_ipv6():
     assert host_name("127.0.0.1") == "127.0.0.1"
 
 
+@pytest.mark.parametrize("header", ["[::1]evil", "[::1]:", "[::1]:77x1"])
+def test_junk_after_an_ipv6_bracket_is_not_loopback(header):
+    from app.security import allowed_hosts, host_name
+    assert host_name(header) not in allowed_hosts()
+
+
+def test_a_bare_ipv6_extra_host_matches_its_bracketed_header(client, monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_ALLOWED_HOSTS", "fe80::1")
+    assert client.get("/health", headers={"Host": "[fe80::1]:7741"}).status_code == 200
+
+
+def test_extra_hosts_reach_the_mcp_transports_too(monkeypatch):
+    from app.main import _streamable_security
+    from app.security import mcp_transport_security
+    assert "testserver:*" in _streamable_security.allowed_hosts  # built from allowed_hosts()
+    monkeypatch.setenv("MEMORYBRAIN_ALLOWED_HOSTS", "brain.internal, fe80::1")
+    settings = mcp_transport_security()
+    assert {"localhost:*", "[::1]:*", "brain.internal", "brain.internal:*",
+            "[fe80::1]", "[fe80::1]:*"} <= set(settings.allowed_hosts)
+    assert {"http://localhost:*", "http://brain.internal:*"} <= set(settings.allowed_origins)
+    assert settings.enable_dns_rebinding_protection
+
+
+@pytest.mark.asyncio
+async def test_a_model_validation_error_is_a_422_not_a_500():
+    import json as _json
+    from app.main import validation_error_handler
+    from app.models import ValidationError
+    assert app.exception_handlers[ValidationError] is validation_error_handler
+    resp = await validation_error_handler(None, ValidationError("type must be one of: fact"))
+    assert resp.status_code == 422
+    assert _json.loads(resp.body) == {"detail": "type must be one of: fact"}
+
+
 # ------------------------------------------------------------- write guard (W1)
 
 def test_plain_text_write_is_refused_and_stores_nothing(client, tmp_db):
@@ -238,6 +272,16 @@ def test_remote_url_is_stored_and_returned_without_userinfo(tmp_db):
 ])
 def test_workspace_bind_rejects_escapes_and_unknown_sources(client, body):
     assert client.post("/workspace/bind", json=body).status_code == 422
+
+
+@pytest.mark.parametrize("how", ["cwd", "memory"])
+def test_workspace_bind_rejects_dotdot_inside_an_absolute_path(client, tmp_db, how):
+    from app.workspace import store as ws
+    ws.upsert_root("root-1", "WORK-PC", "/work/repos", db_path=tmp_db)
+    r = client.post("/workspace/bind", json={"project": "acme", "how": how,
+                                             "abs_path": "/work/repos/../secrets"})
+    assert r.status_code == 422
+    assert ws.list_folders(tmp_db) == []
 
 
 # ------------------------------------------------------------- version (O5)
