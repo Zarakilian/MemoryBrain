@@ -25,8 +25,8 @@ async def test_search_memory_missing_query_returns_error():
 @pytest.mark.asyncio
 async def test_search_memory_limit_clamped_to_100(tmp_db, mock_ollama):
     """limit > 100 should be clamped to 100."""
-    with patch("app.mcp.tools.hybrid_search", new_callable=AsyncMock) as mock_search:
-        mock_search.return_value = []
+    with patch("app.mcp.tools.search_with_status", new_callable=AsyncMock) as mock_search:
+        mock_search.return_value = ([], None)
         await call_tool("search_memory", {"query": "test", "limit": 9999})
         _, kwargs = mock_search.call_args
         assert kwargs["limit"] <= 100
@@ -35,8 +35,8 @@ async def test_search_memory_limit_clamped_to_100(tmp_db, mock_ollama):
 @pytest.mark.asyncio
 async def test_search_memory_negative_limit_clamped(tmp_db, mock_ollama):
     """Negative limit should be clamped to 1."""
-    with patch("app.mcp.tools.hybrid_search", new_callable=AsyncMock) as mock_search:
-        mock_search.return_value = []
+    with patch("app.mcp.tools.search_with_status", new_callable=AsyncMock) as mock_search:
+        mock_search.return_value = ([], None)
         await call_tool("search_memory", {"query": "test", "limit": -5})
         _, kwargs = mock_search.call_args
         assert kwargs["limit"] >= 1
@@ -59,8 +59,8 @@ async def test_add_memory_missing_required_returns_error():
 @pytest.mark.asyncio
 async def test_extra_keys_ignored_no_crash(tmp_db, mock_ollama):
     """Extra unknown keys in arguments should be stripped, not cause TypeError."""
-    with patch("app.mcp.tools.hybrid_search", new_callable=AsyncMock) as mock_search:
-        mock_search.return_value = []
+    with patch("app.mcp.tools.search_with_status", new_callable=AsyncMock) as mock_search:
+        mock_search.return_value = ([], None)
         result = await call_tool("search_memory", {
             "query": "test", "__import__": "os", "evil_key": True
         })

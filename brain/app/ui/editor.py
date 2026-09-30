@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -28,8 +29,10 @@ from pydantic import BaseModel, Field
 from ..db import connect
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry, Project, ValidationError
-from ..storage import (DB_PATH, delete_memory, get_memory, get_project, record_recall,
-                       upsert_project)
+from ..redact import redact
+from ..storage import (DB_PATH, DERIVED_EDGE_KINDS, archive_memory_audited, content_hash,
+                       get_memory, get_project, hard_delete_memory, record_recall,
+                       restore_memory, upsert_project)
 from ..vector import vec_delete
 from . import queries as q
 
@@ -204,7 +207,7 @@ async def add_note(body: NoteBody):
 
 class MemoryPatch(BaseModel):
     summary: str | None = Field(default=None, max_length=2000)
-    content: str | None = Field(default=None, min_length=1, max_length=200_000)
+    content: str | None = Field(default=None, min_length=1, max_length=100_000)
     type: str | None = None
     project: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     tags: list[str] | None = None
@@ -224,8 +227,16 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
     if body.project is not None and get_project(body.project, db_path=DB_PATH) is None:
         raise HTTPException(422, f"Unknown project: {body.project}")
 
+    warnings: list[str] = []
+    if body.content is not None:
+        body.content, fired = redact(body.content)
+        warnings += [f"redacted: {rule}" for rule in dict.fromkeys(fired)]
+    if body.summary is not None:
+        body.summary, fired = redact(body.summary)
+        warnings += [f"redacted: {rule}" for rule in dict.fromkeys(fired)]
+
     fields, params = [], []
-    for col in ("summary", "content", "type", "project", "importance", "status"):
+    for col in ("summary", "content", "type", "project", "importance"):
         val = getattr(body, col)
         if val is not None:
             fields.append(f"{col} = ?")
@@ -233,49 +244,70 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
     if body.tags is not None:
         fields.append("tags = ?")
         params.append(json.dumps(body.tags))
-    if not fields:
+    if not fields and body.status is None:
         raise HTTPException(422, "Nothing to update")
-    params.append(memory_id)
-    with _rw() as conn:
-        conn.execute(f"UPDATE memories SET {' , '.join(fields)} WHERE id = ?",
-                     tuple(params))
-        conn.commit()
+    updated_cols = sorted(f.split(" ")[0] for f in fields)
+    if body.content is not None or body.project is not None:
+        new_content = body.content if body.content is not None else entry.content
+        fields.append("content_hash = ?")
+        params.append(content_hash(new_content, body.project or entry.project))
+    if body.content is not None:
+        fields.append("content_updated_at = ?")
+        params.append(datetime.now(timezone.utc).isoformat())
+    if fields:
+        with _rw() as conn:
+            conn.execute(f"UPDATE memories SET {' , '.join(fields)} WHERE id = ?",
+                         (*params, memory_id))
+            conn.commit()
+    if body.status is not None and body.status != entry.status:
+        # Status changes go through the audited path so the trail is complete.
+        if body.status == "archived":
+            archive_memory_audited(memory_id, actor="ui", db_path=DB_PATH)
+        else:
+            restore_memory(memory_id, actor="ui", db_path=DB_PATH)
+        updated_cols.append("status")
 
     relinked = False
     if body.content is not None or body.tags is not None:
-        # content changed: re-embed and re-derive this memory's edges.
-        # Best effort — a downed provider must never block the edit itself.
-        try:
-            from ..summarise import embed
-            from ..linker import link_new_memory
-            from ..vector import vec_add
-            updated = get_memory(memory_id, db_path=DB_PATH)
-            emb = await embed(updated.content)
-            vec_delete(memory_id, db_path=DB_PATH)
-            vec_add(memory_id, emb,
-                    {"project": updated.project, "type": updated.type},
-                    db_path=DB_PATH)
-            with _rw() as conn:
-                conn.execute("DELETE FROM memory_links WHERE src_id = ? OR dst_id = ?",
-                             (memory_id, memory_id))
-                conn.commit()
-            link_new_memory(updated, emb, db_path=DB_PATH)
-            relinked = True
-        except Exception:
-            logger.warning("Re-embed after edit failed — text updated, "
-                           "vector/links unchanged")
-    return {"id": memory_id, "updated": sorted(f.split(" ")[0] for f in fields),
-            "relinked": relinked}
+        relinked = await _reindex_after_edit(memory_id, content_changed=body.content is not None)
+    return {"id": memory_id, "updated": sorted(updated_cols), "relinked": relinked,
+            "warnings": warnings}
+
+
+async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
+    """Re-embed (when the text changed) and re-derive this memory's edges.
+    Only derived edge kinds are replaced: belief citations and conflict
+    verdicts, dismissed ones included, stay. Best effort: a downed provider
+    never blocks the edit itself (the re-embed job retries the vector)."""
+    from ..linker import link_new_memory
+    from ..indexing import index_memory_vectors
+    from ..vector import vec_get
+
+    updated = get_memory(memory_id, db_path=DB_PATH)
+    if content_changed:
+        await index_memory_vectors(memory_id, updated.content, db_path=DB_PATH)
+    try:
+        with _rw() as conn:
+            conn.execute(
+                f"""DELETE FROM memory_links WHERE (src_id = ? OR dst_id = ?)
+                    AND kind IN ({','.join('?' * len(DERIVED_EDGE_KINDS))})""",
+                (memory_id, memory_id, *DERIVED_EDGE_KINDS))
+            conn.commit()
+        embedding = vec_get(memory_id, db_path=DB_PATH)
+        if embedding is None:
+            return False
+        link_new_memory(updated, embedding, db_path=DB_PATH)
+        return True
+    except Exception:
+        logger.warning("Relink after edit failed: text updated, edges unchanged",
+                       exc_info=True)
+        return False
 
 
 @router.post("/api/ui/edit/memories/{memory_id}/archive")
 def archive(memory_id: str):
-    if get_memory(memory_id, db_path=DB_PATH) is None:
+    if not archive_memory_audited(memory_id, actor="ui", db_path=DB_PATH):
         raise HTTPException(404, "Memory not found")
-    with _rw() as conn:
-        conn.execute("UPDATE memories SET status = 'archived' WHERE id = ?",
-                     (memory_id,))
-        conn.commit()
     return {"id": memory_id, "status": "archived"}
 
 
@@ -292,13 +324,9 @@ def hard_delete(memory_id: str, body: DeleteBody):
         raise HTTPException(400, "Confirmation mismatch: type the first 8 "
                                  "characters of the memory id to hard-delete. "
                                  "(Archiving is the reversible alternative.)")
-    delete_memory(memory_id, db_path=DB_PATH)
+    hard_delete_memory(memory_id, actor="ui", db_path=DB_PATH)
     try:
-        vec_delete(memory_id, db_path=DB_PATH)
+        vec_delete(memory_id, db_path=DB_PATH)  # the legacy Chroma store, if in use
     except Exception:
         pass
-    with _rw() as conn:
-        conn.execute("DELETE FROM memory_links WHERE src_id = ? OR dst_id = ?",
-                     (memory_id, memory_id))
-        conn.commit()
     return {"deleted": True, "id": memory_id}

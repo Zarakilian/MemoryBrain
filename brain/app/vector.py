@@ -168,6 +168,19 @@ def vec_search(embedding: list[float], n_results: int = 20,
     return _sv_search(embedding, n_results, filters, db_path or DB_PATH)
 
 
+def vec_get(memory_id: str, db_path: Path = None) -> Optional[list[float]]:
+    """A memory's parent vector, or None (always None on the Chroma backend)."""
+    if get_backend() == "chroma":
+        return None
+    with _connect_vec(db_path or DB_PATH) as conn:
+        row = conn.execute("SELECT embedding FROM vec_memories WHERE memory_id = ?",
+                           (memory_id,)).fetchone()
+    if row is None:
+        return None
+    blob = row["embedding"]
+    return list(struct.unpack(f"{len(blob) // 4}f", blob))
+
+
 def vec_search_multi(query_vectors: dict[str, list[float]], n_results: int = 20,
                      filters: Optional[dict] = None, db_path: Path = None) -> list[dict]:
     """Search with one query vector per embedding model ('' = 2.x legacy).

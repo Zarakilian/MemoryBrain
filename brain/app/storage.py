@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -10,6 +11,11 @@ from .models import MemoryEntry, Project
 from .migrations.runner import run_migrations
 
 DB_PATH = Path("/app/data/brain.db")
+
+# Edges the linker can always recompute. Everything else in memory_links is a
+# verdict or a citation (derived_from, conflicts_with incl. dismissed, entity)
+# and must survive a graph rebuild or an edit.
+DERIVED_EDGE_KINDS = ("semantic", "tag", "reference", "session_chain")
 
 
 def content_hash(content: str, project: str) -> str:
@@ -352,7 +358,8 @@ def upsert_project(project: Project, db_path: Path = DB_PATH):
                VALUES (?, ?, ?, ?)
                ON CONFLICT(slug) DO UPDATE SET
                    last_activity=excluded.last_activity,
-                   one_liner=excluded.one_liner""",
+                   one_liner=CASE WHEN excluded.one_liner != '' THEN excluded.one_liner
+                                  ELSE projects.one_liner END""",
             (project.slug, project.name, project.last_activity.isoformat(), project.one_liner),
         )
         conn.commit()
@@ -370,6 +377,70 @@ def list_projects(db_path: Path = DB_PATH) -> list[Project]:
     with _connect(db_path) as conn:
         rows = conn.execute("SELECT * FROM projects ORDER BY last_activity DESC").fetchall()
     return [_row_to_project(r) for r in rows]
+
+
+def _audit(conn: sqlite3.Connection, memory_id: str, action: str, actor: str,
+           reason: str = "", detail: Optional[dict] = None) -> None:
+    conn.execute(
+        """INSERT INTO memory_audit (id, memory_id, action, actor, reason, at, detail)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (str(uuid.uuid4()), memory_id, action, actor or "", reason or "",
+         datetime.now(timezone.utc).isoformat(), json.dumps(detail or {})),
+    )
+
+
+def audit(memory_id: str, action: str, actor: str, reason: str = "",
+          detail: Optional[dict] = None, db_path: Path = DB_PATH) -> None:
+    """Record who changed a memory's lifecycle, and why."""
+    with _connect(db_path) as conn:
+        _audit(conn, memory_id, action, actor, reason, detail)
+        conn.commit()
+
+
+def _set_status_audited(memory_id: str, status: str, action: str, actor: str,
+                        reason: str, db_path: Path) -> bool:
+    with _connect(db_path) as conn:
+        cur = conn.execute("UPDATE memories SET status = ? WHERE id = ?", (status, memory_id))
+        if cur.rowcount == 0:
+            return False
+        _audit(conn, memory_id, action, actor, reason)
+        conn.commit()
+    return True
+
+
+def archive_memory_audited(memory_id: str, actor: str, reason: str = "",
+                           db_path: Path = DB_PATH) -> bool:
+    """Archive a memory (reversible) with an audit row. False if it does not exist."""
+    return _set_status_audited(memory_id, "archived", "archive", actor, reason, db_path)
+
+
+def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH) -> bool:
+    """Bring an archived memory back to active, with an audit row."""
+    return _set_status_audited(memory_id, "active", "restore", actor, "", db_path)
+
+
+def hard_delete_memory(memory_id: str, actor: str, reason: str = "",
+                       db_path: Path = DB_PATH) -> bool:
+    """Remove a memory for good: the row, its vectors and chunks, its edges in
+    both directions, its pins and its file links. One audit row (no content)
+    is the only trace left. False if it does not exist."""
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT project, type FROM memories WHERE id = ?",
+                           (memory_id,)).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM memory_links WHERE src_id = ? OR dst_id = ?",
+                     (memory_id, memory_id))
+        conn.execute("DELETE FROM project_pins WHERE memory_id = ?", (memory_id,))
+        conn.execute("DELETE FROM file_links WHERE src_kind = 'memory' AND src_id = ?",
+                     (memory_id,))
+        conn.execute("DELETE FROM vec_chunks WHERE memory_id = ?", (memory_id,))
+        conn.execute("DELETE FROM vec_memories WHERE memory_id = ?", (memory_id,))
+        conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        _audit(conn, memory_id, "hard_delete", actor, reason,
+               {"project": row["project"], "type": row["type"]})
+        conn.commit()
+    return True
 
 
 def delete_memory(memory_id: str, db_path: Path = DB_PATH):
@@ -415,19 +486,28 @@ def set_meta(key: str, value: str, db_path: Path = DB_PATH) -> None:
         conn.commit()
 
 
-def get_next_session_notes(project: str = "", db_path: Path = DB_PATH) -> str:
+def get_next_session_note(project: str, db_path: Path = DB_PATH) -> Optional[dict]:
+    """The newest ACTIVE memory of THIS project tagged next_session, or None.
+    No project means no note: one project's plan is never handed to another."""
+    if not project:
+        return None
     with _connect(db_path) as conn:
-        if project:
-            row = conn.execute(
-                "SELECT content FROM memories WHERE project = ? AND tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
-                (project, '%next_session%'),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT content FROM memories WHERE tags LIKE ? ORDER BY timestamp DESC LIMIT 1",
-                ('%next_session%',),
-            ).fetchone()
-    return row["content"] if row else ""
+        row = conn.execute(
+            """SELECT id, content, writer, timestamp FROM memories m
+               WHERE project = ? AND status = 'active'
+                 AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(m.tags)
+                                                     THEN m.tags ELSE '[]' END)
+                             WHERE value = 'next_session')
+               ORDER BY timestamp DESC LIMIT 1""",
+            (project,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_next_session_notes(project: str = "", db_path: Path = DB_PATH) -> str:
+    """Text-only form of get_next_session_note, kept for existing callers."""
+    note = get_next_session_note(project, db_path=db_path)
+    return note["content"] if note else ""
 
 
 def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:

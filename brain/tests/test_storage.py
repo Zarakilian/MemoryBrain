@@ -72,8 +72,8 @@ def test_get_recent_includes_content_preview(tmp_db):
     assert "content_preview" in results[0]
 
 
-def test_get_next_session_notes_fallback_finds_any_project(tmp_db):
-    """When project is empty, finds the most recent next_session note across all projects."""
+def test_get_next_session_notes_needs_a_project(tmp_db):
+    """v3: an empty project finds nothing (no cross-project fallback)."""
     p = Project(slug="memorybrain", name="MemoryBrain")
     upsert_project(p, db_path=tmp_db)
     note = MemoryEntry(
@@ -83,12 +83,12 @@ def test_get_next_session_notes_fallback_finds_any_project(tmp_db):
         tags=["next_session"],
     )
     add_memory(note, db_path=tmp_db)
-    result = get_next_session_notes(project="", db_path=tmp_db)
-    assert "fluffy dog" in result.lower()
+    assert get_next_session_notes(project="", db_path=tmp_db) == ""
+    assert "fluffy dog" in get_next_session_notes(project="memorybrain", db_path=tmp_db).lower()
 
 
-def test_get_next_session_notes_crosses_projects(tmp_db):
-    """Most recent next_session note surfaces even when another project is more recently active."""
+def test_get_next_session_notes_stays_in_its_project(tmp_db):
+    """A project without a next_session note never gets another project's note."""
     p1 = Project(slug="memorybrain", name="MemoryBrain")
     p2 = Project(slug="api-service", name="Api Service")
     upsert_project(p1, db_path=tmp_db)
@@ -101,9 +101,8 @@ def test_get_next_session_notes_crosses_projects(tmp_db):
         tags=["next_session"],
     )
     add_memory(note, db_path=tmp_db)
-    # api-service has no next_session notes — should still find memorybrain's note
-    result = get_next_session_notes(project="", db_path=tmp_db)
-    assert "fluffy dog" in result.lower()
+    assert get_next_session_notes(project="api-service", db_path=tmp_db) == ""
+    assert "fluffy dog" in get_next_session_notes(project="memorybrain", db_path=tmp_db).lower()
 
 
 def test_get_next_session_notes_empty_when_no_projects(tmp_db):

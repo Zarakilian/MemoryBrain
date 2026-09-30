@@ -15,7 +15,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
-from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
+from .storage import init_db, list_projects, get_next_session_note, DB_PATH
 from .db import connect
 from .auth import require_api_key
 from .summarise import (_get_ollama_client, _get_embed_model, _get_summarise_model,
@@ -398,8 +398,13 @@ async def backfill_vectors():
 
 @app.get("/next-session")
 async def next_session(project: str = ""):
-    notes = get_next_session_notes(project, db_path=DB_PATH)
-    return {"notes": notes}
+    """The newest active next_session note of THIS project, with who wrote it
+    and when. No project means no note: never another project's plan."""
+    note = get_next_session_note(project, db_path=DB_PATH)
+    if not note:
+        return {"notes": "", "id": None, "writer": None, "timestamp": None}
+    return {"notes": note["content"], "id": note["id"], "writer": note["writer"],
+            "timestamp": note["timestamp"]}
 
 
 @app.get("/sse")
@@ -436,8 +441,9 @@ app.router.routes.insert(
 
 @app.post("/admin/rebuild-graph")
 async def rebuild_graph_endpoint():
-    """Drop and recompute all memory-graph edges. Safe any time — edges are
-    derived data. Authenticated via the standard API-key middleware."""
+    """Recompute the derived graph edges (semantic, tag, reference,
+    session_chain). Belief citations and conflict verdicts, dismissed ones
+    included, are kept. Authenticated via the standard API-key middleware."""
     from .linker import rebuild_graph
     return rebuild_graph()
 

@@ -15,11 +15,11 @@ from app.models import MemoryEntry, Project
 
 @pytest.mark.asyncio
 async def test_search_memory_returns_json_list(tmp_db, mock_ollama):
-    with patch("app.mcp.tools.hybrid_search", new_callable=AsyncMock) as mock_search:
-        mock_search.return_value = [
+    with patch("app.mcp.tools.search_with_status", new_callable=AsyncMock) as mock_search:
+        mock_search.return_value = ([
             {"id": "abc", "summary": "found item", "project": "api-service", "type": "note",
              "source": "", "importance": 3, "timestamp": "2026-03-27T10:00:00"}
-        ]
+        ], None)
         result = await handle_search_memory(query="grafana", limit=5)
     data = json.loads(result)
     assert isinstance(data, list)

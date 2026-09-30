@@ -120,8 +120,9 @@ def test_readiness_chromadb_down(tmp_db):
     assert data["checks"]["ollama"] == "ok"
 
 
-def test_next_session_no_project_falls_back_to_latest(tmp_db):
-    """GET /next-session with no project param falls back to most recently active project."""
+def test_next_session_without_a_project_returns_no_note(tmp_db):
+    """v3: with no project there is no note; the old cross-project fallback
+    handed one project's plan to another."""
     from app.storage import upsert_project, add_memory as storage_add
     from app.models import Project, MemoryEntry
     import json
@@ -137,7 +138,9 @@ def test_next_session_no_project_falls_back_to_latest(tmp_db):
         storage_add(note, db_path=tmp_db)
         resp = client.get("/next-session")
         assert resp.status_code == 200
-        assert "deploy logs" in resp.json()["notes"]
+        assert resp.json()["notes"] == ""
+        scoped = client.get("/next-session", params={"project": "testproj"})
+        assert "deploy logs" in scoped.json()["notes"]
 
 
 def test_readiness_is_public_when_auth_enabled(monkeypatch):

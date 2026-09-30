@@ -7,13 +7,12 @@ from mcp.server import Server
 import mcp.types as types
 
 from ..storage import (get_memory, get_recent,
-                       list_projects as storage_list_projects, delete_memory,
+                       list_projects as storage_list_projects, archive_memory_audited,
                        get_project_recent_state, record_recall,
                        RECALL_BOOST_SEARCH, DB_PATH, _connect)
-from ..search import hybrid_search
+from ..search import search_with_status
 from ..ingest_pipeline import ingest, write_report
 from ..models import MemoryEntry
-from ..vector import vec_delete
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +89,7 @@ async def handle_search_memory(
     tags: Optional[list] = None,
     include_history: bool = False,
 ) -> str:
-    results = await hybrid_search(
+    results, degraded = await search_with_status(
         query, limit=limit, project=project, type_filter=type_filter,
         days=days, tags=tags, include_history=include_history,
     )
@@ -111,10 +110,42 @@ async def handle_search_memory(
         )
     except Exception:
         pass
+    if degraded:
+        # Keyword hits only; the object form tells the agent why.
+        return json.dumps({"results": results, "degraded": degraded}, default=str)
     return json.dumps(results, default=str)
 
 
-async def handle_get_memory(memory_id: str) -> str:
+EXCERPT_MARGIN = 300
+
+
+def _chunk_spans(memory_id: str, content: str) -> list[tuple[int, int]]:
+    with _connect(DB_PATH) as conn:
+        rows = conn.execute("SELECT start_char, end_char FROM vec_chunks WHERE memory_id = ? "
+                            "ORDER BY chunk_ix", (memory_id,)).fetchall()
+    if rows:
+        return [(r["start_char"], r["end_char"]) for r in rows]
+    from ..indexing import chunk_text
+    return [(c.start, c.end) for c in chunk_text(content)] or [(0, len(content))]
+
+
+def _excerpt_span(memory_id: str, content: str, around: str) -> tuple[int, int]:
+    """The chunk that best matches `around`, plus EXCERPT_MARGIN either side:
+    the chunk holding the exact phrase, else the one sharing the most words."""
+    spans = _chunk_spans(memory_id, content)
+    lowered, phrase = content.lower(), around.strip().lower()
+    pos = lowered.find(phrase) if phrase else -1
+    if pos >= 0:
+        holding = [s for s in spans if s[0] <= pos and pos + len(phrase) <= s[1]]
+        best = (holding or [s for s in spans if s[0] <= pos < s[1]] or spans)[0]
+    else:
+        words = {w for w in re.findall(r"[a-z0-9]{3,}", phrase)}
+        best = max(spans, key=lambda s: sum(lowered[s[0]:s[1]].count(w) for w in words))
+    return max(0, best[0] - EXCERPT_MARGIN), min(len(content), best[1] + EXCERPT_MARGIN)
+
+
+async def handle_get_memory(memory_id: str, max_chars: Optional[int] = None,
+                            around: Optional[str] = None) -> str:
     entry = get_memory(memory_id, db_path=DB_PATH)
     if entry is None:
         return json.dumps({"error": f"Memory {memory_id} not found"})
@@ -129,7 +160,16 @@ async def handle_get_memory(memory_id: str) -> str:
         "timestamp": entry.timestamp.isoformat(),
         "status": entry.status, "superseded_by": entry.superseded_by,
         "supersedes": entry.supersedes,
+        "content_chars": len(entry.content), "truncated": False,
     }
+    if around:
+        start, end = _excerpt_span(memory_id, entry.content, around)
+        payload["content"] = entry.content[start:end]
+        payload["excerpt"] = {"start": start, "end": end}
+        payload["truncated"] = (start, end) != (0, len(entry.content))
+    elif max_chars and len(entry.content) > max_chars:
+        payload["content"] = entry.content[:max_chars]
+        payload["truncated"] = True
     if entry.type == "belief":
         payload["sources"] = _belief_sources(memory_id)
     return json.dumps(payload, default=str)
@@ -162,13 +202,12 @@ def _writer_from_source(source: str) -> str:
     return re.sub(r"[^a-z0-9@._:-]+", "-", (source or "").strip().lower()).strip("-")[:64]
 
 
-async def handle_delete_memory(memory_id: str) -> str:
-    entry = get_memory(memory_id, db_path=DB_PATH)
-    if entry is None:
+async def handle_delete_memory(memory_id: str, reason: str = "") -> str:
+    """v3: agents archive (reversible, audited). Hard delete is UI only."""
+    if not archive_memory_audited(memory_id, actor="mcp", reason=reason, db_path=DB_PATH):
         return json.dumps({"error": f"Memory {memory_id} not found"})
-    delete_memory(memory_id, db_path=DB_PATH)
-    vec_delete(memory_id, db_path=DB_PATH)
-    return json.dumps({"deleted": True, "id": memory_id})
+    return json.dumps({"archived": True, "id": memory_id,
+                       "restore": "brain_admin restore_memory"})
 
 
 async def handle_get_recent_context(project: Optional[str] = None, days: int = 7) -> str:
@@ -572,7 +611,9 @@ async def list_tools() -> list[types.Tool]:
     return [
         types.Tool(
             name="search_memory",
-            description="Hybrid keyword+semantic search. Returns summaries. Active memories only by default.",
+            description=("Hybrid keyword+semantic search. Returns summaries. Active memories "
+                         "only by default. If the embedding model is down the reply is "
+                         "{results, degraded} with keyword hits only."),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -590,10 +631,17 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_memory",
-            description="Fetch full content of a specific memory by ID. Beliefs include source citations.",
+            description=("Fetch the content of a memory by ID. Beliefs include source citations. "
+                         "For long memories pass around (a phrase) to get the matching region, "
+                         "or max_chars to cap the length; content_chars is the full length."),
             inputSchema={
                 "type": "object",
-                "properties": {"memory_id": {"type": "string"}},
+                "properties": {
+                    "memory_id": {"type": "string"},
+                    "max_chars": {"type": "integer", "minimum": 100, "maximum": 100000},
+                    "around": {"type": "string",
+                               "description": "Return the best matching region of a long memory"},
+                },
                 "required": ["memory_id"],
             },
         ),
@@ -620,10 +668,13 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="delete_memory",
-            description="Hard delete a memory by ID. Use for wrong entries only — use supersession for stale ones.",
+            description=("Archive a wrong memory (reversible, audited). Stale facts are "
+                         "superseded automatically; a permanent delete is only possible in the "
+                         "Atlas UI. Restore with brain_admin restore_memory."),
             inputSchema={
                 "type": "object",
-                "properties": {"memory_id": {"type": "string"}},
+                "properties": {"memory_id": {"type": "string"},
+                               "reason": {"type": "string"}},
                 "required": ["memory_id"],
             },
         ),
@@ -1060,9 +1111,9 @@ def _clamp_int(value, lo: int, hi: int, default: int) -> int:
 
 _TOOL_ARGS = {
     "search_memory":        (["query"], ["limit", "project", "type_filter", "days", "tags", "include_history"]),
-    "get_memory":           (["memory_id"], []),
+    "get_memory":           (["memory_id"], ["max_chars", "around"]),
     "add_memory":           (["content", "type", "project"], ["tags", "source", "description"]),
-    "delete_memory":        (["memory_id"], []),
+    "delete_memory":        (["memory_id"], ["reason"]),
     "get_recent_context":   ([], ["project", "days"]),
     "list_projects":        ([], []),
     "get_startup_summary":  ([], []),
@@ -1114,7 +1165,10 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     if "days" in clean:
         clean["days"] = _clamp_int(clean["days"], 1, 365, 7)
     if "max_chars" in clean:
-        clean["max_chars"] = _clamp_int(clean["max_chars"], 800, 12000, 3500)
+        if name == "get_memory":
+            clean["max_chars"] = _clamp_int(clean["max_chars"], 100, 100_000, 100_000)
+        else:
+            clean["max_chars"] = _clamp_int(clean["max_chars"], 800, 12000, 3500)
     if "idle_days" in clean:
         clean["idle_days"] = _clamp_int(clean["idle_days"], 1, 365, 14)
     if "priority" in clean:

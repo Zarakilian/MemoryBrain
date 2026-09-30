@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Optional
 
 from .db import connect
-from .storage import DB_PATH
+from .storage import DB_PATH, DERIVED_EDGE_KINDS
 from .vector import vec_search, _connect_vec
 
 logger = logging.getLogger(__name__)
@@ -296,13 +296,16 @@ def link_new_memory(entry, embedding: list[float],
 
 
 def rebuild_graph(db_path: Path = None) -> dict:
-    """Drop and recompute every edge from scratch, oldest memory first.
-    Safe to run any time — edges are cache, not truth."""
+    """Drop and recompute the derived edges (DERIVED_EDGE_KINDS: semantic, tag,
+    reference, session_chain), oldest memory first. Safe any time: those are
+    cache. Belief citations (derived_from), contradictions (conflicts_with,
+    dismissed ones included) and entity edges are never touched."""
     from .models import MemoryEntry  # local import to avoid cycles
 
     db_path = db_path or DB_PATH
     with _conn(db_path) as conn:
-        conn.execute("DELETE FROM memory_links")
+        conn.execute(f"DELETE FROM memory_links WHERE kind IN "
+                     f"({','.join('?' * len(DERIVED_EDGE_KINDS))})", DERIVED_EDGE_KINDS)
         conn.execute("DELETE FROM tag_stats")
         conn.execute("UPDATE memories SET link_degree = 0, linked_at = NULL")
         conn.commit()

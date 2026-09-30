@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime, timezone
 from typing import Optional
@@ -5,6 +6,9 @@ from .storage import keyword_search, get_memory, get_strengths, DB_PATH
 from .vector import legacy_vector_count, vec_search_multi
 from .summarise import embed, embed_model_id, embed_query
 
+logger = logging.getLogger(__name__)
+
+DEGRADED_SEMANTIC = "semantic search unavailable"
 RECENCY_DECAY_RATE = float(os.getenv("RECENCY_DECAY_RATE", "0.02"))
 # How much reinforcement/decay sways ranking. strength ∈ [0.2, 3.0];
 # the multiplier maps that to roughly [0.68, 1.4] — a thumb on the
@@ -84,17 +88,29 @@ async def hybrid_search(
     include_history: bool = False,
     db_path=None,
 ) -> list[dict]:
+    results, _degraded = await search_with_status(
+        query, limit=limit, project=project, type_filter=type_filter, days=days,
+        tags=tags, include_history=include_history, db_path=db_path)
+    return results
+
+
+async def search_with_status(
+    query: str,
+    limit: int = 10,
+    project: Optional[str] = None,
+    type_filter: Optional[str] = None,
+    days: Optional[int] = None,
+    tags: Optional[list] = None,
+    include_history: bool = False,
+    db_path=None,
+) -> tuple[list[dict], Optional[str]]:
+    """hybrid_search plus a degraded note: when the embedding model fails the
+    keyword results still come back, with DEGRADED_SEMANTIC as the note."""
     path = db_path or DB_PATH
     kw_results = keyword_search(
         query, limit=20, project=project, type_filter=type_filter,
         days=days, tags=tags, include_history=include_history, db_path=path,
     )
-
-    query_vectors = {embed_model_id(): await embed_query(query)}
-    if legacy_vector_count(db_path=path) > 0:
-        # 2.x vectors were made without a prompt; match them with a raw query
-        # until the background re-embed has replaced them all.
-        query_vectors[""] = await embed(query)
 
     vec_filters: dict = {}
     if not include_history:
@@ -104,8 +120,18 @@ async def hybrid_search(
     if type_filter:
         vec_filters["type"] = type_filter
 
-    sem_results = vec_search_multi(query_vectors, n_results=20, filters=vec_filters,
-                                   db_path=path)
+    degraded = None
+    try:
+        query_vectors = {embed_model_id(): await embed_query(query)}
+        if legacy_vector_count(db_path=path) > 0:
+            # 2.x vectors were made without a prompt; match them with a raw
+            # query until the background re-embed has replaced them all.
+            query_vectors[""] = await embed(query)
+        sem_results = vec_search_multi(query_vectors, n_results=20, filters=vec_filters,
+                                       db_path=path)
+    except Exception as exc:
+        logger.warning("%s (%s): keyword results only", DEGRADED_SEMANTIC, type(exc).__name__)
+        sem_results, degraded = [], DEGRADED_SEMANTIC
 
     candidate_ids = list({r["id"] for r in kw_results}
                          | {r["id"] for r in sem_results})
@@ -135,4 +161,4 @@ async def hybrid_search(
                     "timestamp": entry.timestamp.isoformat(),
                     "status": entry.status,
                 })
-    return output
+    return output, degraded

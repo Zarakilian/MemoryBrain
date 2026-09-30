@@ -43,26 +43,23 @@ async def test_handle_add_memory_no_description_leaves_summary_empty():
 
 
 @pytest.mark.asyncio
-async def test_handle_delete_memory_success():
+async def test_handle_delete_memory_success(tmp_db):
+    """v3: an agent's delete archives the memory (reversible, audited)."""
     from app.models import MemoryEntry
-    fake_entry = MemoryEntry(content="x", type="note", project="p")
-    with patch("app.mcp.tools.get_memory", return_value=fake_entry), \
-         patch("app.mcp.tools.delete_memory") as mock_del, \
-         patch("app.mcp.tools.vec_delete") as mock_cdel:
-        result = await handle_delete_memory(fake_entry.id)
-        data = json.loads(result)
-        assert data["deleted"] is True
-        assert data["id"] == fake_entry.id
-        mock_del.assert_called_once()
-        mock_cdel.assert_called_once_with(fake_entry.id, db_path=DB_PATH)
+    from app.storage import add_memory, get_memory
+    entry = MemoryEntry(content="x", type="note", project="p")
+    add_memory(entry, db_path=tmp_db)
+    with patch("app.mcp.tools.DB_PATH", tmp_db):
+        data = json.loads(await handle_delete_memory(entry.id))
+    assert data["archived"] is True and data["id"] == entry.id
+    assert get_memory(entry.id, db_path=tmp_db).status == "archived"
 
 
 @pytest.mark.asyncio
-async def test_handle_delete_memory_not_found():
-    with patch("app.mcp.tools.get_memory", return_value=None):
-        result = await handle_delete_memory("nonexistent")
-        data = json.loads(result)
-        assert "error" in data
+async def test_handle_delete_memory_not_found(tmp_db):
+    with patch("app.mcp.tools.DB_PATH", tmp_db):
+        data = json.loads(await handle_delete_memory("nonexistent"))
+    assert "error" in data
 
 
 @pytest.mark.asyncio
