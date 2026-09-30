@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,12 +24,27 @@ def _is_existing_brain(conn: sqlite3.Connection, applied: set[str]) -> bool:
 
 
 def _backup(conn: sqlite3.Connection, db_path: Path, stem: str) -> Path:
+    """VACUUM INTO a temporary file, then rename, so a crash or a full disk
+    never leaves a truncated copy that counts as a backup. A retry within
+    the same second gets a -2, -3 suffix instead of failing."""
     folder = Path(db_path).parent / "backups"
     folder.mkdir(parents=True, exist_ok=True)
-    target = folder / f"brain-pre-{stem}-{_utc_stamp()}.db"
-    conn.execute("VACUUM INTO ?", (str(target),))
-    copies = sorted(folder.glob("brain-pre-*.db"), key=lambda p: (p.stat().st_mtime, p.name))
-    for old in copies[:-BACKUP_KEEP]:
+    base = f"brain-pre-{stem}-{_utc_stamp()}"
+    target = folder / f"{base}.db"
+    n = 1
+    while target.exists():
+        n += 1
+        target = folder / f"{base}-{n}.db"
+    tmp = target.with_name(target.name + ".tmp")
+    try:
+        conn.execute("VACUUM INTO ?", (str(tmp),))
+        os.replace(tmp, target)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    copies = sorted((p for p in folder.glob("brain-pre-*.db") if p != target),
+                    key=lambda p: (p.stat().st_mtime, p.name))
+    for old in copies[:max(0, len(copies) - (BACKUP_KEEP - 1))]:
         old.unlink()
     return target
 
@@ -38,6 +54,7 @@ def run_migrations(db_path: Path, migrations_dir: Path = MIGRATIONS_DIR) -> None
 
     Each file runs in one transaction with its schema_migrations row, so a
     failure leaves nothing from that file behind and the error is raised.
+    A migration file must not contain BEGIN, COMMIT or ROLLBACK.
     Before the first pending file of a run, an existing brain is copied to
     backups/ with VACUUM INTO, keeping the newest five copies.
     """
@@ -69,6 +86,10 @@ def run_migrations(db_path: Path, migrations_dir: Path = MIGRATIONS_DIR) -> None
                 # executescript commits anything pending first, so the
                 # transaction has to open inside the script itself.
                 conn.executescript("BEGIN IMMEDIATE;\n" + mf.read_text(encoding="utf-8"))
+                if not conn.in_transaction:
+                    raise RuntimeError(
+                        f"{mf.name} ended its own transaction (COMMIT or ROLLBACK). "
+                        "Migrations must not manage transactions; the runner does.")
                 conn.execute(
                     "INSERT INTO schema_migrations (filename, applied_at) VALUES (?, ?)",
                     (mf.name, datetime.now(timezone.utc).isoformat()),

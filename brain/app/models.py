@@ -45,7 +45,7 @@ class MemoryEntry:
     # Provenance and validity (persisted, v3)
     writer: str = ""               # who wrote it, e.g. "claude@WORK-PC"
     trust: str = "agent"           # one of VALID_TRUST
-    embedded: bool = True          # False until a vector exists
+    embedded: bool = True          # False when the vector is missing and must be re-embedded
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
     invalidated_by: Optional[str] = None

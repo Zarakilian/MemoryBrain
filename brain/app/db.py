@@ -2,11 +2,15 @@
 
 WAL lets readers carry on while a writer commits. foreign_keys makes the
 schema's ON DELETE CASCADE rules real. busy_timeout waits out a short lock
-instead of failing. synchronous=NORMAL is the durable pairing for WAL.
+instead of failing. synchronous=NORMAL with WAL is crash-safe (never corrupt);
+a power cut can lose only the last few commits.
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
+
+logger = logging.getLogger(__name__)
 
 BUSY_TIMEOUT_MS = 5000
 
@@ -20,7 +24,11 @@ def connect(db_path, *, vec: bool = False, readonly: bool = False,
                            check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
-    conn.execute("PRAGMA journal_mode = WAL")
+    mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+    if mode != "wal" and str(db_path) != ":memory:":
+        # Some filesystems (network shares) cannot do WAL; SQLite then
+        # silently keeps a rollback journal. Say so once per connection.
+        logger.warning("SQLite stayed in %s journal mode for %s (WAL unavailable)", mode, db_path)
     conn.execute("PRAGMA synchronous = NORMAL")
     conn.execute("PRAGMA foreign_keys = ON")
     if vec:

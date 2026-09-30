@@ -23,6 +23,8 @@ workspace-map.proposed.json
 *.db
 *.db-journal
 *.db-wal
+*.db-shm
+*.db.tmp
 *.sqlite
 *.sqlite3
 *.bundle

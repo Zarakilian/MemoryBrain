@@ -248,3 +248,28 @@ def test_009_adds_model_to_vectors_and_new_tables(tmp_db):
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     assert "model" in vcols and vcols["model"][4] == "''"
     assert {"vec_chunks", "memory_audit", "entities", "entity_mentions"} <= tables
+
+
+def test_a_migration_that_commits_itself_is_refused(tmp_path):
+    db = tmp_path / "brain.db"
+    _make_minimal_db(db)
+    migs = _mig_dir(tmp_path, {"001_sneaky.sql": "CREATE TABLE early (x INTEGER);\nCOMMIT;\n"})
+    with pytest.raises(RuntimeError, match="transaction"):
+        run_migrations(db_path=db, migrations_dir=migs)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0] == 0
+
+
+def test_retrying_a_failed_migration_at_once_still_backs_up(tmp_path):
+    """Same migration, same second: the second backup must not collide."""
+    db = tmp_path / "brain.db"
+    _make_minimal_db(db)
+    migs = _mig_dir(tmp_path, {"001_first.sql": "CREATE TABLE a (x INTEGER);\n"})
+    run_migrations(db_path=db, migrations_dir=migs)
+    (migs / "002_retry.sql").write_text("INSERT INTO nope VALUES (1);\n", encoding="utf-8")
+    with pytest.raises(sqlite3.OperationalError):
+        run_migrations(db_path=db, migrations_dir=migs)
+    (migs / "002_retry.sql").write_text("CREATE TABLE b (x INTEGER);\n", encoding="utf-8")
+    run_migrations(db_path=db, migrations_dir=migs)
+    assert len(_backups(db)) == 2
+    assert not list((db.parent / "backups").glob("*.tmp"))
