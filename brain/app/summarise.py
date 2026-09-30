@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from abc import ABC, abstractmethod
@@ -5,7 +6,14 @@ from typing import Optional
 from urllib.parse import urlparse
 
 
+logger = logging.getLogger(__name__)
+
 SHORT_CONTENT_THRESHOLD = 400
+EMBED_BATCH = 32
+# EmbeddingGemma was trained with task prompts; plain text embeds worse.
+GEMMA_DOCUMENT_PREFIX = "title: none | text: "
+GEMMA_QUERY_PREFIX = "task: search result | query: "
+PROVIDER_NAMES = ("ollama", "gemini", "openai")
 
 # Chat models love announcing themselves ("Here is a summary of the
 # feedback in 3 sentences:") — which then gets STORED and becomes the
@@ -28,8 +36,14 @@ def strip_preamble(text: str) -> str:
 
 
 class SummariseProvider(ABC):
+    name = ""
+
     @abstractmethod
     async def embed(self, text: str) -> list[float]: ...
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        """Embed several texts. Providers with a batch API override this."""
+        return [await self.embed(t) for t in texts]
 
     @abstractmethod
     async def summarise(self, content: str, max_sentences: int = 3) -> str: ...
@@ -42,6 +56,8 @@ class SummariseProvider(ABC):
 
 
 class OllamaProvider(SummariseProvider):
+    name = "ollama"
+
     def __init__(self):
         import ollama as _ollama
         url = self._validate_url(os.getenv("OLLAMA_URL", "http://ollama:11434"))
@@ -57,8 +73,13 @@ class OllamaProvider(SummariseProvider):
         return url
 
     async def embed(self, text: str) -> list[float]:
-        response = await self._client.embeddings(model=self._embed_model, prompt=text)
-        return response["embedding"]
+        return (await self.embed_many([text]))[0]
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        # /api/embed with truncate=True: over-long input is cut to the model's
+        # window instead of failing the whole write.
+        response = await self._client.embed(model=self._embed_model, input=texts, truncate=True)
+        return [list(v) for v in response["embeddings"]]
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:
         verbatim = self._verbatim_if_short(content)
@@ -86,6 +107,8 @@ class OllamaProvider(SummariseProvider):
 
 
 class GeminiProvider(SummariseProvider):
+    name = "gemini"
+
     def __init__(self):
         from google import genai
         self._client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
@@ -131,6 +154,8 @@ class GeminiProvider(SummariseProvider):
 
 
 class OpenAIProvider(SummariseProvider):
+    name = "openai"
+
     def __init__(self):
         from openai import AsyncOpenAI
         self._client = AsyncOpenAI(
@@ -143,6 +168,10 @@ class OpenAIProvider(SummariseProvider):
     async def embed(self, text: str) -> list[float]:
         response = await self._client.embeddings.create(model=self._embed_model, input=text)
         return response.data[0].embedding
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        response = await self._client.embeddings.create(model=self._embed_model, input=texts)
+        return [d.embedding for d in response.data]
 
     async def summarise(self, content: str, max_sentences: int = 3) -> str:
         verbatim = self._verbatim_if_short(content)
@@ -189,13 +218,35 @@ def validate_ollama_url(url: str) -> str:
     return OllamaProvider._validate_url(url)
 
 
+def _provider_name() -> str:
+    return (os.getenv("MEMORYBRAIN_PROVIDER") or "ollama").strip().lower()
+
+
+def provider_warning():
+    """Say which cloud keys are set but ignored, or None. Never shows values."""
+    if _provider_name() != "ollama":
+        return None
+    keys = [k for k in ("GOOGLE_API_KEY", "OPENAI_API_KEY") if os.getenv(k)]
+    if not keys:
+        return None
+    return (f"{' and '.join(keys)} set, but MEMORYBRAIN_PROVIDER is 'ollama', so the key "
+            "is ignored. Set MEMORYBRAIN_PROVIDER to use a cloud provider.")
+
+
 def get_provider() -> SummariseProvider:
-    """Auto-select: Gemini if GOOGLE_API_KEY set, OpenAI if OPENAI_API_KEY set, else Ollama."""
-    if os.getenv("GOOGLE_API_KEY"):
-        return GeminiProvider()
-    if os.getenv("OPENAI_API_KEY"):
-        return OpenAIProvider()
-    return OllamaProvider()
+    """Build the provider named by MEMORYBRAIN_PROVIDER (default 'ollama').
+
+    An API key in the environment never switches provider on its own, so a
+    stray key cannot send memories to a cloud service."""
+    name = _provider_name()
+    providers = {"ollama": OllamaProvider, "gemini": GeminiProvider, "openai": OpenAIProvider}
+    if name not in providers:
+        raise ValueError(f"MEMORYBRAIN_PROVIDER must be one of {', '.join(PROVIDER_NAMES)}, "
+                         f"got {name!r}")
+    warning = provider_warning()
+    if warning:
+        logger.warning(warning)
+    return providers[name]()
 
 
 _provider: Optional[SummariseProvider] = None
@@ -210,7 +261,41 @@ def _get_provider() -> SummariseProvider:
 
 # Public interface — unchanged so nothing else needs to update
 async def embed(text: str) -> list[float]:
+    """Raw embedding, no prompt. Matches vectors written by 2.x (model '')."""
     return await _get_provider().embed(text)
+
+
+def _uses_gemma_prompts() -> bool:
+    return "embeddinggemma" in _get_embed_model()
+
+
+def embed_model_id() -> str:
+    """The vector space new vectors live in, e.g. 'ollama:embeddinggemma:p1'.
+
+    ':p1' marks the EmbeddingGemma prompts below; ':raw' means no prompt."""
+    p = _get_provider()
+    name = getattr(p, "name", "") or type(p).__name__.lower()
+    return f"{name}:{_get_embed_model()}:{'p1' if _uses_gemma_prompts() else 'raw'}"
+
+
+async def embed_documents(texts: list[str]) -> list[list[float]]:
+    """Embed stored text, in batches, with the document prompt when it applies."""
+    prefix = GEMMA_DOCUMENT_PREFIX if _uses_gemma_prompts() else ""
+    provider = _get_provider()
+    vectors: list[list[float]] = []
+    for i in range(0, len(texts), EMBED_BATCH):
+        vectors += await provider.embed_many([prefix + t for t in texts[i:i + EMBED_BATCH]])
+    return vectors
+
+
+async def embed_document(text: str) -> list[float]:
+    return (await embed_documents([text]))[0]
+
+
+async def embed_query(text: str) -> list[float]:
+    """Embed a search query, with the query prompt when it applies."""
+    prefix = GEMMA_QUERY_PREFIX if _uses_gemma_prompts() else ""
+    return await _get_provider().embed(prefix + text)
 
 
 async def summarise(content: str, max_sentences: int = 3) -> str:

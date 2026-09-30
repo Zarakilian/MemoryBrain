@@ -15,7 +15,9 @@ def test_ollama_provider_selected_by_default(monkeypatch):
     assert provider.__class__.__name__ == "OllamaProvider"
 
 
-def test_gemini_provider_selected_when_key_set(monkeypatch):
+def test_gemini_provider_selected_when_named(monkeypatch):
+    # v3: MEMORYBRAIN_PROVIDER chooses; a key alone never switches provider.
+    monkeypatch.setenv("MEMORYBRAIN_PROVIDER", "gemini")
     monkeypatch.setenv("GOOGLE_API_KEY", "fake-key")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with patch("google.genai.Client"):
@@ -26,7 +28,8 @@ def test_gemini_provider_selected_when_key_set(monkeypatch):
     assert provider.__class__.__name__ == "GeminiProvider"
 
 
-def test_openai_provider_selected_when_key_set(monkeypatch):
+def test_openai_provider_selected_when_named(monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_PROVIDER", "openai")
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
     import importlib

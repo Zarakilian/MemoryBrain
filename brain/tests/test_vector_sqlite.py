@@ -136,11 +136,11 @@ def test_startup_backfill_skipped_on_chroma_backend(vec_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_reembed_missing_uses_provider(vec_db, mock_ollama):
-    from app.vector import reembed_missing
+async def test_reembed_batch_uses_provider(vec_db, mock_ollama):
+    from app.reembed import reembed_batch
     add_memory(_mem("m1"), db_path=vec_db)
-    report = await reembed_missing(db_path=vec_db)
-    assert report["reembedded"] == 1
+    report = await reembed_batch(500, db_path=vec_db)
+    assert report["done"] == 1
     assert vec_count(db_path=vec_db) == 1
 
 

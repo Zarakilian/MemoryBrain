@@ -30,6 +30,12 @@ def mock_ollama():
 
     mock_client = AsyncMock()
     mock_client.embeddings.return_value = {"embedding": [0.1] * 768}
+
+    def _embed(model, input, **kwargs):
+        texts = input if isinstance(input, list) else [input]
+        return {"embeddings": [[0.1] * 768 for _ in texts]}
+
+    mock_client.embed.side_effect = _embed
     mock_client.generate.side_effect = AsyncMock(
         side_effect=lambda model, prompt, **kwargs: {
             "response": "3" if "Rate the importance" in prompt else "Short two sentence summary."
@@ -54,3 +60,51 @@ def tmp_chroma():
     """In-memory ChromaDB client for tests — no disk writes."""
     client = chromadb.EphemeralClient()
     return client
+
+
+class FakeEmbedProvider:
+    """Deterministic, model-free embeddings for tests.
+
+    One dimension per concept and synonyms share a dimension, so "automobile"
+    finds "my car" semantically while keyword search cannot. Every text the
+    provider sees is kept in `seen` (prompt prefixes included); any text
+    containing a string in `fail_on` raises.
+    """
+    CONCEPTS = {"car": 0, "automobile": 0, "vehicle": 0, "invoice": 1, "bill": 1,
+                "weather": 2, "rain": 2, "deploy": 3, "release": 3}
+    name = "fake"
+
+    def __init__(self, embed_model: str = "embeddinggemma"):
+        self._embed_model = embed_model
+        self._summarise_model = "fake-summary"
+        self.seen: list[str] = []
+        self.fail_on: set[str] = set()
+
+    async def embed(self, text: str) -> list[float]:
+        import re
+        self.seen.append(text)
+        if any(bad in text for bad in self.fail_on):
+            raise RuntimeError("fake embed failure")
+        vector = [0.01] * 8
+        for word in re.findall(r"[a-z]+", text.lower()):
+            if word in self.CONCEPTS:
+                vector[self.CONCEPTS[word]] += 1.0
+        return vector
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(t) for t in texts]
+
+    async def summarise(self, content: str, max_sentences: int = 3) -> str:
+        return content[:100]
+
+    async def score_importance(self, content: str) -> int:
+        return 3
+
+
+@pytest.fixture
+def fake_provider(monkeypatch):
+    """Install FakeEmbedProvider as the active provider for one test."""
+    import app.summarise as s
+    provider = FakeEmbedProvider()
+    monkeypatch.setattr(s, "_provider", provider)
+    return provider

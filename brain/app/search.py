@@ -2,8 +2,8 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 from .storage import keyword_search, get_memory, get_strengths, DB_PATH
-from .vector import vec_search
-from .summarise import embed
+from .vector import legacy_vector_count, vec_search_multi
+from .summarise import embed, embed_model_id, embed_query
 
 RECENCY_DECAY_RATE = float(os.getenv("RECENCY_DECAY_RATE", "0.02"))
 # How much reinforcement/decay sways ranking. strength ∈ [0.2, 3.0];
@@ -90,7 +90,11 @@ async def hybrid_search(
         days=days, tags=tags, include_history=include_history, db_path=path,
     )
 
-    embedding = await embed(query)
+    query_vectors = {embed_model_id(): await embed_query(query)}
+    if legacy_vector_count(db_path=path) > 0:
+        # 2.x vectors were made without a prompt; match them with a raw query
+        # until the background re-embed has replaced them all.
+        query_vectors[""] = await embed(query)
 
     vec_filters: dict = {}
     if not include_history:
@@ -100,7 +104,8 @@ async def hybrid_search(
     if type_filter:
         vec_filters["type"] = type_filter
 
-    sem_results = vec_search(embedding, n_results=20, filters=vec_filters, db_path=path)
+    sem_results = vec_search_multi(query_vectors, n_results=20, filters=vec_filters,
+                                   db_path=path)
 
     candidate_ids = list({r["id"] for r in kw_results}
                          | {r["id"] for r in sem_results})

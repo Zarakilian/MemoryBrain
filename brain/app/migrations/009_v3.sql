@@ -12,6 +12,7 @@ UPDATE memories SET trust = 'derived' WHERE type = 'belief' OR source = 'consoli
 UPDATE memories SET valid_from = timestamp WHERE type IN ('fact', 'decision') AND valid_from IS NULL;
 UPDATE memories SET content_updated_at = timestamp WHERE content_updated_at IS NULL;
 ALTER TABLE vec_memories ADD COLUMN model TEXT NOT NULL DEFAULT '';
+CREATE INDEX IF NOT EXISTS idx_vec_memories_model ON vec_memories(model);
 CREATE TABLE IF NOT EXISTS vec_chunks (
   memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
   chunk_ix INTEGER NOT NULL, start_char INTEGER NOT NULL, end_char INTEGER NOT NULL,

@@ -19,8 +19,6 @@ async def test_concurrent_ingests_are_limited(tmp_db, mock_ollama):
     max_running = 0
     lock = asyncio.Lock()
 
-    original_embed = mock_ollama.embeddings
-
     async def slow_embed(*args, **kwargs):
         nonlocal running, max_running
         async with lock:
@@ -29,9 +27,10 @@ async def test_concurrent_ingests_are_limited(tmp_db, mock_ollama):
         await asyncio.sleep(0.05)  # simulate slow operation
         async with lock:
             running -= 1
-        return {"embedding": [0.1] * 768}
+        texts = kwargs.get("input") or []
+        return {"embeddings": [[0.1] * 768 for _ in texts]}
 
-    mock_ollama.embeddings.side_effect = slow_embed
+    mock_ollama.embed.side_effect = slow_embed
 
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
          patch("app.ingest_pipeline.vec_add"):

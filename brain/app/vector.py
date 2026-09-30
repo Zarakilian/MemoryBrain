@@ -12,12 +12,18 @@ Routes vector operations to one of two backends via MEMORYBRAIN_VECTOR_BACKEND:
 The public functions mirror the shapes chroma.py exposed so callers
 (ingest_pipeline, search, mcp.tools) stay simple:
 
-  vec_add(memory_id, embedding, metadata)
+  vec_add(memory_id, embedding, metadata, model="")
   vec_update_metadata(memory_id, metadata)      # no-op on sqlite_vec: search
                                                 # joins memories for live status
   vec_search(embedding, n_results, filters)     # flat {project,type,status}
+  vec_search_multi({model: embedding}, ...)     # v3: each model vs its own vectors
+  legacy_vector_count()                         # v3: vectors with model ''
   vec_delete(memory_id)
   startup_backfill()                            # one-time Chroma -> SQLite copy
+
+v3 records which embedding model made each vector (vec_memories.model).
+Vectors from 2.x have model '' and stay searchable with a raw query vector
+until the background re-embed (reembed.py) replaces them.
 
 Vector loss is never data loss: SQLite content is canonical and embeddings
 are re-derivable via the provider (POST /admin/backfill-vectors).
@@ -56,11 +62,12 @@ def _connect_vec(db_path: Path) -> sqlite3.Connection:
     return connect(db_path, vec=True)
 
 
-def _sv_add(memory_id: str, embedding: list[float], db_path: Path):
+def _sv_add(memory_id: str, embedding: list[float], db_path: Path, model: str = ""):
     with _connect_vec(db_path) as conn:
         conn.execute(
-            "INSERT OR REPLACE INTO vec_memories (memory_id, dim, embedding) VALUES (?, ?, ?)",
-            (memory_id, len(embedding), _serialize(embedding)),
+            "INSERT OR REPLACE INTO vec_memories (memory_id, dim, embedding, model) "
+            "VALUES (?, ?, ?, ?)",
+            (memory_id, len(embedding), _serialize(embedding), model),
         )
         conn.commit()
 
@@ -70,10 +77,16 @@ def _sv_search(
     n_results: int,
     filters: Optional[dict],
     db_path: Path,
+    model: Optional[str] = None,
 ) -> list[dict]:
+    """model=None searches every vector (2.x behaviour); a string limits the
+    search to vectors made by that model."""
     filters = filters or {}
     where = ["v.dim = ?"]
     params: list = [len(embedding)]
+    if model is not None:
+        where.append("v.model = ?")
+        params.append(model)
     for key in ("project", "type"):
         if filters.get(key):
             where.append(f"m.{key} = ?")
@@ -113,12 +126,12 @@ def _sv_delete(memory_id: str, db_path: Path):
 # ------------------------------------------------------------- public API
 
 def vec_add(memory_id: str, embedding: list[float], metadata: dict,
-            db_path: Path = None):
+            db_path: Path = None, model: str = ""):
     if get_backend() == "chroma":
         from .chroma import chroma_add
         chroma_add(memory_id, embedding, metadata)
     else:
-        _sv_add(memory_id, embedding, db_path or DB_PATH)
+        _sv_add(memory_id, embedding, db_path or DB_PATH, model=model)
 
 
 def vec_update_metadata(memory_id: str, metadata: dict, db_path: Path = None):
@@ -137,6 +150,34 @@ def vec_search(embedding: list[float], n_results: int = 20,
         return chroma_search(embedding, n_results=n_results,
                              where=build_where(filters or {}))
     return _sv_search(embedding, n_results, filters, db_path or DB_PATH)
+
+
+def vec_search_multi(query_vectors: dict[str, list[float]], n_results: int = 20,
+                     filters: Optional[dict] = None, db_path: Path = None) -> list[dict]:
+    """Search with one query vector per embedding model ('' = 2.x legacy).
+
+    Each query vector is compared only with vectors of its own model; the
+    results are merged by distance and each carries its "model"."""
+    if not query_vectors:
+        return []
+    if get_backend() == "chroma":
+        # Chroma keeps one raw vector per memory and has no model column.
+        vector = query_vectors.get("", next(iter(query_vectors.values())))
+        return [{**r, "model": ""} for r in vec_search(vector, n_results, filters, db_path)]
+    merged: list[dict] = []
+    for model, vector in query_vectors.items():
+        merged += [{**r, "model": model} for r in
+                   _sv_search(vector, n_results, filters, db_path or DB_PATH, model=model)]
+    merged.sort(key=lambda r: r["distance"])
+    return merged[:n_results]
+
+
+def legacy_vector_count(db_path: Path = None) -> int:
+    """Vectors written before v3 recorded the model (model '')."""
+    if get_backend() == "chroma":
+        return 0
+    with _connect_vec(db_path or DB_PATH) as conn:
+        return conn.execute("SELECT COUNT(*) FROM vec_memories WHERE model = ''").fetchone()[0]
 
 
 def vec_delete(memory_id: str, db_path: Path = None):
@@ -225,21 +266,3 @@ def startup_backfill(db_path: Path = None, chroma_path: Path = None) -> dict:
         logger.info(f"Vector backfill complete: {report['copied_from_chroma']} "
                     "embeddings copied from Chroma")
     return report
-
-
-async def reembed_missing(db_path: Path = None, limit: int = 500) -> dict:
-    """Re-embed memories that have no vector, via the active AI provider."""
-    from .summarise import embed
-
-    db_path = db_path or DB_PATH
-    with _connect_vec(db_path) as conn:
-        rows = conn.execute(
-            """SELECT m.id, m.content FROM memories m
-               LEFT JOIN vec_memories v ON v.memory_id = m.id
-               WHERE v.memory_id IS NULL LIMIT ?""", (limit,)).fetchall()
-    done = 0
-    for r in rows:
-        embedding = await embed(r["content"])
-        _sv_add(r["id"], embedding, db_path)
-        done += 1
-    return {"reembedded": done}

@@ -18,7 +18,8 @@ from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
 from .db import connect
 from .auth import require_api_key
-from .summarise import _get_ollama_client, _get_embed_model, _get_summarise_model, _get_provider
+from .summarise import (_get_ollama_client, _get_embed_model, _get_summarise_model,
+                        _get_provider, provider_warning)
 
 # Module-level references — initialised eagerly so that tests can patch
 # 'app.main.ollama_client' and have the /readiness handler see the mock.
@@ -27,7 +28,8 @@ from .summarise import _get_ollama_client, _get_embed_model, _get_summarise_mode
 ollama_client = _get_ollama_client()
 EMBED_MODEL = _get_embed_model()
 SUMMARISE_MODEL = _get_summarise_model()
-from .vector import get_backend, vec_ready, startup_backfill, reembed_missing
+from .vector import get_backend, vec_ready, startup_backfill
+from .reembed import pending_count, reembed_batch, reembed_loop
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,24 @@ streamable_session_manager = StreamableHTTPSessionManager(
 )
 
 
+def _reembed_rate() -> int:
+    """MEMORYBRAIN_REEMBED_RATE: memories re-embedded per minute (0 disables)."""
+    raw = os.getenv("MEMORYBRAIN_REEMBED_RATE", "25")
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        logger.warning("MEMORYBRAIN_REEMBED_RATE=%r is not a number, using 25", raw)
+        return 25
+
+
+def _reembed_pending():
+    try:
+        return pending_count(db_path=DB_PATH)
+    except Exception:
+        logger.exception("could not count memories waiting for a re-embed")
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
@@ -95,16 +115,26 @@ async def lifespan(app: FastAPI):
             logger.info("auto-consolidate scheduler task created")
     except Exception:
         logger.exception("failed to start auto-consolidate scheduler")
+    # v3: throttled re-embed of vectors from older models (2.x vectors have model '')
+    stop_reembed = asyncio.Event()
+    reembed_task = None
+    rate = _reembed_rate()
+    if rate > 0:
+        reembed_task = asyncio.create_task(reembed_loop(stop_reembed, rate), name="reembed")
+        logger.info("re-embed task created (%d per minute)", rate)
     # StreamableHTTPSessionManager.run() owns the request task group for /mcp.
     async with streamable_session_manager.run():
         logger.info("Streamable HTTP MCP session manager started at /mcp")
         yield
     stop_sched.set()
-    if sched_task is not None:
+    stop_reembed.set()
+    for task in (sched_task, reembed_task):
+        if task is None:
+            continue
         try:
-            await asyncio.wait_for(sched_task, timeout=5)
+            await asyncio.wait_for(task, timeout=5)
         except Exception:
-            sched_task.cancel()
+            task.cancel()
     logger.info("Streamable HTTP MCP session manager stopped")
 
 
@@ -276,7 +306,8 @@ async def readiness():
             checks["openai_api_key"] = "ok"
 
     ready = all(v == "ok" for v in checks.values())
-    return {"ready": ready, "checks": checks}
+    return {"ready": ready, "checks": checks,
+            "reembed_pending": _reembed_pending(), "provider_warning": provider_warning()}
 
 
 @app.get("/status")
@@ -297,6 +328,7 @@ async def status():
         "project_count": len(list_projects(db_path=DB_PATH)),
         "build_stamp": stamp,
         "scheduler": scheduler_status(db_path=DB_PATH),
+        "reembed_pending": _reembed_pending(),
         "mcp": {
             "sse": "/sse",
             "sse_messages": "/messages/",
@@ -361,8 +393,7 @@ async def backfill_vectors():
     """Re-embed any memories missing a vector (after Chroma backfill gaps).
     Authenticated via the standard API-key middleware; loopback-only."""
     startup_report = startup_backfill()
-    reembed_report = await reembed_missing()
-    return {"backfill": startup_report, **reembed_report}
+    return {"backfill": startup_report, **(await reembed_batch(500, db_path=DB_PATH))}
 
 
 @app.get("/next-session")
