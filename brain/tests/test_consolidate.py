@@ -139,7 +139,7 @@ async def test_belief_supersedes_only_prior_beliefs(cdb, mock_ollama):
                                "status": "active"}, db_path=cdb)
 
     entry = _mem("newbelief", type_="belief")
-    superseded, _potential = await _check_supersession(entry, emb)
+    superseded, _potential = await _check_supersession(entry, emb, "")  # legacy vectors
     assert "oldbelief" in superseded          # identical prior belief: replaced
     assert "raw1" not in superseded           # raw source: never
 

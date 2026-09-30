@@ -1,34 +1,37 @@
-"""Tests for A6: cross-store transaction safety between SQLite and ChromaDB."""
+"""v3: the memory row and its vectors commit in one transaction."""
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
+from app.db import connect
 from app.models import MemoryEntry
 from app.ingest_pipeline import ingest
 
 
 @pytest.mark.asyncio
-async def test_sqlite_cleaned_up_on_chroma_failure(tmp_db, mock_ollama):
-    """If ChromaDB write fails, the SQLite entry should be rolled back."""
+async def test_nothing_is_written_when_the_vector_write_fails(tmp_db, mock_ollama):
+    """If storing the vectors fails, the row is rolled back and the error propagates."""
     entry = MemoryEntry(content="orphan test content", type="note", project="test")
 
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.vec_add", side_effect=RuntimeError("ChromaDB down")):
-        with pytest.raises(RuntimeError, match="ChromaDB down"):
+         patch("app.ingest_pipeline.insert_vectors", side_effect=RuntimeError("vector write failed")):
+        with pytest.raises(RuntimeError, match="vector write failed"):
             await ingest(entry)
 
-    # SQLite should NOT have the entry
     from app.storage import get_memory
     assert get_memory(entry.id, db_path=tmp_db) is None
 
 
 @pytest.mark.asyncio
-async def test_successful_ingest_stores_both(tmp_db, mock_ollama):
-    """Happy path: both stores should have the entry."""
+async def test_successful_ingest_stores_row_and_vector(tmp_db, mock_ollama):
     entry = MemoryEntry(content="both stores test", type="note", project="test")
 
-    with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.vec_add") as mock_chroma:
+    with patch("app.ingest_pipeline.DB_PATH", tmp_db):
         await ingest(entry)
 
     from app.storage import get_memory
     assert get_memory(entry.id, db_path=tmp_db) is not None
-    mock_chroma.assert_called_once()
+    conn = connect(tmp_db)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM vec_memories WHERE memory_id = ?",
+                            (entry.id,)).fetchone()[0] == 1
+    finally:
+        conn.close()

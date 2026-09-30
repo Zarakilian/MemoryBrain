@@ -58,51 +58,41 @@ def test_get_memory_by_content_hash_returns_none_when_missing(tmp_db):
 
 # ── Ingest endpoint deduplication ───────────────────────────────────────────
 
-def test_ingest_note_deduplicates(tmp_db, mock_ollama):
-    """POST /ingest/note should return existing ID for duplicate content+project."""
+def _post_twice(route, tmp_db, monkeypatch, body):
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.models import MemoryEntry
-    from app.storage import add_memory, get_memory_by_content_hash
-
-    # Manually store first entry
-    entry = MemoryEntry(content="unique content abc", type="note", project="myproj",
-                        summary="test summary", importance=3)
-    add_memory(entry, db_path=tmp_db)
-
-    # Second POST with same content+project → dedup
-    with patch("app.ingestion.manual.get_memory_by_content_hash") as mock_dedup, \
-         patch("app.ingestion.manual.ingest", new_callable=AsyncMock) as mock_ingest:
-        mock_dedup.return_value = entry  # simulate finding duplicate
-        client = TestClient(app)
-        r = client.post("/ingest/note", json={
-            "content": "unique content abc", "project": "myproj"
-        })
-    assert r.status_code == 200
-    assert r.json()["id"] == entry.id
-    assert r.json()["duplicate"] is True
-    mock_ingest.assert_not_called()  # should NOT have called ingest
+    monkeypatch.setattr("app.ingest_pipeline.DB_PATH", tmp_db)
+    client = TestClient(app)
+    return client.post(route, json=body), client.post(route, json=body)
 
 
-def test_ingest_session_deduplicates(tmp_db, mock_ollama):
-    """POST /ingest/session should return existing ID for duplicate content+project."""
+def test_ingest_note_deduplicates(tmp_db, mock_ollama, monkeypatch):
+    """v3: dedup lives in ingest, so every route gets it. A second POST of the
+    same content+project returns the first id with duplicate=true."""
+    first, second = _post_twice("/ingest/note", tmp_db, monkeypatch,
+                                {"content": "unique content abc", "project": "myproj"})
+    assert first.status_code == 201 and first.json()["duplicate"] is False
+    assert second.status_code == 200 and second.json()["duplicate"] is True
+    assert second.json()["id"] == first.json()["id"]
+
+
+def test_ingest_session_deduplicates(tmp_db, mock_ollama, monkeypatch):
+    first, second = _post_twice("/ingest/session", tmp_db, monkeypatch,
+                                {"content": "session log xyz", "project": "proj"})
+    assert first.status_code == 201
+    assert second.status_code == 200 and second.json()["duplicate"] is True
+    assert second.json()["id"] == first.json()["id"]
+
+
+def test_archived_copy_is_not_a_duplicate(tmp_db, mock_ollama, monkeypatch):
+    """Only an ACTIVE memory with the same content counts as a duplicate."""
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.models import MemoryEntry
-
-    entry = MemoryEntry(content="session log xyz", type="session", project="proj",
-                        summary="session summary", importance=3)
-
-    with patch("app.ingestion.session.get_memory_by_content_hash") as mock_dedup, \
-         patch("app.ingestion.session.ingest", new_callable=AsyncMock) as mock_ingest:
-        mock_dedup.return_value = entry
-        client = TestClient(app)
-        r = client.post("/ingest/session", json={
-            "content": "session log xyz", "project": "proj"
-        })
-    assert r.status_code == 200
-    assert r.json()["duplicate"] is True
-    mock_ingest.assert_not_called()
+    old = MemoryEntry(content="said again", type="note", project="myproj", status="archived")
+    add_memory(old, db_path=tmp_db)
+    monkeypatch.setattr("app.ingest_pipeline.DB_PATH", tmp_db)
+    r = TestClient(app).post("/ingest/note", json={"content": "said again", "project": "myproj"})
+    assert r.status_code == 201 and r.json()["id"] != old.id
 
 
 def test_ingest_note_not_duplicate_calls_ingest(tmp_db, mock_ollama):
@@ -111,8 +101,7 @@ def test_ingest_note_not_duplicate_calls_ingest(tmp_db, mock_ollama):
     from app.main import app
     from app.models import MemoryEntry
 
-    with patch("app.ingestion.manual.get_memory_by_content_hash", return_value=None), \
-         patch("app.ingestion.manual.ingest", new_callable=AsyncMock) as mock_ingest:
+    with patch("app.ingestion.manual.ingest", new_callable=AsyncMock) as mock_ingest:
         mock_ingest.return_value = MemoryEntry(id="new-1", content="x", type="note", project="p")
         client = TestClient(app)
         r = client.post("/ingest/note", json={

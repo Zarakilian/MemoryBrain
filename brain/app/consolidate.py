@@ -422,6 +422,7 @@ async def consolidate(project: Optional[str] = None,
                 tags=["belief", "consolidated"],
                 source="consolidation",
                 importance=4,
+                writer="consolidation", trust="derived",
             )
             try:
                 belief = await ingest(belief)
@@ -459,6 +460,7 @@ async def consolidate(project: Optional[str] = None,
                 content=content, summary=content,
                 type="note", project=proj,
                 tags=[LOOP_TAG], source="consolidation", importance=4,
+                writer="consolidation", trust="derived",
             )
             try:
                 await ingest(loop_entry)

@@ -14,6 +14,8 @@ EMBED_BATCH = 32
 GEMMA_DOCUMENT_PREFIX = "title: none | text: "
 GEMMA_QUERY_PREFIX = "task: search result | query: "
 PROVIDER_NAMES = ("ollama", "gemini", "openai")
+SUMMARY_HEAD = 3000
+SUMMARY_TAIL = 1000
 
 # Chat models love announcing themselves ("Here is a summary of the
 # feedback in 3 sentences:") — which then gets STORED and becomes the
@@ -27,6 +29,14 @@ _PREAMBLE_RE = re.compile(
     r"(?:summary|distillation|overview|breakdown|synopsis)"
     r"[^:\n]{0,80}[:.]\s*)+",
     re.IGNORECASE)
+
+
+def summary_input(content: str) -> str:
+    """What the summariser reads: the body, or its head and tail when long, so
+    the end of a long session (usually the outcome) is not cut off."""
+    if len(content) <= SUMMARY_HEAD + SUMMARY_TAIL:
+        return content
+    return content[:SUMMARY_HEAD] + "\n…\n" + content[-SUMMARY_TAIL:]
 
 
 def strip_preamble(text: str) -> str:
@@ -88,7 +98,7 @@ class OllamaProvider(SummariseProvider):
         prompt = (
             f"Summarise the following in {max_sentences} sentences. "
             f"Be specific — include key facts, names, and numbers. "
-            f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{content[:4000]}"
+            f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{summary_input(content)}"
         )
         response = await self._client.generate(model=self._summarise_model, prompt=prompt)
         return response["response"].strip()
@@ -130,7 +140,7 @@ class GeminiProvider(SummariseProvider):
         prompt = (
             f"Summarise the following in {max_sentences} sentences. "
             f"Be specific — include key facts, names, and numbers. "
-            f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{content[:4000]}"
+            f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{summary_input(content)}"
         )
         response = await asyncio.to_thread(
             self._client.models.generate_content, model=self._summarise_model, contents=prompt
@@ -184,7 +194,7 @@ class OpenAIProvider(SummariseProvider):
                 "content": (
                     f"Summarise the following in {max_sentences} sentences. "
                     f"Be specific — include key facts, names, and numbers. "
-                    f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{content[:4000]}"
+                    f"Reply with the summary text ONLY — no preamble such as 'Here is a summary':\n\n{summary_input(content)}"
                 ),
             }],
             max_tokens=200,

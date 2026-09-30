@@ -72,6 +72,22 @@ def _sv_add(memory_id: str, embedding: list[float], db_path: Path, model: str = 
         conn.commit()
 
 
+def insert_vectors(conn: sqlite3.Connection, memory_id: str, parent: list[float],
+                   model: str, chunks: list[tuple[int, int, int, list[float]]]) -> None:
+    """Write a memory's parent vector and replace its chunk vectors on an open
+    connection (the caller commits). chunks: (chunk_ix, start_char, end_char, vector)."""
+    conn.execute(
+        "INSERT OR REPLACE INTO vec_memories (memory_id, dim, embedding, model) VALUES (?, ?, ?, ?)",
+        (memory_id, len(parent), _serialize(parent), model),
+    )
+    conn.execute("DELETE FROM vec_chunks WHERE memory_id = ?", (memory_id,))
+    conn.executemany(
+        """INSERT INTO vec_chunks (memory_id, chunk_ix, start_char, end_char, model, dim, embedding)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        [(memory_id, ix, start, end, model, len(v), _serialize(v)) for ix, start, end, v in chunks],
+    )
+
+
 def _sv_search(
     embedding: list[float],
     n_results: int,

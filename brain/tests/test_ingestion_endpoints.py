@@ -9,8 +9,7 @@ client = TestClient(app)
 
 
 def test_ingest_note_returns_201_with_id(mock_ollama):
-    with patch("app.ingestion.manual.ingest", new_callable=AsyncMock) as mock_ingest, \
-         patch("app.ingestion.manual.get_memory_by_content_hash", return_value=None):
+    with patch("app.ingestion.manual.ingest", new_callable=AsyncMock) as mock_ingest:
         mock_ingest.return_value = MemoryEntry(id="new-123", content="x", type="note", project="p")
         resp = client.post("/ingest/note", json={
             "content": "postgres is slow",
@@ -27,8 +26,7 @@ def test_ingest_note_missing_content_returns_422():
 
 
 def test_ingest_session_returns_201(mock_ollama):
-    with patch("app.ingestion.session.ingest", new_callable=AsyncMock) as mock_ingest, \
-         patch("app.ingestion.session.get_memory_by_content_hash", return_value=None):
+    with patch("app.ingestion.session.ingest", new_callable=AsyncMock) as mock_ingest:
         mock_ingest.return_value = MemoryEntry(id="sess-1", content="x", type="session", project="api-service")
         resp = client.post("/ingest/session", json={
             "content": "# Handover\nWorked on alerts today.",

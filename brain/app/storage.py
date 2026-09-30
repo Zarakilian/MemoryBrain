@@ -82,27 +82,49 @@ def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
     return connect(db_path)
 
 
-def add_memory(entry: MemoryEntry, db_path: Path = DB_PATH):
+def insert_memory(conn: sqlite3.Connection, entry: MemoryEntry) -> None:
+    """INSERT one memory row on an open connection (the caller commits)."""
     h = content_hash(entry.content, entry.project)
+    ts = entry.timestamp.isoformat()
+    conn.execute(
+        """INSERT INTO memories
+           (id, content, summary, type, project, tags, source, importance,
+            timestamp, content_hash, status, superseded_by, supersedes,
+            writer, trust, embedded, valid_from, valid_to, invalidated_by,
+            content_updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            entry.id, entry.content, entry.summary, entry.type, entry.project,
+            json.dumps(entry.tags), entry.source,
+            3 if entry.importance is None else entry.importance,
+            ts, h,
+            entry.status, entry.superseded_by, entry.supersedes,
+            entry.writer, entry.trust, int(entry.embedded), entry.valid_from,
+            entry.valid_to, entry.invalidated_by, ts,
+        ),
+    )
+
+
+def add_memory(entry: MemoryEntry, db_path: Path = DB_PATH):
     with _connect(db_path) as conn:
-        ts = entry.timestamp.isoformat()
-        conn.execute(
-            """INSERT INTO memories
-               (id, content, summary, type, project, tags, source, importance,
-                timestamp, content_hash, status, superseded_by, supersedes,
-                writer, trust, embedded, valid_from, valid_to, invalidated_by,
-                content_updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                entry.id, entry.content, entry.summary, entry.type, entry.project,
-                json.dumps(entry.tags), entry.source, entry.importance,
-                ts, h,
-                entry.status, entry.superseded_by, entry.supersedes,
-                entry.writer, entry.trust, int(entry.embedded), entry.valid_from,
-                entry.valid_to, entry.invalidated_by, ts,
-            ),
-        )
+        insert_memory(conn, entry)
         conn.commit()
+
+
+def close_superseded(conn: sqlite3.Connection, old_id: str, new_id: str, at: str) -> None:
+    """Close an active memory that a newer one replaces (the caller commits):
+    archived, pointing at its replacement, valid until `at`."""
+    conn.execute(
+        """UPDATE memories SET status = 'archived', superseded_by = ?, invalidated_by = ?,
+                  valid_to = ? WHERE id = ? AND status = 'active'""",
+        (new_id, new_id, at, old_id),
+    )
+
+
+def count_chunks(memory_id: str, db_path: Path = DB_PATH) -> int:
+    with _connect(db_path) as conn:
+        return conn.execute("SELECT COUNT(*) FROM vec_chunks WHERE memory_id = ?",
+                            (memory_id,)).fetchone()[0]
 
 
 def get_memory(memory_id: str, db_path: Path = DB_PATH) -> Optional[MemoryEntry]:
@@ -357,12 +379,14 @@ def delete_memory(memory_id: str, db_path: Path = DB_PATH):
         conn.commit()
 
 
-def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PATH) -> Optional[MemoryEntry]:
+def get_memory_by_content_hash(content: str, project: str, db_path: Path = DB_PATH,
+                               active_only: bool = False) -> Optional[MemoryEntry]:
     h = content_hash(content, project)
+    sql = "SELECT * FROM memories WHERE content_hash = ?"
+    if active_only:
+        sql += " AND status = 'active'"
     with _connect(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM memories WHERE content_hash = ? LIMIT 1", (h,)
-        ).fetchone()
+        row = conn.execute(sql + " LIMIT 1", (h,)).fetchone()
     return _row_to_entry(row) if row else None
 
 

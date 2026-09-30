@@ -36,13 +36,16 @@ async def test_ingest_upserts_project(tmp_db, mock_ollama):
 
 
 @pytest.mark.asyncio
-async def test_ingest_calls_chroma_add(tmp_db, mock_ollama):
+async def test_ingest_writes_the_vector_with_its_model(tmp_db, mock_ollama):
+    from app.db import connect
+    from app.summarise import embed_model_id
     entry = MemoryEntry(content="test content", type="note", project="x")
-    with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
-         patch("app.ingest_pipeline.vec_add") as mock_chroma:
+    with patch("app.ingest_pipeline.DB_PATH", tmp_db):
         await ingest(entry)
-    mock_chroma.assert_called_once()
-    call_args = mock_chroma.call_args
-    # First positional arg or keyword arg should be the entry id
-    called_id = call_args[1].get("memory_id") or call_args[0][0]
-    assert called_id == entry.id
+    conn = connect(tmp_db)
+    try:
+        row = conn.execute("SELECT model FROM vec_memories WHERE memory_id = ?",
+                           (entry.id,)).fetchone()
+    finally:
+        conn.close()
+    assert row["model"] == embed_model_id()

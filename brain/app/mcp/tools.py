@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import sqlite3
 from typing import Optional
 from mcp.server import Server
@@ -10,7 +11,7 @@ from ..storage import (get_memory, get_recent,
                        get_project_recent_state, record_recall,
                        RECALL_BOOST_SEARCH, DB_PATH, _connect)
 from ..search import hybrid_search
-from ..ingest_pipeline import ingest
+from ..ingest_pipeline import ingest, write_report
 from ..models import MemoryEntry
 from ..vector import vec_delete
 
@@ -142,8 +143,11 @@ async def handle_add_memory(
     source: str = "",
     description: str = "",
 ) -> str:
+    # v3 provenance: the writer is the caller's source (normalised) and trust is
+    # always "agent" here; an MCP caller cannot claim a human wrote it.
     entry = MemoryEntry(content=content, type=type, project=project,
-                        tags=tags or [], source=source)
+                        tags=tags or [], source=source,
+                        writer=_writer_from_source(source) or "mcp", trust="agent")
     if description:
         entry.summary = description  # bypass LLM summariser
     try:
@@ -151,22 +155,11 @@ async def handle_add_memory(
     except Exception as e:
         # Surface ValidationError cleanly to MCP clients
         return json.dumps({"error": str(e)})
-    body = {
-        "id": result.id,
-        "summary": result.summary,
-        "importance": result.importance,
-        "superseded": result.superseded,
-        "potential_supersessions": result.potential_supersessions,
-    }
-    # Only emit structured fields when they are real (tests may use MagicMock)
-    if isinstance(getattr(result, "type", None), str):
-        body["type"] = result.type
-    if isinstance(getattr(result, "tags", None), list):
-        body["tags"] = result.tags
-    warnings = getattr(result, "_write_warnings", None)
-    if isinstance(warnings, list) and warnings:
-        body["warnings"] = warnings
-    return json.dumps(body)
+    return json.dumps(write_report(result))
+
+
+def _writer_from_source(source: str) -> str:
+    return re.sub(r"[^a-z0-9@._:-]+", "-", (source or "").strip().lower()).strip("-")[:64]
 
 
 async def handle_delete_memory(memory_id: str) -> str:

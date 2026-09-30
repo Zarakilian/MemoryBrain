@@ -8,12 +8,10 @@ from app.storage import DB_PATH
 @pytest.mark.asyncio
 async def test_handle_add_memory_description_bypasses_llm():
     """When description is provided, entry.summary should be set before ingest (bypassing LLM)."""
-    mock_result = MagicMock()
-    mock_result.id = "xyz"
-    mock_result.summary = "My precise description"
-    mock_result.importance = 3
-    mock_result.superseded = ["old-id"]
-    mock_result.potential_supersessions = []
+    from app.models import MemoryEntry
+    mock_result = MemoryEntry(id="xyz", content="long content here", type="note",
+                              project="test", summary="My precise description",
+                              importance=3, superseded=["old-id"])
 
     with patch("app.mcp.tools.ingest", new=AsyncMock(return_value=mock_result)) as mock_ingest:
         result = await handle_add_memory(
@@ -34,12 +32,9 @@ async def test_handle_add_memory_description_bypasses_llm():
 @pytest.mark.asyncio
 async def test_handle_add_memory_no_description_leaves_summary_empty():
     """Without description, entry.summary is left empty so ingest runs LLM summariser."""
-    mock_result = MagicMock()
-    mock_result.id = "abc"
-    mock_result.summary = "LLM generated summary"
-    mock_result.importance = 4
-    mock_result.superseded = []
-    mock_result.potential_supersessions = []
+    from app.models import MemoryEntry
+    mock_result = MemoryEntry(id="abc", content="some content", type="note", project="test",
+                              summary="LLM generated summary", importance=4)
 
     with patch("app.mcp.tools.ingest", new=AsyncMock(return_value=mock_result)) as mock_ingest:
         await handle_add_memory(content="some content", type="note", project="test")

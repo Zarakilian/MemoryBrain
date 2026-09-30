@@ -27,9 +27,8 @@ from pydantic import BaseModel, Field
 
 from ..db import connect
 from ..ingest_pipeline import ingest
-from ..models import MemoryEntry, Project
-from ..storage import (DB_PATH, add_memory, delete_memory, get_memory,
-                       get_memory_by_content_hash, get_project, record_recall,
+from ..models import MemoryEntry, Project, ValidationError
+from ..storage import (DB_PATH, delete_memory, get_memory, get_project, record_recall,
                        upsert_project)
 from ..vector import vec_delete
 from . import queries as q
@@ -186,25 +185,21 @@ class NoteBody(BaseModel):
 async def add_note(body: NoteBody):
     if body.type not in EDITABLE_TYPES:
         raise HTTPException(422, f"type must be one of {EDITABLE_TYPES}")
-    existing = get_memory_by_content_hash(body.content, body.project, db_path=DB_PATH)
-    if existing:
-        return {"id": existing.id, "summary": existing.summary, "duplicate": True}
     entry = MemoryEntry(content=body.content, type=body.type, project=body.project,
                         tags=body.tags, source=body.source)
     if body.importance:
         entry.importance = body.importance
+    # v3 ingest never fails because the AI provider is down: it stores the
+    # text and reports what degraded (no vector yet, fallback summary).
     try:
         result = await ingest(entry)
-        return {"id": result.id, "summary": result.summary,
-                "importance": result.importance, "degraded": False}
-    except Exception:
-        logger.warning("Ingest pipeline unavailable — storing note without "
-                       "embedding/links (degraded)")
-        entry.summary = entry.summary or (body.content[:180].strip()
-                                          + ("…" if len(body.content) > 180 else ""))
-        add_memory(entry, db_path=DB_PATH)
-        return {"id": entry.id, "summary": entry.summary,
-                "importance": entry.importance, "degraded": True}
+    except ValidationError as exc:
+        raise HTTPException(422, str(exc))
+    if result.duplicate:
+        return {"id": result.id, "summary": result.summary, "duplicate": True}
+    degraded = not result.embedded or "summary fallback" in result.warnings
+    return {"id": result.id, "summary": result.summary,
+            "importance": result.importance, "degraded": degraded}
 
 
 class MemoryPatch(BaseModel):

@@ -6,6 +6,7 @@ session/handover. Open loops should be actionable one-liners.
 from __future__ import annotations
 
 from .models import MemoryEntry, ValidationError
+from .redact import redact
 
 # Soft guidance thresholds (characters)
 FACT_DECISION_MAX = 4_000
@@ -26,6 +27,14 @@ def apply_write_policy(entry: MemoryEntry) -> list[str]:
     Raises ValidationError for hard violations.
     """
     warnings: list[str] = []
+
+    # v3: secrets never reach storage. Warnings name the rule, never the value.
+    entry.content, fired = redact(entry.content or "")
+    if entry.summary:
+        entry.summary, summary_fired = redact(entry.summary)
+        fired += summary_fired
+    warnings += [f"redacted: {rule}" for rule in dict.fromkeys(fired)]
+
     content_len = len(entry.content or "")
 
     if entry.type in ("fact", "decision") and content_len > FACT_DECISION_MAX:
@@ -57,13 +66,11 @@ def apply_write_policy(entry: MemoryEntry) -> list[str]:
                 existing.append(tag)
         entry.tags = existing
 
-    # Default importance nudges (only when still at default 3)
-    if entry.importance == 3:
-        if entry.type == "decision":
+    # Default importance when the caller gave none (ingest scores the rest)
+    if entry.importance is None:
+        if entry.type in ("fact", "decision"):
             entry.importance = 4
         elif entry.type == "open_loop":
             entry.importance = 3
-        elif entry.type == "fact":
-            entry.importance = 4
 
     return warnings

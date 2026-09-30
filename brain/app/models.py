@@ -36,7 +36,7 @@ class MemoryEntry:
     summary: str = ""
     tags: list = field(default_factory=list)
     source: str = ""
-    importance: int = 3
+    importance: Optional[int] = None   # None: score it at ingest (write_policy, ingest)
     timestamp: datetime = field(default_factory=utcnow)
     # Lifecycle fields (persisted)
     status: str = "active"
@@ -52,6 +52,9 @@ class MemoryEntry:
     # Transient fields (returned from ingest, never stored)
     superseded: list = field(default_factory=list)
     potential_supersessions: list = field(default_factory=list)
+    warnings: list = field(default_factory=list)
+    chunks: int = 0
+    duplicate: bool = False
 
 
 @dataclass
@@ -77,7 +80,8 @@ def validate_entry(entry: MemoryEntry) -> None:
         raise ValidationError(f"status must be one of: {', '.join(sorted(VALID_STATUSES))}")
     if not PROJECT_SLUG_RE.match(entry.project):
         raise ValidationError("project must match ^[a-z0-9_-]{1,64}$")
-    entry.importance = max(1, min(5, entry.importance))
+    if entry.importance is not None:
+        entry.importance = max(1, min(5, int(entry.importance)))
     if len(entry.tags) > MAX_TAGS:
         raise ValidationError(f"too many tags (max {MAX_TAGS})")
     for tag in entry.tags:

@@ -17,8 +17,8 @@ async def test_ingest_preserves_non_default_importance(tmp_db, mock_ollama):
 
 @pytest.mark.asyncio
 async def test_ingest_scores_default_importance(tmp_db, mock_ollama):
-    """When importance is the default (3), pipeline should use Ollama to score."""
-    entry = MemoryEntry(content="some note", type="note", project="proj", importance=3)
+    """When importance is not given (None), the pipeline scores it with the model."""
+    entry = MemoryEntry(content="some note", type="note", project="proj")
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \
          patch("app.ingest_pipeline.vec_add"):
         result = await ingest(entry)

@@ -7,7 +7,7 @@ def test_memory_entry_defaults():
     assert len(entry.id) == 36          # UUID format
     assert entry.summary == ""
     assert entry.tags == []
-    assert entry.importance == 3
+    assert entry.importance is None  # v3: None means "score it at ingest"
     assert entry.source == ""
     assert isinstance(entry.timestamp, datetime)
 
