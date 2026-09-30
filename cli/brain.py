@@ -1,0 +1,629 @@
+#!/usr/bin/env python3
+"""
+MemoryBrain CLI — brain add / brain import / brain seed / brain status / brain setup / brain update
+
+Usage:
+    brain setup [--auto-detect]
+    brain add "note text" [--project SLUG] [--tags tag1,tag2]
+    brain import <path> [--project SLUG]
+    brain seed [--project SLUG]
+    brain status
+    brain update
+    brain scan [--root PATH --label ID] [--full] [--dry-run] [--init] [--apply FILE]
+"""
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+from pathlib import Path
+from datetime import datetime
+
+MEMORYBRAIN_DIR = Path(__file__).parent.parent.resolve()
+BRAIN_URL = os.getenv("MEMORYBRAIN_URL", "http://localhost:7741")
+_HTTP_TIMEOUT = int(os.getenv("MEMORYBRAIN_HTTP_TIMEOUT", "180"))
+
+
+def _brain_key() -> str:
+    """API key from the environment, else the live install's .env. Never print it."""
+    key = os.getenv("BRAIN_API_KEY", "").strip()
+    if key:
+        return key
+    env_path = MEMORYBRAIN_DIR / ".env"
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s.startswith("BRAIN_API_KEY=") and not s.startswith("#"):
+                return s.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
+
+
+def _brain_headers(content_type: bool = False) -> dict:
+    headers = {}
+    if content_type:
+        headers["Content-Type"] = "application/json"
+    key = _brain_key()
+    if key:
+        headers["X-Brain-Key"] = key
+    return headers
+
+
+# ── Project detection ────────────────────────────────────────────────────────
+
+def detect_project(cwd: Path = None) -> str:
+    cwd = cwd or Path.cwd()
+    bp = cwd / ".brainproject"
+    if bp.exists():
+        return bp.read_text().strip()
+    parts = [p for p in cwd.parts if p not in ("", "/", "mnt", "c", "git", "repos", "src")]
+    return parts[-1].lower() if parts else "unknown"
+
+
+# ── HTTP helpers ─────────────────────────────────────────────────────────────
+
+def _post(path: str, body: dict) -> dict:
+    payload = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{BRAIN_URL}{path}",
+        data=payload,
+        headers=_brain_headers(content_type=True),
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        print(f"Brain HTTP {e.code} on {path}")
+        sys.exit(1)
+    except urllib.error.URLError:
+        print(f"Brain is not running. Start with:\n  docker compose -f {MEMORYBRAIN_DIR}/docker-compose.yml up -d")
+        sys.exit(1)
+
+
+def _get(path: str) -> dict:
+    req = urllib.request.Request(f"{BRAIN_URL}{path}", headers=_brain_headers())
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        print(f"Brain HTTP {e.code} on {path}")
+        sys.exit(1)
+    except urllib.error.URLError:
+        print(f"Brain is not running. Start with:\n  docker compose -f {MEMORYBRAIN_DIR}/docker-compose.yml up -d")
+        sys.exit(1)
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def cmd_add(content: str, project: str = None, tags: list = None):
+    project = project or detect_project()
+    result = _post("/ingest/note", {
+        "content": content,
+        "project": project,
+        "tags": tags or [],
+    })
+    print(f"Stored — id: {result['id']}")
+    print(f"Summary: {result.get('summary', '')}")
+
+
+def cmd_import(path: str, project: str = None):
+    file_path = Path(path).expanduser().resolve()
+    if not file_path.exists():
+        print(f"File not found: {file_path}")
+        sys.exit(1)
+    project = project or detect_project(file_path.parent)
+    content = file_path.read_text(encoding="utf-8", errors="replace")
+    result = _post("/ingest/note", {
+        "content": content,
+        "project": project,
+        "tags": [],
+        "source": str(file_path),
+    })
+    print(f"Imported {file_path.name} — id: {result['id']}")
+    print(f"Summary: {result.get('summary', '')}")
+
+
+def cmd_seed(project: str = None):
+    cwd = Path.cwd()
+    project = project or detect_project(cwd)
+    files = list(cwd.glob("MEMORY*.md")) + list(cwd.glob("HANDOVER-*.md")) + list(cwd.glob("memory/MEMORY*.md"))
+    if not files:
+        print("No MEMORY.md or HANDOVER-*.md files found in current directory.")
+        return
+    print(f"Seeding {len(files)} files into project '{project}'...")
+    for f in sorted(files):
+        content = f.read_text(encoding="utf-8", errors="replace")
+        result = _post("/ingest/note", {"content": content, "project": project, "tags": [], "source": str(f)})
+        print(f"  \u2705 {f.name} \u2192 {result['id']}")
+    print(f"Done \u2014 {len(files)} files imported.")
+
+
+def cmd_status():
+    _get("/health")
+    data = _get("/status")
+    print(f"Brain:    \u2705 running ({BRAIN_URL})")
+    print(f"Projects: {data.get('project_count', 0)}")
+    print(f"Version:  {data.get('version', 'unknown')}")
+
+
+def _run(cmd: list, check: bool = False) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+
+
+def _file_hash(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return hashlib.md5(path.read_bytes()).hexdigest()
+
+
+def cmd_setup(auto_detect: bool = False):
+    print("MemoryBrain setup")
+    print("\u2500" * 45)
+
+    # 1. Docker running?
+    r = _run(["docker", "ps"])
+    if r.returncode != 0:
+        print("\u274c Docker is not running. Start Docker Desktop / Rancher Desktop first.")
+        sys.exit(1)
+    print("\u2705 Docker running")
+
+    # 2. Ensure .env exists
+    env_path = MEMORYBRAIN_DIR / ".env"
+    if not env_path.exists():
+        example = MEMORYBRAIN_DIR / ".env.example"
+        env_path.write_text(example.read_text() if example.exists() else "")
+        print("\u2705 .env created from .env.example")
+    else:
+        print("\u23ed\ufe0f  .env \u2014 already exists")
+
+    # 3. Start Docker containers
+    compose_cmd = ["docker", "compose", "-f", str(MEMORYBRAIN_DIR / "docker-compose.yml")]
+    ps = _run(compose_cmd + ["ps", "--status=running"])
+    brain_running = "brain" in ps.stdout
+
+    if not brain_running:
+        _run(compose_cmd + ["up", "-d"], check=False)
+        print("\u2705 Docker containers started")
+    else:
+        print("\u23ed\ufe0f  Docker containers \u2014 already running")
+
+    # 4. Pull Ollama models
+    models_out = _run(compose_cmd + ["exec", "ollama", "ollama", "list"]).stdout
+    for model in ["embeddinggemma", "llama3.2:3b"]:
+        if not any(line.startswith(model) for line in models_out.splitlines()):
+            print(f"\u23f3 Pulling Ollama model: {model} (this may take a few minutes)...")
+            _run(compose_cmd + ["exec", "ollama", "ollama", "pull", model])
+            print(f"\u2705 {model} pulled")
+        else:
+            print(f"\u23ed\ufe0f  {model} \u2014 already present")
+
+    # 5. Register MCP server with Claude Code
+    try:
+        # On Windows, we might need claude.cmd or the full path from PATH
+        claude_cmd = "claude"
+        if sys.platform == "win32":
+            claude_cmd = shutil.which("claude") or "claude.cmd"
+
+        mcp_list = _run([claude_cmd, "mcp", "list"])
+        if "memorybrain" not in mcp_list.stdout:
+            _run([claude_cmd, "mcp", "add", "-s", "user", "--transport", "sse",
+                  "memorybrain", f"{BRAIN_URL}/sse"])
+            print("\u2705 MCP server registered for Claude")
+        else:
+            print("\u23ed\ufe0f  MCP server for Claude \u2014 already registered")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("\u23ed\ufe0f  Claude CLI not found or error \u2014 skipping Claude MCP registration")
+
+    # 5a. Remind about Grok MCP (configured in ~/.grok/config.toml — not via CLI)
+    grok_cfg = Path.home() / ".grok" / "config.toml"
+    if grok_cfg.exists():
+        try:
+            text = grok_cfg.read_text(encoding="utf-8")
+            if "mcp_servers.memorybrain" in text or "[mcp_servers.memorybrain]" in text:
+                print("\u23ed\ufe0f  Grok MCP memorybrain \u2014 already present in ~/.grok/config.toml")
+            else:
+                print("\u26a0\ufe0f  Grok config found but no [mcp_servers.memorybrain], see docs/CONNECTING_ASSISTANTS.md")
+        except OSError:
+            pass
+    else:
+        print("\u23ed\ufe0f  ~/.grok/config.toml not found \u2014 skipping Grok MCP check")
+
+    # 5b. Register MCP server with Gemini (Antigravity)
+    gemini_config_path = Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
+    if gemini_config_path.parent.exists():
+        try:
+            if gemini_config_path.exists():
+                with open(gemini_config_path, "r", encoding="utf-8") as f:
+                    try:
+                        g_data = json.load(f)
+                    except json.JSONDecodeError:
+                        g_data = {"mcpServers": {}}
+            else:
+                g_data = {"mcpServers": {}}
+                
+            if "mcpServers" not in g_data:
+                g_data["mcpServers"] = {}
+                
+            g_data["mcpServers"]["memorybrain"] = {
+                "command": "docker",
+                "args": [
+                    "exec",
+                    "-i",
+                    "memorybrain-brain-1",
+                    "python",
+                    "/app/stdio_server.py"
+                ],
+                "env": {}
+            }
+            with open(gemini_config_path, "w", encoding="utf-8") as f:
+                json.dump(g_data, f, indent=2)
+            print("\u2705 MCP server registered for Gemini")
+        except Exception as e:
+            print(f"\u26a0\ufe0f  Failed to register Gemini MCP: {e}")
+
+    # 6. Install hooks
+    hooks_dir = Path.home() / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    hook_pairs = [
+        (MEMORYBRAIN_DIR / "hooks" / "session-ingest.sh",
+         hooks_dir / "session-start-memory.sh"),
+        (MEMORYBRAIN_DIR / "hooks" / "pre-compact-ingest.py",
+         hooks_dir / "pre-compact-auto-handover.py"),
+    ]
+    hooks_installed = False
+    for src, dst in hook_pairs:
+        if not src.exists():
+            print(f"\u26a0\ufe0f  Hook source not found: {src}")
+            continue
+        if _file_hash(dst) != _file_hash(src):
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+            hooks_installed = True
+    print("\u2705 Hooks installed" if hooks_installed else "\u23ed\ufe0f  Hooks \u2014 already up to date")
+
+    # 7. Install Claude Code skills
+    skills_src = MEMORYBRAIN_DIR / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    skills_installed = False
+    if skills_src.exists():
+        for skill_dir in skills_src.iterdir():
+            if skill_dir.is_dir():
+                skill_file = skill_dir / "SKILL.md"
+                if skill_file.exists():
+                    dst_skill_dir = skills_dst / skill_dir.name
+                    dst_skill_dir.mkdir(parents=True, exist_ok=True)
+                    dst_file = dst_skill_dir / "SKILL.md"
+                    if _file_hash(dst_file) != _file_hash(skill_file):
+                        shutil.copy2(skill_file, dst_file)
+                        skills_installed = True
+    print("\u2705 Skills installed" if skills_installed else "\u23ed\ufe0f  Skills \u2014 already up to date")
+
+    # 8. Install shell alias + MEMORYBRAIN_DIR export
+    # MEMORYBRAIN_DIR is read by the session hook for version checks and start instructions.
+    alias_line = f"alias brain='python3 {MEMORYBRAIN_DIR}/cli/brain.py'"
+    dir_line = f"export MEMORYBRAIN_DIR='{MEMORYBRAIN_DIR}'"
+    shell_added = False
+    for rc in [Path.home() / ".bashrc", Path.home() / ".zshrc"]:
+        if rc.exists():
+            content = rc.read_text()
+            needs_alias = "alias brain=" not in content
+            needs_dir = "MEMORYBRAIN_DIR=" not in content
+            if needs_alias or needs_dir:
+                block = "\n# MemoryBrain CLI\n"
+                if needs_dir:
+                    block += f"{dir_line}\n"
+                if needs_alias:
+                    block += f"{alias_line}\n"
+                rc.write_text(content + block)
+                shell_added = True
+
+    if shell_added:
+        print("\u2705 Shell config updated (run: source ~/.bashrc)")
+    else:
+        print("\u23ed\ufe0f  Shell config \u2014 already up to date")
+
+    # 9. Show detected MCP tools from ~/.claude.json (read directly on host)
+    print()
+    try:
+        claude_json = Path.home() / ".claude.json"
+        with open(claude_json) as f:
+            data = json.load(f)
+        servers = data.get("mcpServers", {})
+        tools = sorted(servers.keys()) if isinstance(servers, dict) else []
+        if tools:
+            print("Detected MCP servers in ~/.claude.json:")
+            for t in tools:
+                print(f"  \u2022 {t}")
+            print()
+            print("MemoryBrain will capture memories from whatever you retrieve with these tools.")
+            print("No credentials needed \u2014 MemoryBrain is a passive store.")
+        else:
+            print("No MCP servers found in ~/.claude.json.")
+            print("Add MCP servers to Claude Code and re-run setup to see them here.")
+    except FileNotFoundError:
+        print("~/.claude.json not found \u2014 add MCP servers to Claude Code and re-run setup.")
+    except Exception:
+        pass
+
+    # 10. Optional Gemini setup
+    print()
+    _setup_gemini_optional()
+
+
+def _setup_gemini_optional():
+    """Optionally guide user through Gemini API key setup."""
+    env_path = MEMORYBRAIN_DIR / ".env"
+    env_content = env_path.read_text()
+
+    # Check if GOOGLE_API_KEY is already set
+    has_key = "GOOGLE_API_KEY=" in env_content and not env_content.split("GOOGLE_API_KEY=")[1].split("\n")[0].strip() == ""
+
+    if has_key:
+        print("\u2705 Gemini API key already configured")
+        return
+
+    print("AI Provider Setup")
+    print("\u2500" * 45)
+    print("MemoryBrain defaults to Ollama (local, private, free).")
+    print()
+    print("Optional: Use Gemini (Google AI) for faster, cloud-based processing.")
+    print("  \u2022 Free tier: 15,000 requests/month")
+    print("  \u2022 No credit card needed")
+    print("  \u2022 Higher quality embeddings")
+    print()
+
+    response = input("Would you like to set up Gemini? (y/N): ").strip().lower()
+
+    if response != "y":
+        print("\u23ed\ufe0f  Skipping Gemini setup (you can add it later)")
+        return
+
+    print()
+    print("Getting your Gemini API Key (1 minute)...")
+    print("\u2500" * 45)
+    print()
+    print("1\ufe0f\u20e3  Opening: https://aistudio.google.com/app/apikey")
+    print("   (A new browser tab will open)")
+    print()
+
+    # Try to open the URL
+    try:
+        import webbrowser
+        webbrowser.open("https://aistudio.google.com/app/apikey")
+        print("\u2705 Browser opened")
+    except Exception:
+        print("\u26a0\ufe0f  Could not auto-open browser. Visit manually:")
+        print("   https://aistudio.google.com/app/apikey")
+
+    print()
+    print("2\ufe0f\u20e3  In the browser:")
+    print("   \u2022 Click 'Create API Key'")
+    print("   \u2022 Click 'Create new API key in new project'")
+    print("   \u2022 Copy the key (starts with 'sk-proj-')")
+    print()
+
+    api_key = input("3\ufe0f\u20e3  Paste your API key here: ").strip()
+
+    if not api_key:
+        print("\u274c No key provided. Skipping Gemini setup.")
+        return
+
+    if not api_key.startswith("sk-proj-"):
+        print("\u26a0\ufe0f  Warning: Key doesn't look like a valid Google API key (should start with 'sk-proj-')")
+        confirm = input("Continue anyway? (y/N): ").strip().lower()
+        if confirm != "y":
+            return
+
+    # Update .env with the API key
+    new_content = env_content.replace(
+        "GOOGLE_API_KEY=",
+        f"GOOGLE_API_KEY={api_key}"
+    )
+    env_path.write_text(new_content)
+    print()
+    print("\u2705 API key saved to .env")
+
+    # Restart brain container
+    print()
+    print("Testing connection...")
+    compose_cmd = ["docker", "compose", "-f", str(MEMORYBRAIN_DIR / "docker-compose.yml")]
+    _run(compose_cmd + ["restart", "brain"], check=False)
+
+    import time
+    time.sleep(3)  # Wait for container to restart
+
+    # Check /readiness
+    try:
+        result = _get_url(f"{BRAIN_URL}/readiness")
+        if result.get("ready"):
+            print("\u2705 Gemini connection verified \u2014 ready to use!")
+        elif result.get("checks", {}).get("gemini_client") == "ok":
+            print("\u2705 Gemini API key is valid and working")
+        else:
+            error = result.get("checks", {}).get("gemini_client", "unknown error")
+            print(f"\u26a0\ufe0f  Gemini verification failed: {error}")
+            print("   Check your API key at: https://aistudio.google.com/app/apikey")
+    except Exception as e:
+        print(f"\u26a0\ufe0f  Could not verify (container may still be starting): {e}")
+        print("   Try again in 10 seconds: curl http://localhost:7741/readiness | jq")
+
+    print()
+    print("Gemini setup complete!")
+    print("MemoryBrain will now use Gemini for embeddings & summaries.")
+    print()
+    print("To learn more: docs/GEMINI_SETUP_GUIDE.md")
+
+
+def _get_url(url: str) -> dict:
+    """GET a full URL, returning {} on any failure.
+
+    Distinct from _get(path) above, which prefixes BRAIN_URL and exits
+    on connection failure. This second helper was previously also named
+    _get and shadowed the first, silently breaking `brain status`.
+    """
+    try:
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception:
+        return {}
+
+
+def cmd_update():
+    """Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills."""
+    import os
+
+    # Locate repo directory
+    repo_dir = os.getenv("MEMORYBRAIN_DIR")
+    if not repo_dir:
+        cwd = Path(os.getcwd())
+        if (cwd / "brain").exists() and (cwd / "cli").exists():
+            repo_dir = str(cwd)
+        else:
+            print("❌ Cannot find MemoryBrain repo.")
+            print("   Set MEMORYBRAIN_DIR env var or run from the repo directory.")
+            sys.exit(1)
+            return
+
+    repo_path = Path(repo_dir)
+
+    # 1. git pull — try tracked remote first, fall back to origin master
+    print("⬇️  Pulling latest changes...")
+    result = subprocess.run(["git", "pull"], cwd=repo_path, capture_output=True, text=True)
+    if result.returncode != 0:
+        # No tracking remote — pull origin master explicitly
+        result = subprocess.run(
+            ["git", "pull", "origin", "master"],
+            cwd=repo_path, capture_output=True, text=True,
+        )
+    if result.returncode != 0:
+        print(f"❌ git pull failed:\n{result.stderr}")
+        sys.exit(1)
+        return
+    print(result.stdout.strip() or "Already up to date.")
+
+    # 2. Rebuild Docker (migrations run automatically at container startup)
+    print("🔨 Rebuilding Docker image...")
+    result = subprocess.run(
+        ["docker", "compose", "up", "-d", "--build"],
+        cwd=repo_path,
+    )
+    if result.returncode != 0:
+        print("❌ Docker rebuild failed.")
+        sys.exit(1)
+    print("✅ Docker rebuilt — migrations applied automatically at startup.")
+
+    # 3. Reinstall hooks if changed
+    hooks_src = repo_path / "hooks"
+    hooks_dst = Path.home() / ".claude" / "hooks"
+    if hooks_src.exists() and hooks_dst.exists():
+        for src in sorted(hooks_src.iterdir()):
+            if not src.is_file():
+                continue
+            dst = hooks_dst / src.name
+            if dst.exists():
+                src_hash = hashlib.sha256(src.read_bytes()).hexdigest()
+                dst_hash = hashlib.sha256(dst.read_bytes()).hexdigest()
+                if src_hash == dst_hash:
+                    print(f"⏭️  Hook unchanged: {src.name}")
+                    continue
+            shutil.copy2(src, dst)
+            dst.chmod(dst.stat().st_mode | 0o111)
+            print(f"✅ Updated hook: {src.name}")
+
+    # 4. Reinstall skills if changed
+    skills_src = repo_path / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    if skills_src.exists():
+        for skill_dir in sorted(skills_src.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_file = skill_dir / "SKILL.md"
+            if not skill_file.exists():
+                continue
+            dst_dir = skills_dst / skill_dir.name
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst_file = dst_dir / "SKILL.md"
+            if dst_file.exists():
+                src_hash = hashlib.sha256(skill_file.read_bytes()).hexdigest()
+                dst_hash = hashlib.sha256(dst_file.read_bytes()).hexdigest()
+                if src_hash == dst_hash:
+                    print(f"⏭️  Skill unchanged: {skill_dir.name}")
+                    continue
+            shutil.copy2(skill_file, dst_file)
+            print(f"✅ Updated skill: {skill_dir.name}")
+
+    print("\n✅ MemoryBrain updated successfully.")
+    print("   Open a new Claude Code session to use the updated tools.")
+
+
+# ── Entry point ──────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="MemoryBrain CLI")
+    sub = parser.add_subparsers(dest="command")
+
+    # setup
+    p_setup = sub.add_parser("setup", help="Install MemoryBrain and register with Claude Code")
+    p_setup.add_argument("--auto-detect", action="store_true",
+                         help="Kept for backwards compatibility. MCP tool detection always runs.")
+
+    # add
+    p_add = sub.add_parser("add", help="Add a memory note")
+    p_add.add_argument("content", help="Note text")
+    p_add.add_argument("--project", help="Project slug")
+    p_add.add_argument("--tags", help="Comma-separated tags")
+
+    # import
+    p_import = sub.add_parser("import", help="Import a file as a memory")
+    p_import.add_argument("path", help="File path to import")
+    p_import.add_argument("--project", help="Project slug")
+
+    # seed
+    p_seed = sub.add_parser("seed", help="Import all MEMORY*.md and HANDOVER-*.md from current directory")
+    p_seed.add_argument("--project", help="Project slug")
+
+    # status
+    sub.add_parser("status", help="Show MemoryBrain status")
+
+    # update
+    sub.add_parser("update", help="Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills")
+
+    # scan (v2.5 workspace layer)
+    p_scan = sub.add_parser("scan", help="Push a file manifest of your workspace roots to the brain")
+    p_scan.add_argument("--root", help='Add/replace a root, e.g. "C:\\work\\repos"')
+    p_scan.add_argument("--label", help="Root id for --root (default: git)")
+    p_scan.add_argument("--full", action="store_true", help="Send every file, not just changes")
+    p_scan.add_argument("--dry-run", action="store_true", help="Show what would be sent, send nothing")
+    p_scan.add_argument("--init", action="store_true", help="Write workspace-map.proposed.json for review")
+    p_scan.add_argument("--apply", help="Apply an edited workspace-map.proposed.json")
+
+    args = parser.parse_args()
+
+    if args.command == "setup":
+        cmd_setup(auto_detect=getattr(args, "auto_detect", False))
+    elif args.command == "add":
+        tags = [t.strip() for t in args.tags.split(",")] if args.tags else []
+        cmd_add(args.content, project=args.project, tags=tags)
+    elif args.command == "import":
+        cmd_import(args.path, project=args.project)
+    elif args.command == "seed":
+        cmd_seed(project=args.project)
+    elif args.command == "status":
+        cmd_status()
+    elif args.command == "update":
+        cmd_update()
+    elif args.command == "scan":
+        from brain_scan import cmd_scan
+        sys.exit(cmd_scan(args, _post, _get))
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

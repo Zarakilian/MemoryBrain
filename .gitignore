@@ -1,0 +1,30 @@
+venv/
+data/
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+
+scratch_query.py
+
+# subagent-driven-development scratch (briefs, reports, ledger)
+.superpowers/
+
+# per-machine artefact written by `brain scan --init`
+workspace-map.proposed.json
+
+# Machine-local notes, plans, audits and private hygiene patterns. Never committed.
+.local/
+
+# Brain data and backups must never enter the repo.
+*.tar.gz
+*.tgz
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bundle
+brain-backup*
+exports/

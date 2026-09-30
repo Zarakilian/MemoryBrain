@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}MemoryBrain{% endblock %}</title>
+<link rel="stylesheet" href="/static/css/atlas.css?b={{ build_stamp }}">
+<link rel="icon" type="image/jpeg" href="/static/img/memorybrain-logo.jpg">
+{# One modern three build owns the whole world (design rule 5). No build
+   pipeline: the import map is the module resolver, served as-is. #}
+<script type="importmap">
+{ "imports": {
+    "three": "/static/vendor/three.module.min.js?b={{ build_stamp }}",
+    "orbitcontrols": "/static/vendor/OrbitControls.js?b={{ build_stamp }}"
+} }
+</script>
+</head>
+<body data-lens="{{ lens|default('stream') }}">
+
+{# The world: a single full-screen scene behind the glass. pointer-events
+   are granted by CSS only while the Constellation lens is active — it can
+   never eat a click from a floating pane. #}
+<div id="world" aria-hidden="true"></div>
+
+<div class="shell">
+
+  <aside class="rail">
+    <a class="brand" href="/ui">
+      <img class="brand-logo" src="/static/img/memorybrain-logo.jpg" width="28" height="28" alt="" />
+      Memory<em>Brain</em>
+    </a>
+    <nav class="rail-nav" aria-label="Scope">
+      <a href="/ui" class="{{ 'on' if not current and not agents_page else '' }}">
+        <span class="pdot all"></span><span class="pname">All memories</span>
+        <span class="count">{{ stats.total }}</span></a>
+      <a href="/ui/agents" class="{{ 'on' if agents_page else '' }}"
+         title="Synapse: multi-AI usage analytics and the agent interaction network">
+        <span class="pdot all" style="--ph:285"></span><span class="pname">⚡ Agents</span>
+      </a>
+    </nav>
+    <div class="rail-label">Projects</div>
+    <nav class="rail-projects" aria-label="Projects">
+      {% for p in projects %}
+      <a href="/ui?project={{ p.slug }}"
+         class="{{ 'on' if current and current.slug == p.slug else '' }}">
+        <span class="pdot" style="--ph:{{ p.slug|phue }}"></span>
+        <span class="pname">{{ p.name or p.slug }}</span>
+        <span class="count">{{ p.memory_count }}</span>
+      </a>
+      {% endfor %}
+    </nav>
+    <button id="new-project-btn" class="rail-add" hidden data-js type="button">+ new project</button>
+    <button id="policy-btn" class="rail-add" hidden data-js type="button"
+            title="Per-project brief policy (system lane, char budget, notes)">⚙ policy</button>
+    <div class="rail-foot">
+      <button id="conflicts-chip" hidden type="button"
+              title="Contradictions flagged by the consolidation cycle"></button>
+      <button id="sleep-btn" hidden data-js type="button"
+              title="Run one consolidation cycle: distil beliefs, flag contradictions, extract open loops, decay the unrecalled">☾ sleep</button>
+      <a class="rail-search" href="/ui/search">Search <span class="rail-kbd" hidden data-js>Ctrl K</span></a>
+      <button id="ambience-toggle" hidden data-js type="button"></button>
+      <button id="familiar-toggle" hidden data-js type="button"></button>
+    </div>
+  </aside>
+
+  <main class="stage">
+    {% block stage %}{% endblock %}
+    <footer class="buildfoot">
+      build <code>{{ build_stamp }}</code> &middot; <a href="/ui/doctor">doctor</a>
+      &middot; {{ stats.projects }} projects &middot; {{ stats.edges }} links
+      &middot; {{ stats.files }} files &middot; {{ stats.file_edges }} file links
+    </footer>
+  </main>
+
+  <aside id="inspector" class="inspector" hidden aria-label="Memory inspector">
+    <div class="insp-body" id="insp-body"></div>
+  </aside>
+
+</div>
+
+{# Palette: hidden until atlas.js opens it. The backdrop only accepts pointer
+   events while open — [hidden]{display:none!important} in atlas.css makes the
+   hidden state unbeatable by any display rule (the old click-eater lesson). #}
+<div id="palette" class="palette" hidden role="dialog" aria-label="Command palette">
+  <div class="palette-card">
+    <input id="palette-input" type="search" placeholder="Search memories, jump to project, switch lens…" autocomplete="off">
+    <div id="palette-results" class="palette-results"></div>
+  </div>
+</div>
+
+<script src="/static/js/atlas.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/editor.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/familiar.js?b={{ build_stamp }}" defer></script>
+<script src="/static/js/layouts.js?b={{ build_stamp }}" defer></script>
+<script type="module" src="/static/js/nebula.js?b={{ build_stamp }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

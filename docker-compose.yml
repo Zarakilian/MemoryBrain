@@ -1,0 +1,29 @@
+services:
+  brain:
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
+    ports:
+      - "127.0.0.1:${BRAIN_PORT:-7741}:7741"
+    volumes:
+      - brain_data:/app/data
+    env_file: .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    depends_on:
+      - ollama
+    # Survive Docker Desktop restarts and host reboots so MCP clients stay up.
+    restart: always
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_data:/root/.ollama
+      # Mount host CA certs so Ollama can verify TLS behind a TLS-inspecting proxy
+      - /etc/ssl/certs:/etc/ssl/certs:ro
+    # Embedding/summary provider for Brain; must stay up for readiness=true.
+    restart: always
+
+volumes:
+  brain_data:
+  ollama_data:

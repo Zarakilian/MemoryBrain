@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% from "_macros.html" import mem_row %}
+{% block title %}{{ f.rel_path }} — MemoryBrain{% endblock %}
+{% block stage %}
+<article class="memory-page file-page">
+  <header class="mem-head">
+    <nav class="crumbs">
+      <a href="/ui">Nebula</a> /
+      {% if ctx.project %}<a href="/ui?project={{ ctx.project }}">{{ ctx.project }}</a> /{% endif %}
+      {% if folder %}<a href="/ui?lens=files{% if ctx.project %}&project={{ ctx.project }}{% endif %}&folder={{ folder|urlencode }}">{{ folder }}</a> /{% endif %}
+      <span class="crumb-id">{{ f.rel_path.rsplit('/', 1)[-1] }}</span>
+    </nav>
+    <h1 class="mem-title">{{ f.title or f.rel_path.rsplit('/', 1)[-1] }}</h1>
+    <div class="mem-meta">
+      <span class="badge t-filenode">file</span>
+      {% if ctx.project %}<span class="pdot" style="--ph:{{ ctx.project|phue }}"></span> {{ ctx.project }}{% endif %}
+      <span class="badge ext">{{ f.ext or 'no ext' }}</span>
+      <time datetime="{{ f.mtime }}">modified {{ (f.mtime or '')[:10] }}</time>
+      <span class="quiet">{{ '{:,}'.format(f.size or 0) }} bytes</span>
+      {% if f.status != 'active' %}<span class="badge archived">{{ f.status }}</span>{% endif %}
+    </div>
+    <p class="file-path"><code>{{ f.rel_path }}</code></p>
+  </header>
+
+  <dl class="mem-facts">
+    <dt>referenced by</dt><dd>{{ mems|length }} memories, heat {{ '%.1f' | format(f.ref_degree or 0) }}</dd>
+    <dt>root</dt><dd>{{ f.root_id }} on {{ machines }}</dd>
+    <dt>first seen</dt><dd>{{ (f.first_seen or '')[:10] }}</dd>
+  </dl>
+
+  <section class="mem-related">
+    <h2>Memories that name this file</h2>
+    {% for m in mems %}
+    <div class="rel">
+      {{ mem_row(m) }}
+      <div class="rel-why"><span class="why k-file_ref">{{ m.how }} · {{ '%.2f' | format(m.weight or 0) }}</span></div>
+    </div>
+    {% else %}<p class="quiet">No memory names this file yet.</p>{% endfor %}
+  </section>
+
+  <section class="mem-related">
+    <h2>Links in and out</h2>
+    {% if ctx.links_in or ctx.links_out %}
+      {% for l in ctx.links_in %}<p><a href="/ui/file/{{ l.file_id }}">{{ l.rel_path }}</a> → this file</p>{% endfor %}
+      {% for l in ctx.links_out %}<p>this file → <a href="/ui/file/{{ l.file_id }}">{{ l.rel_path }}</a></p>{% endfor %}
+    {% else %}<p class="quiet">none yet (file to file links arrive in phase 2)</p>{% endif %}
+  </section>
+
+  <section class="mem-related">
+    <h2>Touched by sessions</h2>
+    {% if ctx.touched_by %}
+      {% for t in ctx.touched_by %}<p><a href="/ui/memory/{{ t.id }}">{{ t.summary }}</a> <time>{{ (t.timestamp or '')[:10] }}</time></p>{% endfor %}
+    {% else %}<p class="quiet">none yet (the touch hook arrives in phase 2)</p>{% endif %}
+  </section>
+</article>
+{% endblock %}

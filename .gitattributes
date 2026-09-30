@@ -1,0 +1,13 @@
+# Normalise line endings on commit; enforce LF on checkout for scripts
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.env text eol=lf
+*.txt text eol=lf
+
+# Git hooks must keep LF endings or /bin/sh rejects them
+.githooks/* text eol=lf

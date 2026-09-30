@@ -1,0 +1,11 @@
+#!/bin/sh
+# Blocks a commit that would add machine data, secrets or brain data.
+# Real names to block live in .local/hygiene-patterns.txt (git-ignored).
+# Enable once per clone:  git config core.hooksPath .githooks
+for py in python3 python; do
+  if "$py" -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)" >/dev/null 2>&1; then
+    exec "$py" cli/check_repo_hygiene.py --staged
+  fi
+done
+echo "hygiene: no Python 3.9+ found on PATH, commit blocked" >&2
+exit 1

@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Agents — MemoryBrain{% endblock %}
+{% block stage %}
+
+<style>
+/* Synapse page styles — scoped here, tokens from atlas.css.
+   .stage is pointer-inert by design (only glass panes accept the hand) and
+   does not scroll — .syn-scroll opts this page back in for both. */
+.syn-scroll { pointer-events: auto; flex: 1; min-height: 0;
+              overflow-y: auto; overflow-x: hidden;
+              padding: 2px 2px 20px; }
+.syn-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+            margin-bottom: 14px; position: sticky; top: 0; z-index: 3;
+            background: var(--glass);
+            -webkit-backdrop-filter: blur(var(--blur));
+            backdrop-filter: blur(var(--blur));
+            border: 1px solid var(--glass-edge); border-radius: 14px;
+            padding: 10px 16px; }
+.syn-head h2 { font: 600 18px/1.2 var(--sans); color: var(--ink); margin: 0; }
+.syn-head .syn-sub { color: var(--ink-dim); font: 400 13px var(--sans); }
+.syn-controls { margin-left: auto; display: flex; gap: 10px; align-items: center;
+                color: var(--ink-dim); font: 400 12px var(--sans); }
+.syn-controls select { background: var(--glass-hi); color: var(--ink);
+                       border: 1px solid var(--glass-edge); border-radius: 8px;
+                       padding: 4px 8px; font: inherit; }
+.syn-grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
+@media (max-width: 1100px) { .syn-grid { grid-template-columns: 1fr; } }
+.syn-pane { background: var(--glass); border: 1px solid var(--glass-edge);
+            border-radius: 14px; padding: 16px; backdrop-filter: blur(var(--blur)); }
+.syn-pane h3 { margin: 0 0 4px; font: 600 14px var(--sans); color: var(--ink); }
+.syn-pane .hint { color: var(--ink-faint); font: 400 12px var(--sans);
+                  margin: 0 0 12px; }
+.syn-pane.wide { grid-column: 1 / -1; }
+/* totals cards */
+.agent-cards { display: flex; flex-wrap: wrap; gap: 12px; }
+.agent-card { flex: 1 1 180px; min-width: 170px; background: var(--glass-hi);
+              border: 1px solid var(--glass-edge); border-radius: 12px;
+              padding: 12px 14px; }
+.agent-card .aname { display: flex; align-items: center; gap: 8px;
+                     font: 600 14px var(--sans); color: var(--ink);
+                     text-transform: capitalize; }
+.agent-card .adot { width: 10px; height: 10px; border-radius: 50%;
+                    box-shadow: 0 0 8px var(--ac); background: var(--ac); }
+.agent-card .anums { display: flex; gap: 14px; margin-top: 8px;
+                     font: 400 12px var(--sans); color: var(--ink-dim); }
+.agent-card .anums b { display: block; font: 600 18px var(--mono);
+                       color: var(--ink); }
+.agent-card .alast { margin-top: 8px; font: 400 11px var(--mono);
+                     color: var(--ink-faint); }
+.agent-card .ashare { height: 4px; border-radius: 2px; margin-top: 10px;
+                      background: rgba(150,175,235,.12); overflow: hidden; }
+.agent-card .ashare i { display: block; height: 100%; background: var(--ac);
+                        border-radius: 2px; }
+/* donuts */
+.donut-row { display: flex; flex-wrap: wrap; gap: 18px; }
+.donut-cell { display: flex; flex-direction: column; align-items: center;
+              gap: 6px; width: 168px; }
+.donut-cell .dname { font: 600 12px var(--sans); color: var(--ink);
+                     max-width: 160px; overflow: hidden; white-space: nowrap;
+                     text-overflow: ellipsis; }
+.donut-legend { display: flex; flex-wrap: wrap; gap: 4px 10px;
+                justify-content: center; font: 400 11px var(--sans);
+                color: var(--ink-dim); }
+.donut-legend i { display: inline-block; width: 8px; height: 8px;
+                  border-radius: 50%; margin-right: 4px; background: var(--lc); }
+/* synapse canvas */
+#synapse-wrap { position: relative; height: 420px; border-radius: 12px;
+                overflow: hidden; background: rgba(4,6,12,.5); }
+#synapse { width: 100%; height: 100%; display: block; }
+.syn-empty { position: absolute; inset: 0; display: flex; flex-direction: column;
+             align-items: center; justify-content: center; gap: 6px;
+             color: var(--ink-faint); font: 400 13px var(--sans);
+             text-align: center; padding: 0 40px; }
+.syn-empty code { font: 400 12px var(--mono); color: var(--ink-dim); }
+/* threads */
+.thread-list { display: flex; flex-direction: column; gap: 8px; }
+.thread-row { display: flex; align-items: baseline; gap: 10px;
+              background: var(--glass-hi); border: 1px solid var(--glass-edge);
+              border-radius: 10px; padding: 9px 12px;
+              font: 400 13px var(--sans); color: var(--ink); }
+.thread-row .tkind { font: 600 10px var(--mono); text-transform: uppercase;
+                     letter-spacing: .06em; color: var(--aura); }
+.thread-row .ttitle { flex: 1; overflow: hidden; white-space: nowrap;
+                      text-overflow: ellipsis; }
+.thread-row .tagents { font: 400 11px var(--mono); color: var(--ink-dim);
+                       text-transform: capitalize; }
+.thread-row .tstatus { font: 600 10px var(--mono); text-transform: uppercase;
+                       padding: 2px 8px; border-radius: 999px;
+                       border: 1px solid var(--glass-edge); color: var(--ink-dim); }
+.thread-row .tstatus.open, .thread-row .tstatus.in_progress { color: var(--star);
+                       border-color: var(--star-dim); }
+.thread-row .tstatus.review { color: var(--aura); }
+.thread-row .tstatus.done { color: #5ad67d; }
+</style>
+
+<div class="syn-scroll">
+
+<header class="syn-head">
+  <h2>⚡ Agents <span class="syn-sub">— Synapse: who does what, and who talks to whom</span></h2>
+  <form class="syn-controls" method="get" action="/ui/agents" id="syn-filters">
+    <label>project
+      <select name="project" onchange="this.form.submit()">
+        <option value="">all</option>
+        {% for p in projects %}
+        <option value="{{ p.slug }}" {{ 'selected' if current and current.slug == p.slug else '' }}>{{ p.name or p.slug }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>window
+      <select name="days" onchange="this.form.submit()">
+        {% for d in [7, 30, 90, 365] %}
+        <option value="{{ d }}" {{ 'selected' if days == d else '' }}>{{ d }}d</option>
+        {% endfor %}
+      </select>
+    </label>
+    <noscript><button type="submit">Apply</button></noscript>
+  </form>
+</header>
+
+<div class="syn-grid" id="syn-root"
+     data-project="{{ current.slug if current else '' }}" data-days="{{ days }}">
+
+  <section class="syn-pane wide">
+    <h3>Totals</h3>
+    <p class="hint">Activity per agent over the selected window — memories written, exchange messages sent, threads opened.</p>
+    <div class="agent-cards" id="agent-cards"><span class="hint">Loading…</span></div>
+  </section>
+
+  <section class="syn-pane wide">
+    <h3>Synapse view</h3>
+    <p class="hint">Agents as neurons; messages as firings. Pulse rate follows recent message volume between each pair.</p>
+    <div id="synapse-wrap">
+      <canvas id="synapse"></canvas>
+      <div class="syn-empty" id="synapse-empty" hidden>
+        <div>No agent-to-agent messages in this window yet.</div>
+        <code>post_task(project=…, title=…, body=…, from_agent="grok", to_agent="codex")</code>
+      </div>
+    </div>
+  </section>
+
+  <section class="syn-pane">
+    <h3>Share per project</h3>
+    <p class="hint">Each donut is one project; slices are agent contribution (memories + messages).</p>
+    <div class="donut-row" id="donut-row"><span class="hint">Loading…</span></div>
+  </section>
+
+  <section class="syn-pane">
+    <h3>Recent threads</h3>
+    <p class="hint">Latest collaboration threads across the exchange.</p>
+    <div class="thread-list" id="thread-list"><span class="hint">Loading…</span></div>
+  </section>
+
+</div>
+
+<noscript><div class="noscript-note">The Synapse page needs JavaScript for its
+charts. Raw data: <a href="/api/ui/agents/stats">/api/ui/agents/stats</a>.</div></noscript>
+
+</div>{# /.syn-scroll #}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/agents.js?b={{ build_stamp }}" defer></script>
+{% endblock %}
