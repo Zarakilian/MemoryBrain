@@ -9,6 +9,7 @@ Usage:
     brain seed [--project SLUG]
     brain status
     brain update
+    brain upgrade [--backup-dir DIR]
     brain scan [--root PATH --label ID] [--full] [--dry-run] [--init] [--apply FILE]
 """
 import argparse
@@ -21,11 +22,21 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
+from urllib.parse import urlparse
 
 MEMORYBRAIN_DIR = Path(__file__).parent.parent.resolve()
 BRAIN_URL = os.getenv("MEMORYBRAIN_URL", "http://localhost:7741")
 _HTTP_TIMEOUT = int(os.getenv("MEMORYBRAIN_HTTP_TIMEOUT", "180"))
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+# Repo hook -> the name Claude Code's settings point at, under ~/.claude/hooks/.
+# brain setup, brain update and brain upgrade all install through this map.
+HOOK_INSTALL_MAP = {
+    "session-ingest.sh": "session-start-memory.sh",
+    "pre-compact-ingest.py": "pre-compact-auto-handover.py",
+    "render_brief.py": "render_brief.py",
+}
 
 
 def _brain_key() -> str:
@@ -45,11 +56,16 @@ def _brain_key() -> str:
 
 
 def _brain_headers(content_type: bool = False) -> dict:
-    headers = {}
+    headers = {"X-Brain-Client": "cli"}
     if content_type:
         headers["Content-Type"] = "application/json"
     key = _brain_key()
     if key:
+        if urlparse(BRAIN_URL).hostname not in LOCAL_HOSTS:
+            raise SystemExit(
+                f"Refusing to send BRAIN_API_KEY to {BRAIN_URL}: MEMORYBRAIN_URL is not "
+                "localhost. The brain only listens on this machine; unset MEMORYBRAIN_URL "
+                "or point it at http://localhost:7741.")
         headers["X-Brain-Key"] = key
     return headers
 
@@ -161,6 +177,51 @@ def _file_hash(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
+def looks_like_google_key(key: str) -> bool:
+    """Google AI Studio keys start with 'AIza'."""
+    return key.startswith("AIza")
+
+
+def install_hooks(repo: Path, hooks_dir: Path, now: datetime = None) -> list:
+    """Copy each repo hook to its installed name (HOOK_INSTALL_MAP). A file that
+    is replaced keeps a .bak-<YYYYMMDD-HHMMSS> copy. Returns installed names."""
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    changed = []
+    for src_name, dst_name in HOOK_INSTALL_MAP.items():
+        src, dst = repo / "hooks" / src_name, hooks_dir / dst_name
+        if not src.exists():
+            print(f"⚠️  Hook source not found: {src}")
+            continue
+        if dst.exists():
+            if _file_hash(dst) == _file_hash(src):
+                continue
+            shutil.copy2(dst, dst.with_name(f"{dst.name}.bak-{stamp}"))
+        shutil.copy2(src, dst)
+        dst.chmod(dst.stat().st_mode | 0o755)
+        changed.append(dst_name)
+    return changed
+
+
+def install_skills(repo: Path, skills_dir: Path) -> list:
+    """Copy each skills/<name>/SKILL.md that differs. Returns the skill names."""
+    changed = []
+    src_root = repo / "skills"
+    if not src_root.exists():
+        return changed
+    for skill_dir in sorted(src_root.iterdir()):
+        skill_file = skill_dir / "SKILL.md"
+        if not skill_dir.is_dir() or not skill_file.exists():
+            continue
+        dst_file = skills_dir / skill_dir.name / "SKILL.md"
+        if _file_hash(dst_file) == _file_hash(skill_file):
+            continue
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(skill_file, dst_file)
+        changed.append(skill_dir.name)
+    return changed
+
+
 def cmd_setup(auto_detect: bool = False):
     print("MemoryBrain setup")
     print("\u2500" * 45)
@@ -270,21 +331,7 @@ def cmd_setup(auto_detect: bool = False):
     hooks_dir = Path.home() / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
-    hook_pairs = [
-        (MEMORYBRAIN_DIR / "hooks" / "session-ingest.sh",
-         hooks_dir / "session-start-memory.sh"),
-        (MEMORYBRAIN_DIR / "hooks" / "pre-compact-ingest.py",
-         hooks_dir / "pre-compact-auto-handover.py"),
-    ]
-    hooks_installed = False
-    for src, dst in hook_pairs:
-        if not src.exists():
-            print(f"\u26a0\ufe0f  Hook source not found: {src}")
-            continue
-        if _file_hash(dst) != _file_hash(src):
-            shutil.copy2(src, dst)
-            dst.chmod(0o755)
-            hooks_installed = True
+    hooks_installed = bool(install_hooks(MEMORYBRAIN_DIR, hooks_dir))
     print("\u2705 Hooks installed" if hooks_installed else "\u23ed\ufe0f  Hooks \u2014 already up to date")
 
     # 7. Install Claude Code skills
@@ -405,7 +452,7 @@ def _setup_gemini_optional():
     print("2\ufe0f\u20e3  In the browser:")
     print("   \u2022 Click 'Create API Key'")
     print("   \u2022 Click 'Create new API key in new project'")
-    print("   \u2022 Copy the key (starts with 'sk-proj-')")
+    print("   \u2022 Copy the key (starts with 'AIza')")
     print()
 
     api_key = input("3\ufe0f\u20e3  Paste your API key here: ").strip()
@@ -414,8 +461,8 @@ def _setup_gemini_optional():
         print("\u274c No key provided. Skipping Gemini setup.")
         return
 
-    if not api_key.startswith("sk-proj-"):
-        print("\u26a0\ufe0f  Warning: Key doesn't look like a valid Google API key (should start with 'sk-proj-')")
+    if not looks_like_google_key(api_key):
+        print("\u26a0\ufe0f  Warning: Key doesn't look like a Google AI Studio key (they start with 'AIza')")
         confirm = input("Continue anyway? (y/N): ").strip().lower()
         if confirm != "y":
             return
@@ -468,10 +515,127 @@ def _get_url(url: str) -> dict:
     _get and shadowed the first, silently breaking `brain status`.
     """
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        req = urllib.request.Request(url, headers={"X-Brain-Client": "cli"})
+        with urllib.request.urlopen(req, timeout=5) as resp:
             return json.loads(resp.read())
     except Exception:
         return {}
+
+
+# ── brain upgrade ────────────────────────────────────────────────────────────
+
+CLEAN_START_MARK = "application only, clean start"
+DEFAULT_BACKUP_DIR = Path.home() / "memorybrain-backups"
+_COUNT_SQL = ("import sqlite3; print(sqlite3.connect('file:{db}?mode=ro', uri=True)"
+              ".execute('SELECT COUNT(*) FROM memories').fetchone()[0])")
+
+
+def _compose_project(repo: Path, run) -> str:
+    """The compose project name, which prefixes the brain's volume name."""
+    r = run(["docker", "compose", "config", "--format", "json"], cwd=repo,
+            capture_output=True, text=True)
+    try:
+        return json.loads(r.stdout)["name"]
+    except (ValueError, KeyError, TypeError):
+        return os.getenv("COMPOSE_PROJECT_NAME") or repo.name.lower()
+
+
+def _count_memories(cmd: list, run) -> int:
+    r = run(cmd, capture_output=True, text=True)
+    try:
+        return int(r.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise RuntimeError(f"could not count memories: {r.stderr.strip() or r.stdout.strip()}")
+
+
+def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subprocess.run,
+                get_json=None, sleep=None, home: Path = None) -> int:
+    """Move an existing install to this version: check the clone, count, stop,
+    back up the volume, rebuild, wait until ready, count again, reinstall hooks.
+    Stops at the first failure. Returns a process exit code."""
+    import time as _time
+    get_json = get_json or _get_url
+    sleep = sleep or _time.sleep
+    home = home or Path.home()
+    repo = Path(repo).resolve()
+
+    def fail(msg: str) -> int:
+        print(f"❌ {msg}")
+        return 1
+
+    # 1. Only a clone of the clean-start history may upgrade the live brain.
+    roots = run(["git", "log", "--max-parents=0", "--format=%s"], cwd=repo,
+                capture_output=True, text=True)
+    if CLEAN_START_MARK not in (roots.stdout or ""):
+        return fail("This clone predates the 2026-09-30 clean start. Rename this folder, "
+                    "clone the repo again, and run brain upgrade from the new clone.")
+    backup_dir = Path(backup_dir or DEFAULT_BACKUP_DIR).resolve()
+    if backup_dir == repo or repo in backup_dir.parents:
+        return fail(f"The backup folder {backup_dir} is inside the repo. Brain data must never "
+                    "sit in the repo; use a folder outside it (default ~/memorybrain-backups).")
+
+    # 2. The brain this folder's compose project owns must already exist.
+    project = _compose_project(repo, run)
+    volume, image = f"{project}_brain_data", f"{project}-brain"
+    if run(["docker", "volume", "inspect", volume], capture_output=True, text=True).returncode:
+        return fail(f"No volume {volume} for compose project '{project}'. Run brain upgrade "
+                    "from the folder of your live install (or set COMPOSE_PROJECT_NAME), so the "
+                    "upgrade cannot start an empty brain next to your real one.")
+    try:
+        before = _count_memories(["docker", "run", "--rm", "--entrypoint", "python",
+                                  "-v", f"{volume}:/data:ro", image, "-c",
+                                  _COUNT_SQL.format(db="/data/brain.db")], run)
+    except RuntimeError as e:
+        return fail(str(e))
+    print(f"✅ {before} memories in {volume}")
+
+    # 3. Stop, then back up the whole volume (brain.db and its WAL files).
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    name = f"brain-backup-{stamp}.tar.gz"
+    steps = [
+        (["docker", "compose", "stop", "brain"], "stopping the brain"),
+        (["docker", "run", "--rm", "--entrypoint", "tar", "-v", f"{volume}:/data:ro",
+          "-v", f"{backup_dir}:/backup", image, "czf", f"/backup/{name}", "-C", "/data", "."],
+         "backing up the volume"),
+        (["docker", "compose", "build", "brain"], "building the new image"),
+        (["docker", "compose", "up", "-d"], "starting the brain"),
+    ]
+    for cmd, what in steps:
+        if run(cmd, cwd=repo).returncode:
+            return fail(f"Failed while {what}: {' '.join(cmd)}")
+        if what == "backing up the volume":
+            print(f"✅ Backup: {backup_dir / name}")
+
+    # 4. Wait for readiness, then prove nothing was lost.
+    ready = {}
+    for _ in range(36):
+        ready = get_json(f"{BRAIN_URL}/readiness") or {}
+        if ready.get("ready"):
+            break
+        sleep(5)
+    else:
+        return fail(f"The brain did not report ready within 180 seconds. The backup is "
+                    f"{backup_dir / name}.")
+    try:
+        after = _count_memories(["docker", "compose", "exec", "-T", "brain", "python", "-c",
+                                 _COUNT_SQL.format(db="/app/data/brain.db")], run)
+    except RuntimeError as e:
+        return fail(str(e))
+    if after < before:
+        return fail(f"Memory count fell from {before} to {after}. Restore from "
+                    f"{backup_dir / name} before doing anything else.")
+    print(f"✅ {after} memories after the upgrade (before: {before})")
+    print(f"   reembed_pending: {ready.get('reembed_pending', 'unknown')} "
+          "(old vectors are re-embedded in the background; search keeps working)")
+
+    # 5. Hooks under their installed names, and skills.
+    for hook in install_hooks(repo, home / ".claude" / "hooks"):
+        print(f"✅ Updated hook: {hook}")
+    for skill in install_skills(repo, home / ".claude" / "skills"):
+        print(f"✅ Updated skill: {skill}")
+    print("✅ Upgrade complete. Open a new session to use it.")
+    return 0
 
 
 def cmd_update():
@@ -518,45 +682,11 @@ def cmd_update():
         sys.exit(1)
     print("✅ Docker rebuilt — migrations applied automatically at startup.")
 
-    # 3. Reinstall hooks if changed
-    hooks_src = repo_path / "hooks"
-    hooks_dst = Path.home() / ".claude" / "hooks"
-    if hooks_src.exists() and hooks_dst.exists():
-        for src in sorted(hooks_src.iterdir()):
-            if not src.is_file():
-                continue
-            dst = hooks_dst / src.name
-            if dst.exists():
-                src_hash = hashlib.sha256(src.read_bytes()).hexdigest()
-                dst_hash = hashlib.sha256(dst.read_bytes()).hexdigest()
-                if src_hash == dst_hash:
-                    print(f"⏭️  Hook unchanged: {src.name}")
-                    continue
-            shutil.copy2(src, dst)
-            dst.chmod(dst.stat().st_mode | 0o111)
-            print(f"✅ Updated hook: {src.name}")
-
-    # 4. Reinstall skills if changed
-    skills_src = repo_path / "skills"
-    skills_dst = Path.home() / ".claude" / "skills"
-    if skills_src.exists():
-        for skill_dir in sorted(skills_src.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            skill_file = skill_dir / "SKILL.md"
-            if not skill_file.exists():
-                continue
-            dst_dir = skills_dst / skill_dir.name
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            dst_file = dst_dir / "SKILL.md"
-            if dst_file.exists():
-                src_hash = hashlib.sha256(skill_file.read_bytes()).hexdigest()
-                dst_hash = hashlib.sha256(dst_file.read_bytes()).hexdigest()
-                if src_hash == dst_hash:
-                    print(f"⏭️  Skill unchanged: {skill_dir.name}")
-                    continue
-            shutil.copy2(skill_file, dst_file)
-            print(f"✅ Updated skill: {skill_dir.name}")
+    # 3. Reinstall hooks (under their installed names) and skills if changed
+    for name in install_hooks(repo_path, Path.home() / ".claude" / "hooks"):
+        print(f"✅ Updated hook: {name}")
+    for name in install_skills(repo_path, Path.home() / ".claude" / "skills"):
+        print(f"✅ Updated skill: {name}")
 
     print("\n✅ MemoryBrain updated successfully.")
     print("   Open a new Claude Code session to use the updated tools.")
@@ -594,6 +724,10 @@ def main():
     # update
     sub.add_parser("update", help="Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills")
 
+    # upgrade (v3)
+    p_upgrade = sub.add_parser("upgrade", help="Back up the brain, rebuild to this version, verify counts")
+    p_upgrade.add_argument("--backup-dir", help="Folder for the volume backup (default ~/memorybrain-backups)")
+
     # scan (v2.5 workspace layer)
     p_scan = sub.add_parser("scan", help="Push a file manifest of your workspace roots to the brain")
     p_scan.add_argument("--root", help='Add/replace a root, e.g. "C:\\work\\repos"')
@@ -618,6 +752,8 @@ def main():
         cmd_status()
     elif args.command == "update":
         cmd_update()
+    elif args.command == "upgrade":
+        sys.exit(cmd_upgrade(backup_dir=Path(args.backup_dir) if args.backup_dir else None))
     elif args.command == "scan":
         from brain_scan import cmd_scan
         sys.exit(cmd_scan(args, _post, _get))

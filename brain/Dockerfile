@@ -15,6 +15,7 @@ COPY brain/pytest.ini pytest.ini
 RUN python -c "import hashlib,pathlib,datetime;h=hashlib.sha256();[(h.update(str(p).encode()),h.update(p.read_bytes())) for p in sorted(pathlib.Path('app').rglob('*')) if p.is_file() and '__pycache__' not in p.parts and p.suffix not in ('.pyc','.pyo')];pathlib.Path('app/BUILD_STAMP').write_text(h.hexdigest()[:12]+'.'+datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%d-%H%M'))"
 COPY brain/entrypoint.sh /entrypoint.sh
 COPY cli/ cli/
+COPY hooks/ hooks/
 
 # L8: Run as non-root user
 # gosu is the standard Docker privilege-drop helper (used by official images)

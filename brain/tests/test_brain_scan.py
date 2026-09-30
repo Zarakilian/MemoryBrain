@@ -205,7 +205,10 @@ def test_ignore_globs_prune_whole_trees_and_their_markers(tmp_path, monkeypatch)
     monkeypatch.setattr(bs.os, "walk", spy)
     files, markers = bs.walk_root(root, ["Vendor/*"])
     assert "Vendor" not in visited and "deep" not in visited
-    assert not any(f["rel_path"].startswith("Vendor/") for f in files)
+    # v3: landmark files at depth 2 are still indexed (as files), nothing else is,
+    # and a marker inside an ignored tree never binds a project.
+    vendor = {f["rel_path"] for f in files if f["rel_path"].startswith("Vendor/")}
+    assert vendor == {"Vendor/x/.brainproject"}
     assert not any(m["project"] == "ignored-proj" for m in markers)
 
 

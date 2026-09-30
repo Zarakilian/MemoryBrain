@@ -22,8 +22,14 @@ MACHINE = platform.node()
 
 IGNORE_DIRS = {".git", ".hg", ".svn", "node_modules", "venv", ".venv", "__pycache__",
                ".pytest_cache", ".mypy_cache", ".idea", ".vs", "bin", "obj"}
-IGNORE_FILE_GLOBS = [".env*", "*.pem", "*.key", "*.pfx", "*.p12", "id_rsa*", "*secret*",
-                     "*password*", "*.har", "*.tar.gz", "*.zip"]
+IGNORE_FILE_GLOBS = [".env*", "*.pem", "*.key", "*.pfx", "*.p12", "id_rsa*", "id_ed25519*",
+                     "*.ppk", "*.kdbx", "credentials*", "*.tfstate", ".npmrc", ".netrc",
+                     "*secret*", "*password*", "*.har", "*.tar.gz", "*.zip"]
+# Inside a scan-ignored folder these are still indexed (to depth 2) so agents can
+# learn what the folder is without the scan walking all of it.
+LANDMARK_FILES = ("AGENTS.md", "CLAUDE.md", "GROK.md", "NEXT_SESSION_PROMPT.md", "README.md",
+                  ".brainproject")
+LANDMARK_DEPTH = 2
 HASH_LIMIT = 2 * 1024 * 1024
 SIZE_LIMIT = 200 * 1024 * 1024
 TITLE_EXTS = {".md"}
@@ -113,6 +119,43 @@ def _dir_ignored(rel_parts: tuple[str, ...], extra_globs: list[str]) -> bool:
     return any(fnmatch.fnmatch(rel, g) or fnmatch.fnmatch(probe, g) for g in extra_globs)
 
 
+def _file_entry(p: Path, rel: str, st, prev: dict) -> dict:
+    mtime = _iso(st.st_mtime)
+    old = prev.get(rel)
+    if old and old.get("size") == st.st_size and old.get("mtime") == mtime and "sha256" in old:
+        sha, title = old["sha256"], old.get("title", "")
+    else:
+        sha, title = _sha(p, st.st_size), _title(p)
+    return {"rel_path": rel, "size": st.st_size, "mtime": mtime, "sha256": sha, "title": title}
+
+
+def _landmarks(folder: Path, rel_parts: tuple[str, ...], prev: dict) -> list[dict]:
+    """Landmark files in a scan-ignored folder and its direct subfolders, found
+    without walking the tree. They are files only: an ignored tree never binds."""
+    isjunction = getattr(os.path, "isjunction", None)
+    places = [(folder, rel_parts)]
+    try:
+        for sub in sorted(folder.iterdir()):
+            if (sub.is_dir() and not sub.is_symlink() and sub.name not in IGNORE_DIRS
+                    and not (isjunction and isjunction(sub)) and LANDMARK_DEPTH >= 2):
+                places.append((sub, rel_parts + (sub.name,)))
+    except OSError:
+        return []
+    found = []
+    for place, parts in places:
+        for name in LANDMARK_FILES:
+            p = place / name
+            try:
+                if p.is_symlink() or not p.is_file():
+                    continue
+                st = p.stat()
+            except OSError:
+                continue
+            if st.st_size <= SIZE_LIMIT:
+                found.append(_file_entry(p, "/".join(parts + (name,)), st, prev))
+    return found
+
+
 def walk_root(abs_path: Path, extra_globs: list[str], prev: dict | None = None) -> tuple[list[dict], list[dict]]:
     """Walk one root. Ignored directories, symbolic links and NTFS junctions are
     pruned in place, and scan-ignore globs prune whole trees, so os.walk never
@@ -135,11 +178,14 @@ def walk_root(abs_path: Path, extra_globs: list[str], prev: dict | None = None) 
             if os.path.islink(child) or (isjunction and isjunction(child)):
                 continue
             if _dir_ignored(rel_dir + (d,), extra_globs):
+                files.extend(_landmarks(Path(child), rel_dir + (d,), prev))
                 continue
             kept.append(d)
         dirnames[:] = kept
         for name in sorted(filenames):
             p = Path(dirpath) / name
+            if p.is_symlink():  # a linked file may point anywhere outside the root
+                continue
             if name == ".brainproject":
                 try:
                     slug = re.sub(r"[^a-z0-9_-]", "", p.read_text(encoding="utf-8").strip().lower())
@@ -154,15 +200,7 @@ def walk_root(abs_path: Path, extra_globs: list[str], prev: dict | None = None) 
                 continue
             if is_ignored(rel_dir, name, st.st_size, extra_globs):
                 continue
-            rel = "/".join(rel_dir + (name,))
-            mtime = _iso(st.st_mtime)
-            old = prev.get(rel)
-            if old and old.get("size") == st.st_size and old.get("mtime") == mtime and "sha256" in old:
-                sha, title = old["sha256"], old.get("title", "")
-            else:
-                sha, title = _sha(p, st.st_size), _title(p)
-            files.append({"rel_path": rel, "size": st.st_size, "mtime": mtime,
-                          "sha256": sha, "title": title})
+            files.append(_file_entry(p, "/".join(rel_dir + (name,)), st, prev))
     return files, markers
 
 
@@ -195,13 +233,20 @@ def _remote_url(folder: Path) -> str:
     except OSError:
         return ""
     m = re.search(r'\[remote "origin"\][^\[]*?url\s*=\s*(\S+)', text)
-    return m.group(1) if m else ""
+    return strip_url_userinfo(m.group(1)) if m else ""
 
 
-def discover_folders(abs_path: Path) -> list[dict]:
+def strip_url_userinfo(url: str) -> str:
+    """Drop 'user:token@' from a URL. SSH remotes (git@host:owner/repo) are kept."""
+    return re.sub(r"^([A-Za-z][A-Za-z0-9+.-]{0,30}://)[^/?#@\s]*@", r"\1", (url or "").strip())
+
+
+def discover_folders(abs_path: Path, extra_globs: list[str] | None = None) -> list[dict]:
     out = []
     for d in sorted(Path(abs_path).iterdir()):
         if not d.is_dir() or d.name in IGNORE_DIRS or d.name.startswith("."):
+            continue
+        if _dir_ignored((d.name,), extra_globs or []):
             continue
         files, _ = walk_root(d, [])
         latest = max((f["mtime"] for f in files), default="")
@@ -210,9 +255,10 @@ def discover_folders(abs_path: Path) -> list[dict]:
     return out
 
 
-def propose_map(root_id: str, abs_path: Path, known_slugs: set[str]) -> dict:
+def propose_map(root_id: str, abs_path: Path, known_slugs: set[str],
+                extra_globs: list[str] | None = None) -> dict:
     rows = []
-    for f in discover_folders(abs_path):
+    for f in discover_folders(abs_path, extra_globs):
         marker = Path(abs_path) / f["rel_path"] / ".brainproject"
         project = ""
         if marker.exists():
@@ -297,7 +343,7 @@ def cmd_scan(args, post, get) -> int:
                 known = {p["slug"] for p in get("/workspace/map").get("projects", [])}
             except Exception:
                 pass
-            prop = propose_map(root_id, abs_path, known)
+            prop = propose_map(root_id, abs_path, known, extra_globs=extra)
             out = Path.cwd() / "workspace-map.proposed.json"
             out.write_text(json.dumps(prop, indent=1), encoding="utf-8")
             print(f"[{root_id}] proposed map for {len(prop['folders'])} folders -> {out}")

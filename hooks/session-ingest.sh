@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # MemoryBrain session-start hook
-# Injects a compact project summary into session context on startup.
+# Injects this project's brief into the session context on startup.
 # Called by Claude Code session-start hook. CWD = project directory.
 
 set -euo pipefail
 
 BRAIN_URL="${MEMORYBRAIN_URL:-http://localhost:7741}"
 MEMORYBRAIN_DIR="${MEMORYBRAIN_DIR:-}"
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="$(command -v python3 || command -v python || echo python3)"
 CWD="${1:-}"
 # Claude Code does not expand template arguments such as {{cwd}}. The hook
 # runs with the project folder as its working directory and Claude Code
@@ -14,6 +16,7 @@ CWD="${1:-}"
 if [ -z "$CWD" ] || [ ! -d "$CWD" ]; then
     CWD="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 fi
+SEARCH_DIR="$CWD"
 # Git Bash reports /c/... paths; the brain compares against C:\... roots.
 case "$CWD" in
     /*) if command -v cygpath >/dev/null 2>&1; then
@@ -27,21 +30,34 @@ case "$BRAIN_URL" in
     *) echo "[memorybrain] BRAIN_URL must be localhost — refusing to connect to ${BRAIN_URL}" >&2; exit 0 ;;
 esac
 
-# Detect project slug: check for .brainproject file first, then heuristic
+# Project slug: .brainproject in this folder or up to 4 parents (confidence 1.0),
+# else the folder name (a guess, bound with confidence 0.5 for Doctor to confirm).
 PROJECT_SLUG=""
-if [ -f "${CWD}/.brainproject" ]; then
-    PROJECT_SLUG=$(tr -cd '[:alnum:]_-' < "${CWD}/.brainproject" | tr 'A-Z' 'a-z')
+_dir="$SEARCH_DIR"
+for _ in 0 1 2 3 4; do
+    if [ -f "${_dir}/.brainproject" ]; then
+        PROJECT_SLUG=$(tr -cd '[:alnum:]_-' < "${_dir}/.brainproject" | tr 'A-Z' 'a-z')
+        break
+    fi
+    _parent="$(dirname "$_dir")"
+    [ "$_parent" = "$_dir" ] && break
+    _dir="$_parent"
+done
+BIND_CONF=""
+if [ -z "$PROJECT_SLUG" ]; then
+    PROJECT_SLUG=$(basename "$SEARCH_DIR" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//; s/-*$//; s/--*/-/g') || PROJECT_SLUG=""
+    BIND_CONF=',"confidence":0.5'
 fi
 
-# Build auth header if API key is set
-CURL_AUTH_ARGS=()
+# Every request: 3-second cap, identifies itself, carries the key when set.
+CURL=(curl -sf -m 3 -H "X-Brain-Client: hook")
 if [ -n "${BRAIN_API_KEY:-}" ]; then
-    CURL_AUTH_ARGS=(-H "X-Brain-Key: ${BRAIN_API_KEY}")
+    CURL+=(-H "X-Brain-Key: ${BRAIN_API_KEY}")
 fi
 
 # ── Container health check ────────────────────────────────────────────────────
 
-if ! curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/health" > /dev/null 2>&1; then
+if ! "${CURL[@]}" "${BRAIN_URL}/health" > /dev/null 2>&1; then
     echo ""
     echo "## MemoryBrain — NOT RUNNING"
     echo ""
@@ -83,21 +99,13 @@ _mb_stamp_memory() {
 }
 _mb_stamp_memory "$CWD"
 
-# ── Workspace layer (v2.5): bind this folder to the project ──────────────────
-# .brainproject slug -> confidence 1.0. Folder-name heuristic -> 0.5, unconfirmed,
-# so Doctor can ask before a guessed slug becomes a real binding.
+# ── Workspace layer: bind this folder to the project ─────────────────────────
 _mb_json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-BIND_SLUG="$PROJECT_SLUG"
-BIND_CONF=""
-if [ -z "$BIND_SLUG" ]; then
-    BIND_SLUG=$(basename "$CWD" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//; s/-*$//; s/--*/-/g') || BIND_SLUG=""
-    BIND_CONF=',"confidence":0.5'
-fi
-if [ -n "${MEMORYBRAIN_DEBUG:-}" ]; then echo "[memorybrain] cwd=${CWD} slug=${BIND_SLUG}" >&2; fi
-if [ -n "$BIND_SLUG" ]; then
-    curl -sf -m 2 "${CURL_AUTH_ARGS[@]}" -X POST "${BRAIN_URL}/workspace/bind" \
+if [ -n "${MEMORYBRAIN_DEBUG:-}" ]; then echo "[memorybrain] cwd=${CWD} slug=${PROJECT_SLUG}" >&2; fi
+if [ -n "$PROJECT_SLUG" ]; then
+    "${CURL[@]}" -X POST "${BRAIN_URL}/workspace/bind" \
         -H "Content-Type: application/json" \
-        -d "{\"project\":\"$(_mb_json_escape "$BIND_SLUG")\",\"how\":\"cwd\",\"abs_path\":\"$(_mb_json_escape "$CWD")\"${BIND_CONF}}" \
+        -d "{\"project\":\"$(_mb_json_escape "$PROJECT_SLUG")\",\"how\":\"cwd\",\"abs_path\":\"$(_mb_json_escape "$CWD")\"${BIND_CONF}}" \
         > /dev/null 2>&1 || true
 fi
 
@@ -107,8 +115,8 @@ fi
 
 if [ -n "$MEMORYBRAIN_DIR" ] && [ -f "${MEMORYBRAIN_DIR}/VERSION" ]; then
     REPO_VERSION=$(tr -d '[:space:]' < "${MEMORYBRAIN_DIR}/VERSION")
-    RUNNING_VERSION=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/status" \
-        | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))" 2>/dev/null \
+    RUNNING_VERSION=$("${CURL[@]}" "${BRAIN_URL}/status" \
+        | "$PY" -c "import sys,json; print(json.load(sys.stdin).get('version','unknown'))" 2>/dev/null \
         || echo "unknown")
     if [ -n "$REPO_VERSION" ] && [ "$RUNNING_VERSION" != "unknown" ] && [ "$REPO_VERSION" != "$RUNNING_VERSION" ]; then
         echo ""
@@ -116,18 +124,16 @@ if [ -n "$MEMORYBRAIN_DIR" ] && [ -f "${MEMORYBRAIN_DIR}/VERSION" ]; then
         echo ""
         echo "  Running: v${RUNNING_VERSION}   Repo: v${REPO_VERSION}"
         echo ""
-        echo "  Rebuild the container:"
-        echo "    cd \"${MEMORYBRAIN_DIR}\" && docker compose up -d --build"
+        echo "  Upgrade safely (backup, rebuild, count check):"
+        echo "    cd \"${MEMORYBRAIN_DIR}\" && python3 cli/brain.py upgrade"
         echo ""
     fi
 fi
 
 # ── Subsystem readiness check ────────────────────────────────────────────────
-# Checks SQLite, ChromaDB, Ollama, and both models. Always public — no auth needed.
-# On full success: silent (no noise on a healthy system).
-# On degraded: explains exactly what's broken, what still works, and how to fix it.
+# On full success: silent. On degraded: what is broken, what still works, how to fix it.
 
-READINESS_MSG=$(curl -sf "${BRAIN_URL}/readiness" | python3 -c "
+READINESS_MSG=$("${CURL[@]}" "${BRAIN_URL}/readiness" | "$PY" -c "
 import sys, json
 data = json.load(sys.stdin)
 if data.get('ready', True):
@@ -143,12 +149,11 @@ for name, status in checks.items():
 lines.append('')
 
 ollama_ok = all(checks.get(k) == 'ok' for k in ('ollama', 'embedding_model', 'summary_model'))
-# Prefer modern key; fall back to legacy chromadb mirror from /readiness.
 vector_ok = checks.get('vector_store', checks.get('chromadb')) == 'ok'
 
 if not ollama_ok:
-    lines.append('  Available:    read + keyword search (no Ollama needed)')
-    lines.append('  Unavailable:  add_memory, semantic search')
+    lines.append('  Available:    read, keyword search, add_memory (stored, embedded later)')
+    lines.append('  Unavailable:  semantic search')
     lines.append('')
     lines.append('  Fix Ollama:')
 elif not vector_ok:
@@ -172,46 +177,57 @@ if [ -n "$READINESS_MSG" ]; then
     echo ""
 fi
 
-# ── Startup summary ───────────────────────────────────────────────────────────
+# ── This project's brief ──────────────────────────────────────────────────────
+# Pins, procedures, facts, open loops and beliefs of THIS project, rendered as
+# data. A folder the brain does not know yet falls back to the startup summary.
 
-SUMMARY=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${BRAIN_URL}/startup-summary" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null \
-    || echo "")
-
-if [ -n "$SUMMARY" ]; then
-    echo "$SUMMARY"
+BRIEF=""
+if [ -n "$PROJECT_SLUG" ] && [ -f "${HOOK_DIR}/render_brief.py" ]; then
+    BRIEF=$("${CURL[@]}" "${BRAIN_URL}/project-brief?project=${PROJECT_SLUG}&max_chars=3500" \
+        | "$PY" "${HOOK_DIR}/render_brief.py" 2>/dev/null || echo "")
+fi
+if [ "$(printf '%s\n' "$BRIEF" | grep -c . || true)" -gt 1 ]; then
+    echo ""
+    echo "$BRIEF"
+else
+    SUMMARY=$("${CURL[@]}" "${BRAIN_URL}/startup-summary" \
+        | "$PY" -c "import sys,json; print(json.load(sys.stdin)['summary'])" 2>/dev/null \
+        || echo "")
+    if [ -n "$SUMMARY" ]; then
+        echo "$SUMMARY"
+    fi
 fi
 
-# ── Next-session plan ─────────────────────────────────────────────────────────
-# Always fetched — if no .brainproject in CWD, falls back to most recently active project.
+# ── Next-session note ─────────────────────────────────────────────────────────
+# Only THIS project's note, labelled with who wrote it and when.
 
-NEXT_NOTES_URL="${BRAIN_URL}/next-session"
 if [ -n "$PROJECT_SLUG" ]; then
-    NEXT_NOTES_URL="${BRAIN_URL}/next-session?project=${PROJECT_SLUG}"
-fi
-
-NEXT_NOTES=$(curl -sf "${CURL_AUTH_ARGS[@]}" "${NEXT_NOTES_URL}" \
-    | python3 -c "import sys,json; print(json.load(sys.stdin).get('notes',''))" 2>/dev/null \
-    || echo "")
-
-if [ -n "$NEXT_NOTES" ]; then
-    echo ""
-    echo "## Your Note from Last Session"
-    echo ""
-    echo "At the end of your last session you left this note for yourself:"
-    echo ""
-    echo "$NEXT_NOTES"
+    NEXT_NOTE=$("${CURL[@]}" "${BRAIN_URL}/next-session?project=${PROJECT_SLUG}" | "$PY" -c "
+import sys, json
+data = json.load(sys.stdin)
+notes = (data.get('notes') or '').strip()
+if notes:
+    writer = data.get('writer') or 'unknown'
+    day = (data.get('timestamp') or '')[:10] or 'unknown date'
+    print(f'## Next-session note from {writer}, {day}')
+    print()
+    print(notes)
+" 2>/dev/null || echo "")
+    if [ -n "$NEXT_NOTE" ]; then
+        echo ""
+        echo "$NEXT_NOTE"
+    fi
 fi
 
 # ── Available MCP tools ───────────────────────────────────────────────────────
 # Read ~/.claude.json directly on the host — never routed through Docker
 # (the file contains credentials and must never be mounted into a container)
 
-MCP_TOOLS=$(python3 -c "
+MCP_TOOLS=$("$PY" -c "
 import json, os
 path = os.path.expanduser('~/.claude.json')
 try:
-    with open(path) as f:
+    with open(path, encoding='utf-8') as f:
         data = json.load(f)
     servers = data.get('mcpServers', {})
     tools = sorted(servers.keys()) if isinstance(servers, dict) else []
