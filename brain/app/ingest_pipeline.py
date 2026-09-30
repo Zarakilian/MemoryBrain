@@ -260,4 +260,9 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     except Exception:
         logger.warning("project upsert failed for %s", entry.project, exc_info=True)
     await _link(entry, parent, superseded)
+    try:  # names the memory mentions (hosts, tickets, paths ...), off the event loop
+        from .entities import index_entities
+        await asyncio.to_thread(index_entities, entry.id, entry.content, DB_PATH)
+    except Exception:
+        logger.warning("entity indexing failed for %s", entry.id, exc_info=True)
     return entry

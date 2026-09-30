@@ -106,6 +106,23 @@ class ConflictBody(BaseModel):
     b_id: str = Field(min_length=1, max_length=64)
 
 
+@router.post("/api/ui/edit/procedures/{memory_id}/confirm")
+def confirm_rule(memory_id: str):
+    """Only a person makes a learned rule official (trust user)."""
+    from ..procedures import confirm_procedure
+    if not confirm_procedure(memory_id, actor="ui", db_path=DB_PATH):
+        raise HTTPException(404, "No proposed rule with that id")
+    return {"id": memory_id, "status": "active"}
+
+
+@router.post("/api/ui/edit/procedures/{memory_id}/reject")
+def reject_rule(memory_id: str):
+    from ..procedures import reject_procedure
+    if not reject_procedure(memory_id, actor="ui", db_path=DB_PATH):
+        raise HTTPException(404, "No proposed rule with that id")
+    return {"id": memory_id, "status": "archived"}
+
+
 @router.post("/api/ui/edit/beliefs/{memory_id}/approve")
 def approve_belief(memory_id: str):
     """A proposed belief becomes active: it reaches the brief and search."""

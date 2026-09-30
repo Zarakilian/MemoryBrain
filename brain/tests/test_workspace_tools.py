@@ -22,7 +22,7 @@ def _seed(tmp_db, monkeypatch):
 def test_tool_registry_has_four_new_tools():
     for name in ("set_project_info", "get_workspace_map", "get_project_files", "get_file_context"):
         assert name in T.TOOL_NAMES and name in T._TOOL_ARGS
-    assert len(T.TOOL_NAMES) == 33
+    assert len(T.TOOL_NAMES) == 34  # v3 adds record_correction
 
 
 async def test_list_tools_advertises_them():

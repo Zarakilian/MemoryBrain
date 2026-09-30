@@ -200,6 +200,15 @@ def stream(conn, project: Optional[str] = None, mtype: Optional[str] = None,
 
 # -------------------------------------------------------------- conflicts
 
+def procedures(conn, status: str = "proposed", limit: int = 50) -> dict[str, Any]:
+    """Learned rules by status (v3: agents propose, the user confirms)."""
+    items = _rows(conn, """SELECT id, project, summary, content, timestamp, status, trust,
+                                  writer FROM memories
+                           WHERE type = 'procedure' AND status = ?
+                           ORDER BY timestamp DESC LIMIT ?""", (status, limit))
+    return {"status": status, "procedures": items}
+
+
 def beliefs(conn, status: str = "proposed", project: Optional[str] = None,
             limit: int = 50) -> dict[str, Any]:
     """Beliefs by status (v3: consolidation proposes, a human approves), each

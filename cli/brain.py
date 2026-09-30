@@ -198,6 +198,25 @@ def cmd_beliefs(approve: str = None, reject: str = None, project: str = None) ->
     return 0
 
 
+def cmd_procedures(confirm: str = None, reject: str = None) -> int:
+    """List the rules agents proposed from your corrections, or confirm / reject
+    one. Only a person can confirm a rule; no MCP tool can."""
+    from urllib.parse import quote
+    if confirm or reject:
+        verdict, memory_id = ("confirm", confirm) if confirm else ("reject", reject)
+        reply = _post(f"/api/ui/edit/procedures/{quote(memory_id)}/{verdict}", {})
+        print(f"{memory_id}: {reply.get('status', 'unchanged')}")
+        return 0
+    rules = _get("/api/ui/procedures?status=proposed").get("procedures", [])
+    if not rules:
+        print("No rules are waiting for confirmation.")
+    for r in rules:
+        print(f"{r['id']}  [{r['project']}]  {r['summary']}  (proposed by {r.get('writer') or 'an agent'})")
+    if rules:
+        print("Confirm with: brain procedures --confirm <id>   Reject with: --reject <id>")
+    return 0
+
+
 def looks_like_google_key(key: str) -> bool:
     """Google AI Studio keys start with 'AIza'."""
     return key.startswith("AIza")
@@ -752,6 +771,12 @@ def main():
     # update
     sub.add_parser("update", help="Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills")
 
+    # procedures (v3)
+    p_procs = sub.add_parser("procedures", help="Confirm or reject rules learned from corrections")
+    p_procs.add_argument("--list", action="store_true", help="List proposed rules (default)")
+    p_procs.add_argument("--confirm", metavar="ID", help="Make a proposed rule official")
+    p_procs.add_argument("--reject", metavar="ID", help="Archive a proposed rule")
+
     # beliefs (v3)
     p_beliefs = sub.add_parser("beliefs", help="Review beliefs the sleep cycle proposed")
     p_beliefs.add_argument("--list", action="store_true", help="List proposed beliefs (default)")
@@ -794,6 +819,8 @@ def main():
         cmd_status()
     elif args.command == "update":
         cmd_update()
+    elif args.command == "procedures":
+        sys.exit(cmd_procedures(confirm=args.confirm, reject=args.reject))
     elif args.command == "beliefs":
         sys.exit(cmd_beliefs(approve=args.approve, reject=args.reject, project=args.project))
     elif args.command == "eval":

@@ -285,6 +285,14 @@ def api_conflicts(project: str | None = None,
     return q.conflicts(conn, project=project, limit=limit)
 
 
+@router.get("/api/ui/procedures")
+def api_procedures(status: str = Query("proposed", pattern="^(proposed|active|archived)$"),
+                   limit: int = Query(50, ge=1, le=200),
+                   conn: sqlite3.Connection = Depends(db)):
+    """Learned rules by status with who proposed them (v3 confirmation queue)."""
+    return q.procedures(conn, status=status, limit=limit)
+
+
 @router.get("/api/ui/beliefs")
 def api_beliefs(status: str = Query("proposed", pattern="^(proposed|active|archived)$"),
                 project: str | None = None,

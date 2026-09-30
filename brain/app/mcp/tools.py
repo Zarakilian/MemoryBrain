@@ -41,6 +41,7 @@ TOOL_NAMES = [
     "record_retrieval",
     "get_timeline",
     "get_entities",
+    "record_correction",
     "get_project_policy",
     "set_project_policy",
     # v2.4 — Synapse (Agent Exchange)
@@ -388,10 +389,22 @@ async def handle_record_retrieval(
     ))
 
 
+async def handle_record_correction(rule: str, evidence: str = "",
+                                   project: Optional[str] = None) -> str:
+    """Store how the user wants things done, as a PROPOSED procedure. Only the
+    user confirms it (Atlas or brain procedures); no tool can."""
+    from ..procedures import record_correction
+    try:
+        return json.dumps(record_correction(rule, evidence=evidence, project=project,
+                                            writer="mcp", db_path=DB_PATH), default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
+
+
 async def handle_get_timeline(project: Optional[str] = None,
-                              days: int = 30, limit: int = 100) -> str:
+                              days: int = 30, limit: int = 100, as_of: Optional[str] = None) -> str:
     from ..timeline import get_timeline
-    return json.dumps(get_timeline(project=project, days=days, limit=limit,
+    return json.dumps(get_timeline(project=project, days=days, limit=limit, as_of=as_of,
                                    db_path=DB_PATH), default=str)
 
 
@@ -872,19 +885,41 @@ async def list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_timeline",
-            description="Chronological project (or global) activity: sessions, decisions, facts, beliefs, open loops.",
+            description=("Chronological project (or global) activity: sessions, decisions, "
+                         "facts, beliefs, open loops. as_of shows the state at that moment."),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "project": {"type": "string"},
                     "days": {"type": "integer", "default": 30},
                     "limit": {"type": "integer", "default": 100},
+                    "as_of": {"type": "string", "description": "ISO date or datetime"},
                 },
             },
         ),
         types.Tool(
+            name="record_correction",
+            description=("When the user corrects HOW you work (a preference, a rule, a "
+                         "convention), record it here. It is stored as a proposed "
+                         "procedure; only the user can confirm it, and confirmed rules "
+                         "appear in every brief under 'How you want things done'. "
+                         "project omitted = applies everywhere."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "rule": {"type": "string", "maxLength": 500,
+                             "description": "The rule, as one short instruction"},
+                    "evidence": {"type": "string", "maxLength": 1000,
+                                 "description": "A short quote of what the user said"},
+                    "project": {"type": "string"},
+                },
+                "required": ["rule"],
+            },
+        ),
+        types.Tool(
             name="get_entities",
-            description="Entity cards for a project: tags, names, services, graph entities with mention counts.",
+            description=("Entity cards for a project: hosts, tickets, ids, paths, products and "
+                         "env vars its memories mention, plus tags, with counts and example ids."),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1140,7 +1175,8 @@ _TOOL_ARGS = {
     "unpin_memory":         (["project", "memory_id"], []),
     "list_pins":            (["project"], []),
     "record_retrieval":     (["query"], ["result_ids", "chosen_id", "project", "source"]),
-    "get_timeline":         ([], ["project", "days", "limit"]),
+    "get_timeline":         ([], ["project", "days", "limit", "as_of"]),
+    "record_correction":    (["rule"], ["evidence", "project"]),
     "get_entities":         ([], ["project", "limit"]),
     "get_project_policy":   (["project"], []),
     "set_project_policy":   (["project"], ["include_system", "max_brief_chars", "default_tags", "notes"]),
@@ -1206,6 +1242,7 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
         "list_pins":            lambda a: handle_list_pins(**a),
         "record_retrieval":     lambda a: handle_record_retrieval(**a),
         "get_timeline":         lambda a: handle_get_timeline(**a),
+        "record_correction":    lambda a: handle_record_correction(**a),
         "get_entities":         lambda a: handle_get_entities(**a),
         "get_project_policy":   lambda a: handle_get_project_policy(**a),
         "set_project_policy":   lambda a: handle_set_project_policy(**a),

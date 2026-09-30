@@ -131,10 +131,10 @@ async def test_a_belief_is_cited_proposed_and_waits_for_approval(tmp_db, model, 
     assert belief.content == f"The export runs nightly and retries twice [m:{ids[0][:8]}]."
     assert (belief.status, belief.trust, belief.writer) == ("proposed", "derived", "consolidation")
     assert "[m:" in model.prompts[0] and ids[0][:8] in model.prompts[0]
-    brief = await build_project_brief("acme", db_path=tmp_db)
+    brief = await build_project_brief("acme", max_chars=12000, db_path=tmp_db)
     assert belief_id not in [b["id"] for b in brief["beliefs"]]
     assert set_belief_status(belief_id, approve=True, actor="user", db_path=tmp_db)
-    brief = await build_project_brief("acme", db_path=tmp_db)
+    brief = await build_project_brief("acme", max_chars=12000, db_path=tmp_db)
     assert belief_id in [b["id"] for b in brief["beliefs"]]
 
 

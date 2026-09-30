@@ -8,14 +8,9 @@ from typing import Any, Optional
 
 from .storage import DB_PATH, _connect
 
-# Crude but useful entity extraction: CamelCase tokens, #tags, path-like tokens
-_CAMEL = re.compile(r"\b[A-Z][a-z]+(?:[A-Z][a-z0-9]+)+\b")
+# Named entities come from entities.py (indexed at write time); #hashtags stay
+# a light extra for memories written before v3.
 _HASH_TAG = re.compile(r"(?<!\w)#([a-zA-Z][\w-]{1,40})")
-_PATHISH = re.compile(r"(?:[A-Za-z]:\\|/)(?:[^\s\"']+){6,}")
-_SERVICE = re.compile(
-    r"\b(?:localhost:\d{2,5}|memorybrain|ollama|docker|github)\b",
-    re.I,
-)
 
 
 def get_timeline(
@@ -23,18 +18,33 @@ def get_timeline(
     days: int = 30,
     limit: int = 100,
     db_path: Path = DB_PATH,
+    as_of: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Chronological feed of notable memories (sessions, decisions, facts, beliefs)."""
+    """Chronological feed of notable memories (sessions, decisions, facts, beliefs).
+
+    as_of (ISO date or datetime) shows the state at that moment: what had been
+    written by then and was still valid, archived rows included."""
     days = max(1, min(int(days), 365))
     limit = max(1, min(int(limit), 500))
     sql = """SELECT id, summary, type, project, importance, timestamp,
                     substr(content, 1, 240) AS content_preview, tags
              FROM memories
-             WHERE status = 'active'
-               AND type IN ('session','handover','decision','fact','belief',
+             WHERE type IN ('session','handover','decision','fact','belief',
                             'open_loop','note')
                AND timestamp >= datetime('now', ?)"""
     params: list[Any] = [f"-{days} days"]
+    if as_of:
+        from .search import _as_of_moment
+        moment = _as_of_moment(as_of)
+        if moment is None:
+            raise ValueError("as_of must be an ISO date or datetime")
+        at = moment.isoformat()
+        sql += """ AND status IN ('active', 'archived', 'done') AND timestamp <= ?
+                   AND (valid_from IS NULL OR valid_from <= ?)
+                   AND (valid_to IS NULL OR valid_to > ?)"""
+        params += [at, at, at]
+    else:
+        sql += " AND status = 'active'"
     if project:
         sql += " AND project = ?"
         params.append(project)
@@ -70,11 +80,14 @@ def get_entities(
     limit: int = 40,
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
-    """Entity cards: tags + lightweight extracted names from recent content.
+    """Entity cards: the hosts, tickets, ids, paths, products and env vars
+    indexed at write time (entities.py), plus tags and #hashtags from recent
+    memories (useful for memories written before v3). Each card carries its
+    mention count and up to 3 example memory ids."""
+    from .entities import top_entities
 
-    Also surfaces graph `entity` edges when present.
-    """
     limit = max(1, min(int(limit), 100))
+    indexed = top_entities(project, limit=limit, db_path=db_path)
     with _connect(db_path) as conn:
         sql = """SELECT id, summary, content, tags, type, project, timestamp
                  FROM memories WHERE status = 'active'"""
@@ -130,11 +143,6 @@ def get_entities(
         text = f"{r['summary'] or ''}\n{r['content'] or ''}"
         for m in _HASH_TAG.findall(text):
             bump(m, "hashtag", mid, summary)
-        for m in _CAMEL.findall(text):
-            if len(m) >= 4:
-                bump(m, "name", mid, summary)
-        for m in _SERVICE.findall(text):
-            bump(m, "service", mid, summary)
 
     for e in edges:
         try:
@@ -144,7 +152,10 @@ def get_entities(
         label = meta.get("entity") or meta.get("name") or e["dst_id"][:12]
         bump(str(label), "graph", e["src_id"], "")
 
-    ranked = sorted(counts.values(), key=lambda x: (-x["mentions"], x["name"]))
+    known = {e["name"].lower() for e in indexed}
+    light = [{**c, "memory_ids": c["memory_ids"][:3]} for c in counts.values()
+             if c["name"].lower() not in known]
+    ranked = sorted(indexed + light, key=lambda x: (-x["mentions"], x["name"]))
     return {
         "project": project or "",
         "count": min(len(ranked), limit),

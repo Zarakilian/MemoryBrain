@@ -140,7 +140,7 @@ async def test_all_tools_registered():
     tools = await list_tools()
     names = {t.name for t in tools}
     assert names == set(TOOL_NAMES)
-    assert len(names) == 33
+    assert len(names) == 34  # v3 adds record_correction
     assert {
         "get_project_brief", "list_conflicts", "resolve_conflict",
         "dismiss_conflict", "pin_memory", "unpin_memory", "list_pins",

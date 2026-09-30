@@ -442,28 +442,45 @@
   /* v3: consolidation proposes beliefs; a human approves them. Each proposal
      lists its cited sources so the verdict is informed. */
   async function openBeliefReview() {
-    var res = await fetch("/api/ui/beliefs?status=proposed&limit=50", { cache: "no-store" });
-    var data = res.ok ? await res.json() : { beliefs: [] };
-    var items = data.beliefs || [];
-    var body = items.length
-      ? items.map(function (b) {
-          return '<div class="belief-proposal" data-id="' + esc(b.id) + '">'
-            + "<p><strong>" + esc(b.project) + "</strong> " + esc(b.content) + "</p>"
-            + '<p class="quiet">cites: ' + (b.sources || []).map(function (s) {
-                return esc(s.summary || s.id); }).join(" · ") + "</p>"
-            + '<button type="button" class="primary" data-verdict="approve">✓ Approve</button> '
-            + '<button type="button" data-verdict="reject">✕ Reject</button></div>';
-        }).join("")
-      : '<p class="quiet">No beliefs are waiting for approval.</p>';
-    var m = modal("Proposed beliefs", body, []);
+    var got = await Promise.all([
+      fetch("/api/ui/beliefs?status=proposed&limit=50", { cache: "no-store" }),
+      fetch("/api/ui/procedures?status=proposed&limit=50", { cache: "no-store" }),
+    ]);
+    var beliefs = got[0].ok ? ((await got[0].json()).beliefs || []) : [];
+    var rules = got[1].ok ? ((await got[1].json()).procedures || []) : [];
+    function card(kind, id, html, yes, no) {
+      return '<div class="belief-proposal" data-kind="' + kind + '" data-id="' + esc(id) + '">'
+        + html + '<button type="button" class="primary" data-verdict="' + yes + '">✓ '
+        + (yes === "confirm" ? "Confirm rule" : "Approve") + "</button> "
+        + '<button type="button" data-verdict="' + no + '">✕ Reject</button></div>';
+    }
+    var body = "<h3>How you want things done (proposed rules)</h3>"
+      + (rules.length ? rules.map(function (r) {
+          return card("procedures", r.id, "<p><strong>" + esc(r.project) + "</strong> "
+            + esc(r.summary) + '</p><p class="quiet">proposed by ' + esc(r.writer || "an agent")
+            + "</p>", "confirm", "reject");
+        }).join("") : '<p class="quiet">No rules are waiting.</p>')
+      + "<h3>Beliefs</h3>"
+      + (beliefs.length ? beliefs.map(function (b) {
+          return card("beliefs", b.id, "<p><strong>" + esc(b.project) + "</strong> "
+            + esc(b.content) + '</p><p class="quiet">cites: ' + (b.sources || []).map(function (s) {
+              return esc(s.summary || s.id); }).join(" · ") + "</p>", "approve", "reject");
+        }).join("") : '<p class="quiet">No beliefs are waiting.</p>');
+    var m = modal("Waiting for your verdict", body, []);
     m.el.addEventListener("click", async function (ev) {
       var btn = ev.target.closest("button[data-verdict]");
       if (!btn) return;
-      var card = btn.closest(".belief-proposal");
-      var r = await writeFetch("/api/ui/edit/beliefs/" + encodeURIComponent(card.dataset.id)
-                               + "/" + btn.dataset.verdict, { method: "POST" });
-      if (r.ok) card.remove();
+      var box = btn.closest(".belief-proposal");
+      var r = await writeFetch("/api/ui/edit/" + box.dataset.kind + "/"
+                               + encodeURIComponent(box.dataset.id) + "/" + btn.dataset.verdict,
+                               { method: "POST" });
+      if (r.ok) box.remove();
     });
+  }
+  var reviewBtn = document.getElementById("review-btn");
+  if (reviewBtn) {
+    reviewBtn.hidden = false;
+    reviewBtn.addEventListener("click", openBeliefReview);
   }
 
   function showSleepReport(report, err) {

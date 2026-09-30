@@ -11,7 +11,7 @@ import sys
 LINE_CHARS = 240
 SECTIONS = (
     ("pins", "Pinned"),
-    ("procedures", "Procedures"),
+    ("procedures", "How you want things done"),
     ("facts_and_decisions", "Facts and decisions"),
     ("open_loops", "Open loops"),
     ("beliefs", "Beliefs"),
@@ -48,7 +48,9 @@ def render(pack: dict) -> str:
     if recent:
         out += ["", "## Recent"] + recent
     if pack.get("truncated"):
-        dropped = [str(d) for d in pack.get("dropped") or []]
+        truncated = pack["truncated"]
+        dropped = [str(d) for d in (truncated if isinstance(truncated, list)
+                                    else pack.get("dropped") or [])]
         out += ["", f"Truncated to fit the budget: {', '.join(dropped) or 'some sections'}."]
     return "\n".join(out)
 

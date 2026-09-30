@@ -56,9 +56,10 @@ def test_an_empty_brief_renders_only_the_first_line():
 
 def test_render_brief_reads_json_from_stdin(capsys):
     render_brief.main(io.StringIO(json.dumps({"project": "acme", "procedures": [
-        {"summary": "Always open a PR, never push to master"}]})))
+        {"summary": "Always open a PR, never push to master"}], "truncated": ["recent"]})))
     out = capsys.readouterr().out
-    assert out.startswith(FIRST_LINE) and "## Procedures" in out
+    assert out.startswith(FIRST_LINE) and "## How you want things done" in out
+    assert out.rstrip().endswith("Truncated to fit the budget: recent.")
 
 
 def test_render_brief_prints_nothing_for_an_error_reply(capsys):

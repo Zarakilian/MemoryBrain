@@ -114,7 +114,7 @@ async def test_mcp_tool_count_v23():
     from app.mcp.tools import list_tools, TOOL_NAMES
     tools = await list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 33   # 22 (v2.3) + 7 Synapse tools (v2.4) + 4 workspace tools (v2.5)
+    assert len(names) == 34   # 22 (v2.3) + 7 Synapse (v2.4) + 4 workspace (v2.5) + record_correction (v3)
     assert set(names) == set(TOOL_NAMES)
     assert "record_retrieval" in names
     assert "get_timeline" in names
