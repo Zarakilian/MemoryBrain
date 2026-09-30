@@ -12,10 +12,11 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
+from ..db import connect
 from ..storage import DB_PATH
 
 VALID_TYPES = ("session", "handover", "note", "fact", "file", "reference",
-               "belief", "decision", "open_loop")
+               "belief", "decision", "open_loop", "procedure")
 VALID_SORTS = {
     "recent": "timestamp DESC",
     "importance": "importance DESC, timestamp DESC",
@@ -27,10 +28,7 @@ def get_conn(db_path: Path = None) -> sqlite3.Connection:
     # check_same_thread=False: async routes may touch the connection from the
     # event-loop thread while the dependency created it in the threadpool.
     # Safe here — the connection is read-only (PRAGMA query_only) and unshared.
-    conn = sqlite3.connect(db_path or DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only = ON")   # UI must never write
-    return conn
+    return connect(db_path or DB_PATH, readonly=True, check_same_thread=False)
 
 
 def _rows(conn, sql: str, params: tuple = ()) -> list[dict[str, Any]]:

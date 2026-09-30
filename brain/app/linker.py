@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from .db import connect
 from .storage import DB_PATH
 from .vector import vec_search, _connect_vec
 
@@ -65,9 +66,7 @@ def _now() -> str:
 
 
 def _conn(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect(db_path)
 
 
 def _parse_tags(raw) -> list[str]:

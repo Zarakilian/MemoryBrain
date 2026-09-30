@@ -16,6 +16,7 @@ from .mcp.tools import server as mcp_server, handle_get_startup_summary
 from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_notes, DB_PATH
+from .db import connect
 from .auth import require_api_key
 from .summarise import _get_ollama_client, _get_embed_model, _get_summarise_model, _get_provider
 
@@ -212,7 +213,7 @@ async def readiness():
 
     # SQLite
     try:
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = connect(DB_PATH, readonly=True)
         conn.execute("SELECT 1")
         conn.close()
         checks["sqlite"] = "ok"

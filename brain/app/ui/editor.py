@@ -25,6 +25,7 @@ import sqlite3
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from ..db import connect
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry, Project
 from ..storage import (DB_PATH, add_memory, delete_memory, get_memory,
@@ -41,9 +42,7 @@ ALL_TYPES = q.VALID_TYPES
 
 
 def _rw() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect(DB_PATH)
 
 
 # ------------------------------------------------------------- projects

@@ -13,7 +13,10 @@ VALID_TYPES = {
     "belief",      # synthesised by the consolidation cycle
     "decision",    # durable choice / policy (v2.2 write policy)
     "open_loop",   # unfinished actionable item (v2.2)
+    "procedure",   # learned rule for how the user wants things done (v3)
 }
+VALID_TRUST = {"user", "agent", "derived", "imported"}
+VALID_STATUSES = {"active", "archived", "proposed", "done"}
 MAX_CONTENT_LENGTH = 100_000
 MAX_TAGS = 20
 MAX_TAG_LENGTH = 100
@@ -39,6 +42,13 @@ class MemoryEntry:
     status: str = "active"
     superseded_by: Optional[str] = None
     supersedes: Optional[str] = None
+    # Provenance and validity (persisted, v3)
+    writer: str = ""               # who wrote it, e.g. "claude@WORK-PC"
+    trust: str = "agent"           # one of VALID_TRUST
+    embedded: bool = True          # False until a vector exists
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
+    invalidated_by: Optional[str] = None
     # Transient fields (returned from ingest, never stored)
     superseded: list = field(default_factory=list)
     potential_supersessions: list = field(default_factory=list)
@@ -61,6 +71,10 @@ def validate_entry(entry: MemoryEntry) -> None:
         raise ValidationError(f"content exceeds {MAX_CONTENT_LENGTH} character limit")
     if entry.type not in VALID_TYPES:
         raise ValidationError(f"type must be one of: {', '.join(sorted(VALID_TYPES))}")
+    if entry.trust not in VALID_TRUST:
+        raise ValidationError(f"trust must be one of: {', '.join(sorted(VALID_TRUST))}")
+    if entry.status not in VALID_STATUSES:
+        raise ValidationError(f"status must be one of: {', '.join(sorted(VALID_STATUSES))}")
     if not PROJECT_SLUG_RE.match(entry.project):
         raise ValidationError("project must match ^[a-z0-9_-]{1,64}$")
     entry.importance = max(1, min(5, entry.importance))

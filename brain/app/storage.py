@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+from .db import connect
 from .models import MemoryEntry, Project
 from .migrations.runner import run_migrations
 
@@ -17,7 +18,7 @@ def content_hash(content: str, project: str) -> str:
 
 def init_db(db_path: Path = DB_PATH):
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         # v0.4.x base schema only — v0.5.0+ columns (status, superseded_by, supersedes)
         # are added by migrations/001_add_status_supersession.sql at startup.
         conn.execute("""
@@ -39,7 +40,7 @@ def init_db(db_path: Path = DB_PATH):
         conn.commit()
     # Apply any pending migrations (adds status, superseded_by, supersedes etc.)
     run_migrations(db_path=db_path)
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         conn.execute("""
             CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
                 content, summary, tags,
@@ -78,24 +79,27 @@ def init_db(db_path: Path = DB_PATH):
 
 
 def _connect(db_path: Path = DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect(db_path)
 
 
 def add_memory(entry: MemoryEntry, db_path: Path = DB_PATH):
     h = content_hash(entry.content, entry.project)
     with _connect(db_path) as conn:
+        ts = entry.timestamp.isoformat()
         conn.execute(
             """INSERT INTO memories
                (id, content, summary, type, project, tags, source, importance,
-                timestamp, content_hash, status, superseded_by, supersedes)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                timestamp, content_hash, status, superseded_by, supersedes,
+                writer, trust, embedded, valid_from, valid_to, invalidated_by,
+                content_updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 entry.id, entry.content, entry.summary, entry.type, entry.project,
                 json.dumps(entry.tags), entry.source, entry.importance,
-                entry.timestamp.isoformat(), h,
+                ts, h,
                 entry.status, entry.superseded_by, entry.supersedes,
+                entry.writer, entry.trust, int(entry.embedded), entry.valid_from,
+                entry.valid_to, entry.invalidated_by, ts,
             ),
         )
         conn.commit()
@@ -413,4 +417,10 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         status=row["status"] if "status" in keys else "active",
         superseded_by=row["superseded_by"] if "superseded_by" in keys else None,
         supersedes=row["supersedes"] if "supersedes" in keys else None,
+        writer=row["writer"] if "writer" in keys else "",
+        trust=row["trust"] if "trust" in keys else "agent",
+        embedded=bool(row["embedded"]) if "embedded" in keys else True,
+        valid_from=row["valid_from"] if "valid_from" in keys else None,
+        valid_to=row["valid_to"] if "valid_to" in keys else None,
+        invalidated_by=row["invalidated_by"] if "invalidated_by" in keys else None,
     )

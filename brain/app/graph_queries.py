@@ -5,6 +5,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
+from .db import connect
 from .storage import DB_PATH
 from .linker import combined_weights
 
@@ -107,9 +108,7 @@ def _file_layer(conn, mem_nodes: list[dict], mem_ids: set, project: Optional[str
 
 
 def _conn(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect(db_path)
 
 
 def get_related(memory_id: str, limit: int = 10, min_weight: float = 0.3,

@@ -29,6 +29,7 @@ import struct
 from pathlib import Path
 from typing import Optional
 
+from .db import connect
 from .storage import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -52,14 +53,7 @@ def _serialize(embedding: list[float]) -> bytes:
 
 
 def _connect_vec(db_path: Path) -> sqlite3.Connection:
-    import sqlite_vec  # deferred: only needed for this backend
-
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
-    return conn
+    return connect(db_path, vec=True)
 
 
 def _sv_add(memory_id: str, embedding: list[float], db_path: Path):
