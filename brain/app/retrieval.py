@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -52,6 +52,52 @@ def record_retrieval(
         except Exception:
             pass
     return {"id": rid, "recorded": True, "chosen_id": chosen_id}
+
+
+IMPLICIT_CHOICE_WINDOW_S = 600  # reading a result within 10 minutes of the search
+
+
+def note_implicit_choice(memory_id: str, db_path: Path = DB_PATH) -> Optional[str]:
+    """Reading a memory soon after a search that returned it counts as choosing
+    it: the newest such event with no chosen_id gets this one. Returns the event
+    id, or None. The recall boost comes from the read itself (get_memory)."""
+    cutoff = (datetime.now(timezone.utc)
+              - timedelta(seconds=IMPLICIT_CHOICE_WINDOW_S)).isoformat()
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """SELECT id FROM retrieval_events
+               WHERE created_at >= ? AND chosen_id IS NULL
+                 AND EXISTS (SELECT 1 FROM json_each(CASE WHEN json_valid(result_ids)
+                                                     THEN result_ids ELSE '[]' END)
+                             WHERE value = ?)
+               ORDER BY created_at DESC LIMIT 1""",
+            (cutoff, memory_id),
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("UPDATE retrieval_events SET chosen_id = ? WHERE id = ? AND chosen_id IS NULL",
+                     (memory_id, row["id"]))
+        conn.commit()
+    return row["id"]
+
+
+def query_log(limit: int = 500, db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """One row per distinct (query, project), newest first, with every chosen id
+    as the starting point for hand-labelled relevance."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """SELECT query, project, MAX(created_at) AS last_seen, COUNT(*) AS times,
+                      json_group_array(chosen_id) AS chosen
+               FROM retrieval_events GROUP BY query, project
+               ORDER BY last_seen DESC LIMIT ?""",
+            (max(1, min(int(limit), 5000)),),
+        ).fetchall()
+    out = []
+    for r in rows:
+        chosen = [c for c in json.loads(r["chosen"] or "[]") if c]
+        out.append({"query": r["query"], "project": r["project"], "times": r["times"],
+                    "last_seen": r["last_seen"], "relevant": sorted(set(chosen))})
+    return out
 
 
 def feedback_boosts(memory_ids: list[str],

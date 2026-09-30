@@ -731,6 +731,13 @@ def main():
     # update
     sub.add_parser("update", help="Update MemoryBrain: git pull, rebuild Docker, reinstall hooks and skills")
 
+    # eval (v3)
+    p_eval = sub.add_parser("eval", help="Measure search quality on labelled questions")
+    p_eval.add_argument("--export-log", help="Write past searches as JSONL, ready to label")
+    p_eval.add_argument("--run", help="Score a labels JSONL file")
+    p_eval.add_argument("--json", action="store_true", help="Print the scores as JSON")
+    p_eval.add_argument("--out", help="Write the full report here (outside the repo)")
+
     # upgrade (v3)
     p_upgrade = sub.add_parser("upgrade", help="Back up the brain, rebuild to this version, verify counts")
     p_upgrade.add_argument("--backup-dir", help="Folder for the volume backup (default ~/memorybrain-backups)")
@@ -759,6 +766,9 @@ def main():
         cmd_status()
     elif args.command == "update":
         cmd_update()
+    elif args.command == "eval":
+        from brain_eval import cmd_eval
+        sys.exit(cmd_eval(args, _get, MEMORYBRAIN_DIR))
     elif args.command == "upgrade":
         sys.exit(cmd_upgrade(backup_dir=Path(args.backup_dir) if args.backup_dir else None))
     elif args.command == "scan":

@@ -642,6 +642,35 @@ async def exchange_inbox(agent: str, project: str = "",
         raise HTTPException(422, str(e))
 
 
+@app.get("/search")
+async def search_endpoint(q: str, project: str = "", type: str = "", limit: int = 10):
+    """REST twin of MCP search_memory: the same result list, logged as a
+    retrieval event. X-Took-Ms carries the latency; X-Degraded is set when
+    semantic search was unavailable (keyword results only)."""
+    import json as _json
+    import time as _time
+    from fastapi.responses import Response as _Response
+    from .mcp.tools import handle_search_memory
+    started = _time.perf_counter()
+    reply = _json.loads(await handle_search_memory(
+        q, limit=max(1, min(int(limit), 100)), project=project or None,
+        type_filter=type or None, source="rest-search"))
+    headers = {"X-Took-Ms": f"{(_time.perf_counter() - started) * 1000:.1f}"}
+    if isinstance(reply, dict):  # degraded: {"results", "degraded"}
+        headers["X-Degraded"] = reply.get("degraded", "")
+        reply = reply.get("results", [])
+    return _Response(content=_json.dumps(reply, default=str), media_type="application/json",
+                     headers=headers)
+
+
+@app.get("/admin/retrieval-log")
+async def retrieval_log(limit: int = 500):
+    """Distinct (query, project) pairs from past searches, with chosen ids as
+    relevant: the starting point for a hand-labelled eval set (brain eval)."""
+    from .retrieval import query_log
+    return {"queries": query_log(limit=limit, db_path=DB_PATH)}
+
+
 @app.get("/timeline")
 async def timeline_endpoint(project: str = "", days: int = 30, limit: int = 100):
     from .timeline import get_timeline

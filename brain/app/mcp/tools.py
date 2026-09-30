@@ -88,6 +88,7 @@ async def handle_search_memory(
     days: Optional[int] = None,
     tags: Optional[list] = None,
     include_history: bool = False,
+    source: str = "search_memory",
 ) -> str:
     results, degraded = await search_with_status(
         query, limit=limit, project=project, type_filter=type_filter,
@@ -105,7 +106,7 @@ async def handle_search_memory(
             query=query,
             result_ids=[r["id"] for r in results if r.get("id")],
             project=project,
-            source="search_memory",
+            source=source,
             db_path=DB_PATH,
         )
     except Exception:
@@ -151,6 +152,11 @@ async def handle_get_memory(memory_id: str, max_chars: Optional[int] = None,
         return json.dumps({"error": f"Memory {memory_id} not found"})
     try:
         record_recall([memory_id], db_path=DB_PATH)
+    except Exception:
+        pass
+    try:  # reading a fresh search result counts as choosing it (ranking feedback)
+        from ..retrieval import note_implicit_choice
+        note_implicit_choice(memory_id, db_path=DB_PATH)
     except Exception:
         pass
     payload = {
