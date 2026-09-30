@@ -100,33 +100,37 @@ def query_log(limit: int = 500, db_path: Path = DB_PATH) -> list[dict[str, Any]]
     return out
 
 
-def feedback_boosts(memory_ids: list[str],
-                    db_path: Path = DB_PATH) -> dict[str, float]:
+def feedback_boosts(memory_ids: list[str], db_path: Path = DB_PATH,
+                    query_terms: Optional[set] = None) -> dict[str, float]:
     """Return multiplicative boosts from historical chosen_id counts.
 
     Each time a memory was chosen after search, it gets a small ranking lift.
-    Bounded so feedback cannot dominate hybrid scores.
+    With query_terms, only choices made after a query that shared at least one
+    of those terms count: being picked for "lunch menu" says nothing about
+    "printer toner". Bounded so feedback cannot dominate hybrid scores.
     """
     if not memory_ids or FEEDBACK_WEIGHT <= 0:
         return {}
     with _connect(db_path) as conn:
         try:
             rows = conn.execute(
-                f"""SELECT chosen_id, COUNT(*) AS n
-                    FROM retrieval_events
+                f"""SELECT chosen_id, query FROM retrieval_events
                     WHERE chosen_id IN ({','.join('?' * len(memory_ids))})
-                      AND chosen_id IS NOT NULL
-                    GROUP BY chosen_id""",
+                      AND chosen_id IS NOT NULL""",
                 memory_ids,
             ).fetchall()
         except Exception:
             return {}
-    out: dict[str, float] = {}
+    counts: dict[str, int] = {}
     for r in rows:
+        if query_terms is not None:
+            from .search import query_terms as terms_of
+            phrases, words = terms_of(r["query"])
+            if not (set(phrases) | set(words)) & set(query_terms):
+                continue
+        counts[r["chosen_id"]] = counts.get(r["chosen_id"], 0) + 1
+    out: dict[str, float] = {}
+    for chosen_id, n in counts.items():
         # log-ish: 1 click ~ +FEEDBACK_WEIGHT, 10 clicks ~ +2*FEEDBACK_WEIGHT
-        n = int(r["n"] or 0)
-        if n <= 0:
-            continue
-        boost = 1.0 + FEEDBACK_WEIGHT * min(3.0, 1.0 + (n - 1) * 0.25)
-        out[r["chosen_id"]] = boost
+        out[chosen_id] = 1.0 + FEEDBACK_WEIGHT * min(3.0, 1.0 + (n - 1) * 0.25)
     return out

@@ -151,18 +151,23 @@ def keyword_search(
     tags: Optional[list] = None,
     include_history: bool = False,
     db_path: Path = DB_PATH,
+    match: Optional[str] = None,
 ) -> list[dict]:
-    tokens = query.split()
-    safe_query = " ".join('"' + t.replace('"', '""') + '"' for t in tokens) if tokens else '""'
+    """FTS5 search ranked by BM25. `match` is a prebuilt MATCH expression
+    (search.build_fts_query); without it every word is a required phrase."""
+    if match is None:
+        tokens = query.split()
+        match = " ".join('"' + t.replace('"', '""') + '"' for t in tokens) if tokens else '""'
     with _connect(db_path) as conn:
         sql = """
             SELECT m.id, m.summary, substr(m.content, 1, 200) AS content_preview,
-                   m.type, m.project, m.source, m.importance, m.timestamp, m.status
+                   m.type, m.project, m.source, m.importance, m.timestamp, m.status,
+                   snippet(memories_fts, 0, '', '', '…', 32) AS snippet
             FROM memories_fts
             JOIN memories m ON memories_fts.rowid = m.rowid
             WHERE memories_fts MATCH ?
         """
-        params: list = [safe_query]
+        params: list = [match]
         if not include_history:
             sql += " AND m.status = 'active'"
         if project:

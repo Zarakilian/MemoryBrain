@@ -89,10 +89,11 @@ async def handle_search_memory(
     tags: Optional[list] = None,
     include_history: bool = False,
     source: str = "search_memory",
+    as_of: Optional[str] = None,
 ) -> str:
     results, degraded = await search_with_status(
         query, limit=limit, project=project, type_filter=type_filter,
-        days=days, tags=tags, include_history=include_history,
+        days=days, tags=tags, include_history=include_history, as_of=as_of,
     )
     try:
         record_recall([r["id"] for r in results],
@@ -631,6 +632,9 @@ async def list_tools() -> list[types.Tool]:
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "include_history": {"type": "boolean", "default": False,
                                         "description": "Include archived (superseded) memories"},
+                    "as_of": {"type": "string",
+                              "description": "ISO date or datetime: return what was valid then, "
+                                             "archived memories included"},
                 },
                 "required": ["query"],
             },
@@ -1118,7 +1122,7 @@ def _clamp_int(value, lo: int, hi: int, default: int) -> int:
 
 
 _TOOL_ARGS = {
-    "search_memory":        (["query"], ["limit", "project", "type_filter", "days", "tags", "include_history"]),
+    "search_memory":        (["query"], ["limit", "project", "type_filter", "days", "tags", "include_history", "as_of"]),
     "get_memory":           (["memory_id"], ["max_chars", "around"]),
     "add_memory":           (["content", "type", "project"], ["tags", "source", "description"]),
     "delete_memory":        (["memory_id"], ["reason"]),

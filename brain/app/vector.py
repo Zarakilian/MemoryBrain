@@ -168,6 +168,32 @@ def vec_search(embedding: list[float], n_results: int = 20,
     return _sv_search(embedding, n_results, filters, db_path or DB_PATH)
 
 
+def _sv_chunk_search(embedding: list[float], n_results: int, filters: Optional[dict],
+                     db_path: Path, model: str) -> list[dict]:
+    """Nearest chunk vectors of one model; each result names its chunk span."""
+    filters = filters or {}
+    where = ["c.dim = ?", "c.model = ?"]
+    params: list = [len(embedding), model]
+    for key in ("project", "type", "status"):
+        if filters.get(key):
+            where.append(f"m.{key} = ?")
+            params.append(filters[key])
+    sql = f"""
+        SELECT c.memory_id AS id, c.start_char, c.end_char, m.project, m.type, m.status,
+               m.timestamp, vec_distance_cosine(c.embedding, ?) AS distance
+        FROM vec_chunks c JOIN memories m ON m.id = c.memory_id
+        WHERE {' AND '.join(where)}
+        ORDER BY distance LIMIT ?
+    """
+    with _connect_vec(db_path) as conn:
+        rows = conn.execute(sql, [_serialize(embedding), *params, n_results]).fetchall()
+    return [{"id": r["id"],
+             "metadata": {"project": r["project"], "type": r["type"],
+                          "status": r["status"], "timestamp": r["timestamp"]},
+             "distance": r["distance"],
+             "chunk": {"start": r["start_char"], "end": r["end_char"]}} for r in rows]
+
+
 def vec_get(memory_id: str, db_path: Path = None) -> Optional[list[float]]:
     """A memory's parent vector, or None (always None on the Chroma backend)."""
     if get_backend() == "chroma":
@@ -182,11 +208,15 @@ def vec_get(memory_id: str, db_path: Path = None) -> Optional[list[float]]:
 
 
 def vec_search_multi(query_vectors: dict[str, list[float]], n_results: int = 20,
-                     filters: Optional[dict] = None, db_path: Path = None) -> list[dict]:
+                     filters: Optional[dict] = None, db_path: Path = None,
+                     include_chunks: bool = False) -> list[dict]:
     """Search with one query vector per embedding model ('' = 2.x legacy).
 
     Each query vector is compared only with vectors of its own model; the
-    results are merged by distance and each carries its "model"."""
+    results are merged by distance and each carries its "model". With
+    include_chunks, chunk vectors compete too: a memory scores by its best
+    vector, and a winning chunk is named in "chunk" ({start, end}).
+    Supersession must keep include_chunks off: it compares whole memories."""
     if not query_vectors:
         return []
     if get_backend() == "chroma":
@@ -197,8 +227,14 @@ def vec_search_multi(query_vectors: dict[str, list[float]], n_results: int = 20,
     for model, vector in query_vectors.items():
         merged += [{**r, "model": model} for r in
                    _sv_search(vector, n_results, filters, db_path or DB_PATH, model=model)]
-    merged.sort(key=lambda r: r["distance"])
-    return merged[:n_results]
+        if include_chunks:
+            merged += [{**r, "model": model} for r in
+                       _sv_chunk_search(vector, n_results * 3, filters, db_path or DB_PATH, model)]
+    best: dict[str, dict] = {}
+    for r in merged:
+        if r["id"] not in best or r["distance"] < best[r["id"]]["distance"]:
+            best[r["id"]] = r
+    return sorted(best.values(), key=lambda r: r["distance"])[:n_results]
 
 
 def legacy_vector_count(db_path: Path = None) -> int:

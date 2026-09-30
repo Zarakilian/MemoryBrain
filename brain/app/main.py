@@ -643,7 +643,8 @@ async def exchange_inbox(agent: str, project: str = "",
 
 
 @app.get("/search")
-async def search_endpoint(q: str, project: str = "", type: str = "", limit: int = 10):
+async def search_endpoint(q: str, project: str = "", type: str = "", limit: int = 10,
+                          as_of: str = ""):
     """REST twin of MCP search_memory: the same result list, logged as a
     retrieval event. X-Took-Ms carries the latency; X-Degraded is set when
     semantic search was unavailable (keyword results only)."""
@@ -654,7 +655,7 @@ async def search_endpoint(q: str, project: str = "", type: str = "", limit: int 
     started = _time.perf_counter()
     reply = _json.loads(await handle_search_memory(
         q, limit=max(1, min(int(limit), 100)), project=project or None,
-        type_filter=type or None, source="rest-search"))
+        type_filter=type or None, source="rest-search", as_of=as_of or None))
     headers = {"X-Took-Ms": f"{(_time.perf_counter() - started) * 1000:.1f}"}
     if isinstance(reply, dict):  # degraded: {"results", "degraded"}
         headers["X-Degraded"] = reply.get("degraded", "")
