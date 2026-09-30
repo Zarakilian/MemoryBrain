@@ -364,7 +364,7 @@ def api_client(cdb, mock_ollama, monkeypatch):
     for p in patches:
         p.start()
     from app.main import app
-    yield TestClient(app)
+    yield TestClient(app, headers={"X-Brain-Client": "test"})
     for p in patches:
         p.stop()
 

@@ -63,6 +63,15 @@ _RULES: tuple[_Rule, ...] = (
 )
 
 
+_URL_USERINFO = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]{0,30}://)[^/?#@\s]*@")
+
+
+def strip_url_userinfo(url: str) -> str:
+    """Drop 'user:password@' from a URL: 'https://u:t@host/x' -> 'https://host/x'.
+    SSH remotes such as 'git@host:owner/repo.git' have no scheme and are kept."""
+    return _URL_USERINFO.sub(r"\1", (url or "").strip())
+
+
 def redact(text: str) -> tuple[str, list[str]]:
     """Return (text with secrets replaced, rule names that fired).
 

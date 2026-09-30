@@ -19,6 +19,9 @@
   async function writeFetch(url, opts, retried) {
     opts = opts || {};
     opts.headers = Object.assign({}, opts.headers);
+    // The server refuses keyless writes without JSON or this header, which a
+    // cross-site page cannot send without a CORS preflight.
+    opts.headers["X-Brain-Client"] = "atlas";
     var k = getKey();
     if (k) opts.headers["X-Brain-Key"] = k;
     var res = await fetch(url, opts);
@@ -261,7 +264,7 @@
     /* reinforcement: opening a memory is a recall. Fire-and-forget — no
        key prompt, no retry, a lost signal is harmless. */
     try {
-      var hdrs = {};
+      var hdrs = { "X-Brain-Client": "atlas" };
       var k = getKey();
       if (k) hdrs["X-Brain-Key"] = k;
       fetch("/api/ui/edit/memories/" + encodeURIComponent(mem.id) + "/recall",

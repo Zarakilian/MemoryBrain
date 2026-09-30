@@ -7,6 +7,7 @@ Agents keep writing MemoryBrain; humans may mirror into Obsidian.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,6 +91,18 @@ def export_project_markdown(
     }
 
 
+MAX_IMPORT_FILE_BYTES = 1_048_576
+# Front matter may choose an ordinary type. It may not make a file look like
+# brain-made knowledge (belief, procedure) or claim a writer, trust or source.
+IMPORTABLE_TYPES = {"note", "fact", "session", "handover", "file", "reference",
+                    "decision", "open_loop"}
+
+
+def import_root() -> Path:
+    """Folder that imports must come from (MEMORYBRAIN_IMPORT_DIR)."""
+    return Path(os.getenv("MEMORYBRAIN_IMPORT_DIR", "/app/data/imports")).resolve()
+
+
 def _parse_frontmatter(text: str) -> tuple[dict, str]:
     m = FRONTMATTER_RE.match(text)
     if not m:
@@ -127,18 +140,24 @@ async def import_markdown_dir(
     """
     from .ingest_pipeline import ingest
 
-    directory = Path(directory)
+    directory = Path(directory).resolve()
+    root = import_root()
+    if directory != root and root not in directory.parents:
+        raise ValueError(f"imports must come from inside {root} (MEMORYBRAIN_IMPORT_DIR)")
     if not directory.is_dir():
         return {"error": f"not a directory: {directory}"}
     project = project or directory.name
     if not PROJECT_SLUG_RE.match(project):
         # sanitize
         project = re.sub(r"[^a-z0-9_-]+", "-", project.lower()).strip("-")[:64]
-    imported, skipped, errors = [], [], []
+    imported, skipped, too_large, errors = [], [], [], []
     for path in sorted(directory.rglob("*.md")):
         if path.name.upper() == "INDEX.MD":
             continue
         try:
+            if path.stat().st_size > MAX_IMPORT_FILE_BYTES:
+                too_large.append(path.name)
+                continue
             text = path.read_text(encoding="utf-8")
         except Exception as e:
             errors.append({"file": str(path), "error": str(e)})
@@ -155,10 +174,7 @@ async def import_markdown_dir(
             skipped.append(str(path.name))
             continue
         mtype = meta.get("type") or "note"
-        if mtype not in {
-            "note", "fact", "session", "handover", "file", "reference",
-            "decision", "open_loop", "belief",
-        }:
+        if mtype not in IMPORTABLE_TYPES:
             mtype = "note"
         tags = meta.get("tags") if isinstance(meta.get("tags"), list) else []
         tags = list(tags) + ["obsidian-import"]
@@ -167,8 +183,10 @@ async def import_markdown_dir(
             type=mtype,
             project=project,
             tags=tags,
-            source=meta.get("source") or f"obsidian:{path.name}",
+            source=f"obsidian:{path.name}",
             summary=meta.get("summary") or "",
+            trust="imported",
+            writer="obsidian-import",
         )
         if meta.get("importance"):
             entry.importance = int(meta["importance"])
@@ -181,6 +199,7 @@ async def import_markdown_dir(
         "project": project,
         "imported": len(imported),
         "skipped": len(skipped),
+        "too_large": too_large,
         "errors": errors,
         "items": imported[:50],
     }

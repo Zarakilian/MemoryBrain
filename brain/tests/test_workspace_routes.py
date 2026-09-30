@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-client = TestClient(app)
+client = TestClient(app, headers={"X-Brain-Client": "test"})
 
 
 def _scan_body(files, full=True, markers=None):

@@ -2,6 +2,7 @@ import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Callable
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,6 +19,8 @@ from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_note, DB_PATH
 from .db import connect
 from .auth import require_api_key
+from .models import ValidationError
+from .security import HostCheckMiddleware, WriteGuardMiddleware
 from .summarise import (_get_ollama_client, _get_embed_model, _get_summarise_model,
                         _get_provider, provider_warning)
 
@@ -73,6 +76,23 @@ streamable_session_manager = StreamableHTTPSessionManager(
     stateless=True,
     security_settings=_streamable_security,
 )
+
+
+def read_version() -> str:
+    """The release in the VERSION file: /app/VERSION in the image, the repo
+    root in a checkout. "unknown" when neither exists."""
+    here = Path(__file__).resolve()
+    for candidate in (here.parents[1] / "VERSION", here.parents[2] / "VERSION"):
+        try:
+            text = candidate.read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if text:
+            return text
+    return "unknown"
+
+
+APP_VERSION = read_version()
 
 
 def _reembed_rate() -> int:
@@ -190,11 +210,21 @@ class PureASGIAuthMiddleware:
         await self.app(scope, receive, send)
 
 
-app = FastAPI(title="MemoryBrain", version="2.5.0", lifespan=lifespan)
-sse_transport = SseServerTransport("/messages/")
+app = FastAPI(title="MemoryBrain", version=APP_VERSION, lifespan=lifespan)
+# Classic SSE gets the same DNS-rebinding protection as /mcp (CVE-2025-66416).
+sse_transport = SseServerTransport("/messages/", security_settings=_streamable_security)
 
-# Pure ASGI middleware first so it wraps the whole stack without body buffering.
+# Pure ASGI middleware only (BaseHTTPMiddleware breaks SSE). The last one added
+# runs first: Host check, then the keyless write guard, then the API key.
 app.add_middleware(PureASGIAuthMiddleware)
+app.add_middleware(WriteGuardMiddleware)
+app.add_middleware(HostCheckMiddleware)
+
+
+@app.exception_handler(ValidationError)
+async def validation_error_handler(request: Request, exc: ValidationError):
+    """Bad input is the caller's problem: 422 with the reason, never a 500."""
+    return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -324,7 +354,7 @@ async def status():
             stamp = ""
     from .scheduler import scheduler_status
     return {
-        "version": "2.5.0",
+        "version": APP_VERSION,
         "project_count": len(list_projects(db_path=DB_PATH)),
         "build_stamp": stamp,
         "scheduler": scheduler_status(db_path=DB_PATH),
@@ -469,7 +499,7 @@ async def auto_consolidate_endpoint(force: bool = True):
     return await run_auto_consolidate(force=force)
 
 
-@app.get("/admin/export/obsidian")
+@app.post("/admin/export/obsidian")
 async def export_obsidian(project: str, include_archived: bool = False):
     """Export a project to Markdown suitable for opening as an Obsidian vault.
     Files land under /app/data/exports/<project>/."""
@@ -490,9 +520,12 @@ async def import_obsidian(directory: str, project: str = ""):
     from .obsidian import import_markdown_dir
     if not directory:
         raise HTTPException(422, "directory is required")
-    return await import_markdown_dir(
-        _P(directory), project=project or None, db_path=DB_PATH,
-    )
+    try:
+        return await import_markdown_dir(
+            _P(directory), project=project or None, db_path=DB_PATH,
+        )
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 # ── Synapse — Agent Exchange (v2.4) — REST twins of the MCP tools ───────────
@@ -588,7 +621,9 @@ async def exchange_status(thread_id: str, req: ThreadStatusRequest):
 @app.get("/exchange/inbox")
 async def exchange_inbox(agent: str, project: str = "",
                          include_broadcast: bool = True,
-                         mark_read: bool = True, limit: int = 20):
+                         mark_read: bool = False, limit: int = 20):
+    """Read-only by default (a GET must not change state); pass
+    mark_read=true to advance the read cursor."""
     from .exchange import get_inbox
     try:
         return get_inbox(agent=agent, project=project or None,

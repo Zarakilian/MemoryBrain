@@ -97,8 +97,21 @@ async def workspace_map_write(req: MapRequest):
     return {"bound": bound, "seen": seen}
 
 
+BIND_SOURCES = ("cwd", "memory", "init")  # marker and tool bindings never come over REST
+
+
+def _check_bind(req: BindRequest) -> None:
+    if req.how not in BIND_SOURCES:
+        raise HTTPException(status_code=422, detail=f"how must be one of {', '.join(BIND_SOURCES)}")
+    rel = (req.rel_path or "").replace("\\", "/")
+    if rel.startswith("/") or rel[1:2] == ":" or ".." in rel.split("/"):
+        raise HTTPException(status_code=422,
+                            detail="rel_path must be relative to the root, without '..'")
+
+
 @router.post("/workspace/bind")
 async def workspace_bind(req: BindRequest):
+    _check_bind(req)
     if req.how == "cwd" and req.abs_path:
         p = req.abs_path.replace("\\", "/").strip()
         if not (p[1:2] == ":" or p.startswith("/")):

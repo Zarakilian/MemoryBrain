@@ -27,7 +27,7 @@ def edit_client(tmp_db, monkeypatch):
     upsert_project(Project(slug="proj-a", name="Proj A"), db_path=tmp_db)
     add_memory(MemoryEntry(id="m1", content="original content", summary="sum m1",
                            type="note", project="proj-a", tags=["t1"]), db_path=tmp_db)
-    yield TestClient(app), tmp_db
+    yield TestClient(app, headers={"X-Brain-Client": "test"}), tmp_db
     for p in patches:
         p.stop()
 

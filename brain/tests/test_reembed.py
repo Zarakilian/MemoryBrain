@@ -115,7 +115,7 @@ def test_backfill_endpoint_runs_a_500_batch(monkeypatch):
     batch = AsyncMock(return_value={"done": 0, "failed": 0, "pending": 0})
     with patch("app.main.reembed_batch", batch), \
          patch("app.main.startup_backfill", return_value={"skipped": True}):
-        resp = TestClient(app).post("/admin/backfill-vectors")
+        resp = TestClient(app, headers={"X-Brain-Client": "test"}).post("/admin/backfill-vectors")
     assert resp.status_code == 200
     batch.assert_awaited_once()
     assert batch.await_args.args[0] == 500

@@ -11,13 +11,20 @@ from app.storage import add_memory
 # ------------------------------------------------------------- normalization
 
 def test_normalize_agent_aliases():
+    # v3: exact aliases only, so "not-claude" can never receive claude's mail
     assert ex.normalize_agent("Claude Code") == "claude"
-    assert ex.normalize_agent("grok-cli") == "grok"
     assert ex.normalize_agent("ChatGPT") == "codex"
-    assert ex.normalize_agent("OpenAI Codex") == "codex"
-    assert ex.normalize_agent("gemini-2.5") == "gemini"
+    assert ex.normalize_agent("grok-cli") == "grok-cli"
+    assert ex.normalize_agent("OpenAI Codex") == "openai-codex"
     assert ex.normalize_agent("") == ""
     assert ex.normalize_agent("My Custom Bot!") == "my-custom-bot"
+
+
+def test_attribute_source_still_recognises_agent_words():
+    assert ex.attribute_source("grok-cli") == "grok"
+    assert ex.attribute_source("OpenAI Codex") == "codex"
+    assert ex.attribute_source("gemini-2.5") == "gemini"
+    assert ex.attribute_source("pre-compact-auto") == "other"
 
 
 def test_attribute_source_buckets_unknowns():

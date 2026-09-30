@@ -1,4 +1,10 @@
 # tests/conftest.py
+import os
+
+# FastAPI's TestClient sends Host: testserver; the v3 Host check only answers
+# loopback names unless a host is listed here. Host-check tests set their own.
+os.environ.setdefault("MEMORYBRAIN_ALLOWED_HOSTS", "testserver")
+
 import pytest
 from pathlib import Path
 from unittest.mock import patch, AsyncMock, MagicMock

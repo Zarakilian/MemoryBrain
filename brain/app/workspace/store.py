@@ -13,6 +13,7 @@ from typing import Any, Optional
 
 from .. import storage as _st
 from ..models import PROJECT_SLUG_RE, Project
+from ..redact import strip_url_userinfo
 from .paths import ci, split_ext
 
 RANK = {"marker": 5, "tool": 5, "cwd": 4, "init": 3, "memory": 2}
@@ -102,6 +103,7 @@ def bind_folder(root_id: str, rel_path: str, project: str, how: str, db_path: Pa
         raise ValueError(f"unknown binding source: {how}")
     if not PROJECT_SLUG_RE.match(project or ""):
         raise ValueError(f"invalid project slug: {project!r}")
+    remote_url = strip_url_userinfo(remote_url)
     _ensure_project(project, db_path)
     rel = _norm_rel(rel_path)
     rel_ci = ci(rel)
@@ -172,6 +174,7 @@ def bind_folder(root_id: str, rel_path: str, project: str, how: str, db_path: Pa
 
 def record_folder_seen(root_id: str, rel_path: str, remote_url: str, db_path: Path) -> None:
     rel = _norm_rel(rel_path)
+    remote_url = strip_url_userinfo(remote_url)
     with _st._connect(db_path) as conn:
         conn.execute(
             """INSERT OR IGNORE INTO project_folders
@@ -194,7 +197,10 @@ def list_folders(db_path: Path, project: Optional[str] = None,
         params.append(root_id)
     sql += " ORDER BY root_id, rel_path_ci"
     with _st._connect(db_path) as conn:
-        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+        rows = [dict(r) for r in conn.execute(sql, params).fetchall()]
+    for row in rows:  # rows stored before v3 may still carry user:token@
+        row["remote_url"] = strip_url_userinfo(row.get("remote_url") or "")
+    return rows
 
 
 def owner_project(root_id: str, rel_path: str, db_path: Path) -> Optional[dict]:

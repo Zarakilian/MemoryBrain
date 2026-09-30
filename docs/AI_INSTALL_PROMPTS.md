@@ -149,10 +149,10 @@ STEPS
    a few of memories. If memories differs AT ALL, STOP — do not touch
    anything further — and tell me the rollback options from MIGRATION.md.
    If vectors < memories by more than a few, run:
-     curl -s -X POST localhost:7741/admin/backfill-vectors
+     curl -s -X POST -H "X-Brain-Client: curl" localhost:7741/admin/backfill-vectors
    (add -H "X-Brain-Key: <key>" if BRAIN_API_KEY is set) and re-check.
 6. Build the memory graph (one-time):
-     curl -s -X POST localhost:7741/admin/rebuild-graph
+     curl -s -X POST -H "X-Brain-Client: curl" localhost:7741/admin/rebuild-graph
    (same X-Brain-Key note.) EXPECT: JSON with an edge count.
 7. Verify the UI: open http://localhost:7741/ui — EXPECT the Atlas
    (Stream / Constellation / Chronicle). Open http://localhost:7741/ui/doctor —

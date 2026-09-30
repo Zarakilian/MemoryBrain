@@ -89,7 +89,7 @@ print('vectors: ', c.execute('SELECT COUNT(*) FROM vec_memories').fetchone()[0])
 
 # 3. Link your existing corpus into the graph (one-time, a few seconds
 #    per thousand memories):
-curl -s -X POST localhost:7741/admin/rebuild-graph | python3 -m json.tool
+curl -s -X POST -H "X-Brain-Client: curl" localhost:7741/admin/rebuild-graph | python3 -m json.tool
 
 # 4. Open the UI:
 #    http://localhost:7741/ui
@@ -97,7 +97,7 @@ curl -s -X POST localhost:7741/admin/rebuild-graph | python3 -m json.tool
 
 **If `vectors` < `memories`:** a few embeddings were missing from Chroma
 (usually memories written during a past crash). Re-embed them via your
-provider: `curl -X POST localhost:7741/admin/backfill-vectors`. Requires
+provider: `curl -X POST -H "X-Brain-Client: curl" localhost:7741/admin/backfill-vectors`. Requires
 Ollama (or your configured provider) to be up.
 
 **If you set `BRAIN_API_KEY`:** the admin endpoints require the
@@ -178,8 +178,8 @@ Additive only. No data is touched; five new tables and three `projects` columns.
    echo .brainproject >> ~/.config/git/ignore
    ```
 4. `python cli/brain.py scan --root "C:\work\repos" --label git --init`, edit `workspace-map.proposed.json`, then `python cli/brain.py scan --apply workspace-map.proposed.json`, then `python cli/brain.py scan`. Once per machine; markers already sitting in your folders are honoured. Put bulk folders you do not want indexed in `~/.memorybrain/scan-ignore`, one glob per line (for example `vendor/*`, `archive/*`, `*/generated/*`).
-5. `curl -X POST http://localhost:7741/admin/rebuild-file-links` once, so existing memories get their `file_ref` edges.
-6. `curl -X POST http://localhost:7741/admin/backfill-project-descriptions` once, or wait for the next light sleep.
+5. `curl -X POST -H "X-Brain-Client: curl" http://localhost:7741/admin/rebuild-file-links` once, so existing memories get their `file_ref` edges.
+6. `curl -X POST -H "X-Brain-Client: curl" http://localhost:7741/admin/backfill-project-descriptions` once, or wait for the next light sleep.
 7. Run `python cli/brain.py scan --full` now and then (weekly is plenty). Only a full scan marks files deleted or moved; the everyday incremental scan sends changes only.
 
 One brain per machine. A full scan from a second PC using the same `root` label will mark files that exist only on the first machine as deleted.

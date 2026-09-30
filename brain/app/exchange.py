@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .models import PROJECT_SLUG_RE
 from .storage import DB_PATH, _connect
 
 THREAD_KINDS = ("task", "review", "question", "handoff", "discussion")
@@ -25,38 +26,34 @@ MESSAGE_INTENTS = ("request", "update", "review", "approval",
                    "question", "answer", "handoff", "done")
 OPEN_STATUSES = ("open", "in_progress", "review")
 
-MAX_BODY_LENGTH = 50_000
-MAX_TITLE_LENGTH = 300
+MAX_BODY_LENGTH = 20_000
+MAX_TITLE_LENGTH = 200
+MAX_REFS = 50
+MAX_REF_LENGTH = 300
 
-# Canonical agent names. Clients self-identify in many ways
-# ("claude-code", "ChatGPT/Codex", "grok-cli") — normalize so addressing and
-# analytics stay coherent.
-_AGENT_ALIASES = (
-    ("claude", "claude"),
-    ("grok", "grok"),
-    ("codex", "codex"),
-    ("chatgpt", "codex"),
-    ("openai", "codex"),
-    ("gpt", "codex"),
-    ("gemini", "gemini"),
-    ("copilot", "copilot"),
-    ("cowork", "claude"),
-)
+# Canonical agent names. Addressing uses EXACT aliases: a substring match made
+# "not-claude" into "claude", so a message could reach the wrong agent.
+_AGENT_ALIASES = {
+    "claude": "claude", "claude-code": "claude", "anthropic": "claude",
+    "grok": "grok", "xai": "grok",
+    "codex": "codex", "openai": "codex", "chatgpt": "codex",
+    "gemini": "gemini", "google": "gemini", "antigravity": "gemini",
+}
 
 
 KNOWN_AGENTS = ("claude", "grok", "codex", "gemini", "copilot")
 
 
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9_-]+", "-", (name or "").strip().lower()).strip("-")[:32]
+
+
 def normalize_agent(name: str) -> str:
-    """Map a free-form agent identifier to a canonical slug."""
-    low = (name or "").strip().lower()
-    if not low:
+    """Map an agent identity to its canonical name: an exact alias, else its slug."""
+    if not (name or "").strip():
         return ""
-    for needle, canonical in _AGENT_ALIASES:
-        if needle in low:
-            return canonical
-    slug = re.sub(r"[^a-z0-9_-]+", "-", low).strip("-")[:32]
-    return slug or "unknown"
+    slug = _slug(name)
+    return _AGENT_ALIASES.get(slug, slug or "unknown")
 
 
 def attribute_source(source: str) -> str:
@@ -67,7 +64,14 @@ def attribute_source(source: str) -> str:
     labels, etc. Anything that isn't recognisably one of the known agents
     lands in the single 'other' bucket instead of becoming a pseudo-agent."""
     agent = normalize_agent(source)
-    return agent if agent in KNOWN_AGENTS else "other"
+    if agent in KNOWN_AGENTS:
+        return agent
+    # Historical sources such as "grok-cli" or "claude code session": any
+    # word that is an exact alias counts. Analytics only, never addressing.
+    for word in re.findall(r"[a-z0-9]+", (source or "").lower()):
+        if _AGENT_ALIASES.get(word) in KNOWN_AGENTS:
+            return _AGENT_ALIASES[word]
+    return "other"
 
 
 def _now() -> str:
@@ -78,6 +82,22 @@ def _validate(value: str, allowed: tuple, label: str) -> str:
     if value not in allowed:
         raise ValueError(f"{label} must be one of: {', '.join(allowed)}")
     return value
+
+
+def _check_limits(body: str, refs: Optional[list], title: Optional[str] = None,
+                  project: Optional[str] = None) -> None:
+    """Exchange threads are conversation, not storage: bounded sizes."""
+    if title is not None and len(title) > MAX_TITLE_LENGTH:
+        raise ValueError(f"title exceeds {MAX_TITLE_LENGTH} characters")
+    if len(body) > MAX_BODY_LENGTH:
+        raise ValueError(f"body exceeds {MAX_BODY_LENGTH} character limit")
+    refs = refs or []
+    if len(refs) > MAX_REFS:
+        raise ValueError(f"at most {MAX_REFS} refs")
+    if any(len(str(r)) > MAX_REF_LENGTH for r in refs):
+        raise ValueError(f"each ref must be at most {MAX_REF_LENGTH} characters")
+    if project is not None and not PROJECT_SLUG_RE.match(project):
+        raise ValueError("project must match ^[a-z0-9_-]{1,64}$")
 
 
 def _thread_row(r) -> dict[str, Any]:
@@ -121,8 +141,7 @@ def post_task(
         raise ValueError("title must not be empty")
     if not body or not body.strip():
         raise ValueError("body must not be empty")
-    if len(body) > MAX_BODY_LENGTH:
-        raise ValueError(f"body exceeds {MAX_BODY_LENGTH} character limit")
+    _check_limits(body, refs, title=title, project=project)
     _validate(kind, THREAD_KINDS, "kind")
     sender = normalize_agent(from_agent)
     if not sender:
@@ -176,8 +195,7 @@ def reply_to_thread(
     """Append a message to a thread; optionally flip its status in one call."""
     if not body or not body.strip():
         raise ValueError("body must not be empty")
-    if len(body) > MAX_BODY_LENGTH:
-        raise ValueError(f"body exceeds {MAX_BODY_LENGTH} character limit")
+    _check_limits(body, refs)
     _validate(intent, MESSAGE_INTENTS, "intent")
     if status is not None:
         _validate(status, THREAD_STATUSES, "status")
@@ -318,13 +336,13 @@ def get_inbox(
     when include_broadcast — contains a broadcast message from someone else),
     AND has messages newer than the agent's read cursor.
 
-    mark_read=True (default) advances the cursor so the same items do not
-    reappear next session unless someone writes again.
+    mark_read=True (default) advances each thread's cursor to the last message
+    actually delivered (at most 20 per thread), so anything beyond that
+    arrives on the next call.
     """
     me = normalize_agent(agent)
     if not me:
         raise ValueError("agent must not be empty")
-    now = _now()
     placeholders = ",".join("?" * len(OPEN_STATUSES))
     sql = f"""
         SELECT t.*, COALESCE(c.last_read_at, '') AS last_read_at
@@ -367,12 +385,14 @@ def get_inbox(
             items.append(t)
         if mark_read and items:
             for t in items:
+                if not t["unread_messages"]:
+                    continue
                 conn.execute(
                     """INSERT INTO agent_read_cursors (agent, thread_id, last_read_at)
                        VALUES (?, ?, ?)
                        ON CONFLICT(agent, thread_id) DO UPDATE SET
                            last_read_at=excluded.last_read_at""",
-                    (me, t["id"], now),
+                    (me, t["id"], t["unread_messages"][-1]["created_at"]),
                 )
             conn.commit()
     return {"agent": me, "threads": items, "total": len(items)}

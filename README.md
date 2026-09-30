@@ -138,7 +138,7 @@ Assistants ──MCP/REST──► MemoryBrain (loopback :7741)
 - **Nightly light auto-sleep** (`MEMORYBRAIN_AUTO_CONSOLIDATE=true`) — repair, conflicts, loops, decay; optional full LLM beliefs
 - **`record_retrieval`** + ranking feedback from chosen results
 - **Project brief policy** — Atlas ⚙ policy + MCP get/set
-- **Obsidian export/import** — `GET /admin/export/obsidian`, `POST /admin/import/obsidian`
+- **Obsidian export/import** — `POST /admin/export/obsidian`, `POST /admin/import/obsidian` (imports only from `MEMORYBRAIN_IMPORT_DIR`)
 - **Timeline & entity cards** — MCP + REST + `/api/ui/*`
 - Professional **logo** for README and Atlas brand
 
@@ -179,8 +179,8 @@ curl -s localhost:7741/status
 curl -s "localhost:7741/project-brief?project=my-app"
 
 # Export project to Markdown (Obsidian-friendly)
-curl -s -X GET "localhost:7741/admin/export/obsidian?project=my-app" \
-  -H "X-Brain-Key: $BRAIN_API_KEY"
+curl -s -X POST "localhost:7741/admin/export/obsidian?project=my-app" \
+  -H "X-Brain-Client: curl" -H "X-Brain-Key: $BRAIN_API_KEY"
 
 # Rebuild after git pull
 cd ~/memorybrain && git pull && docker compose build brain && docker compose up -d
