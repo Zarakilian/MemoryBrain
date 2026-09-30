@@ -106,6 +106,81 @@ async def test_loop_works_through_the_queue_and_stops(tmp_db, fake_provider, mon
     assert reembed.pending_count(db_path=tmp_db) == 0
 
 
+@pytest.mark.asyncio
+async def test_success_sets_the_flag_back_to_embedded(tmp_db, fake_provider):
+    mid = _mem(tmp_db, "flagged earlier")
+    conn = connect(tmp_db)
+    try:
+        with conn:
+            conn.execute("UPDATE memories SET embedded = 0 WHERE id = ?", (mid,))
+    finally:
+        conn.close()
+    await reembed.reembed_batch(10, db_path=tmp_db)
+    assert _rows(tmp_db)[mid] == (s.embed_model_id(), 1)
+
+
+@pytest.mark.asyncio
+async def test_the_chroma_backend_has_nothing_to_reembed(tmp_db, fake_provider, monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_VECTOR_BACKEND", "chroma")
+    _mem(tmp_db, "lives in chroma", legacy_vector=False)
+    assert reembed.pending_count(db_path=tmp_db) == 0
+    assert (await reembed.reembed_batch(10, db_path=tmp_db))["done"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_storage_error_on_one_row_does_not_stop_the_batch(tmp_db, fake_provider,
+                                                                   monkeypatch):
+    ids = [_mem(tmp_db, f"row {i}") for i in range(3)]
+    real = reembed.index_memory_vectors
+
+    async def flaky(memory_id, content, db_path=None):
+        if memory_id == ids[0]:
+            raise RuntimeError("disk full")
+        return await real(memory_id, content, db_path=db_path)
+    monkeypatch.setattr(reembed, "index_memory_vectors", flaky)
+    report = await reembed.reembed_batch(10, db_path=tmp_db)
+    assert (report["done"], report["failed"]) == (2, 1)
+
+
+@pytest.mark.asyncio
+async def test_force_retries_a_recent_failure(tmp_db, fake_provider):
+    mid = _mem(tmp_db, "poison then fixed")
+    fake_provider.fail_on = {"poison"}
+    await reembed.reembed_batch(10, db_path=tmp_db)
+    fake_provider.fail_on.clear()
+    assert (await reembed.reembed_batch(10, db_path=tmp_db))["done"] == 0  # cooling down
+    assert (await reembed.reembed_batch(10, db_path=tmp_db, force=True))["done"] == 1
+    assert _rows(tmp_db)[mid] == (s.embed_model_id(), 1)
+
+
+@pytest.mark.asyncio
+async def test_an_edit_during_embedding_is_not_overwritten(tmp_db, fake_provider, monkeypatch):
+    import app.indexing as indexing
+    mid = _mem(tmp_db, "the old text")
+    real = indexing.embed_documents
+
+    async def edited_meanwhile(texts):
+        conn = connect(tmp_db)
+        try:
+            with conn:
+                conn.execute("UPDATE memories SET content = 'the new text' WHERE id = ?", (mid,))
+        finally:
+            conn.close()
+        return await real(texts)
+    monkeypatch.setattr(indexing, "embed_documents", edited_meanwhile)
+    result = await indexing.index_memory_vectors(mid, "the old text", db_path=tmp_db)
+    assert result["embedded"] is False and result.get("stale") is True
+    assert _rows(tmp_db)[mid][0] == ""  # the legacy vector was not replaced by a stale one
+
+
+def test_the_rate_setting(monkeypatch):
+    from app.main import _reembed_rate
+    monkeypatch.setenv("MEMORYBRAIN_REEMBED_RATE", "0")
+    assert _reembed_rate() == 0
+    monkeypatch.setenv("MEMORYBRAIN_REEMBED_RATE", "lots")
+    assert _reembed_rate() == 25
+
+
 def test_backfill_endpoint_runs_a_500_batch(monkeypatch):
     from unittest.mock import AsyncMock, patch
     from fastapi.testclient import TestClient

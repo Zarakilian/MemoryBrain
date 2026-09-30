@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone
@@ -122,11 +123,13 @@ async def search_with_status(
 
     degraded = None
     try:
-        query_vectors = {embed_model_id(): await embed_query(query)}
         if legacy_vector_count(db_path=path) > 0:
             # 2.x vectors were made without a prompt; match them with a raw
             # query until the background re-embed has replaced them all.
-            query_vectors[""] = await embed(query)
+            current, raw = await asyncio.gather(embed_query(query), embed(query))
+            query_vectors = {embed_model_id(): current, "": raw}
+        else:
+            query_vectors = {embed_model_id(): await embed_query(query)}
         sem_results = vec_search_multi(query_vectors, n_results=20, filters=vec_filters,
                                        db_path=path)
     except Exception as exc:

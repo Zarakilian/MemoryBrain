@@ -72,6 +72,32 @@ def test_explicit_provider_is_honoured(monkeypatch):
     assert isinstance(s.get_provider(), StubGemini)
 
 
+def test_an_openai_key_never_switches_the_provider(monkeypatch):
+    monkeypatch.delenv("MEMORYBRAIN_PROVIDER", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "placeholder")
+    assert isinstance(s.get_provider(), s.OllamaProvider)
+    assert "OPENAI_API_KEY" in s.provider_warning()
+
+
+def test_a_named_cloud_provider_without_its_key_is_a_clear_error(monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_PROVIDER", "gemini")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+        s.get_provider()
+
+
+@pytest.mark.asyncio
+async def test_search_skips_the_raw_query_when_no_legacy_vectors_remain(tmp_db, fake_provider):
+    from app.search import hybrid_search
+    mid = _mem(tmp_db, "my car is red")
+    vec_add(mid, await s.embed_document("my car is red"), {}, db_path=tmp_db,
+            model=s.embed_model_id())
+    fake_provider.seen.clear()
+    await hybrid_search("automobile", db_path=tmp_db)
+    assert fake_provider.seen == ["task: search result | query: automobile"]
+
+
 def test_unknown_provider_is_refused(monkeypatch):
     monkeypatch.setenv("MEMORYBRAIN_PROVIDER", "bogus")
     with pytest.raises(ValueError):

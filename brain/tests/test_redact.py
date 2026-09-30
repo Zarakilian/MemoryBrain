@@ -194,3 +194,92 @@ def test_multiple_secrets_in_one_text():
 
 def test_empty_text():
     assert redact("") == ("", [])
+
+
+# ------------------------------------------------------------- review follow-ups
+
+def test_a_token_inside_a_private_key_never_saves_the_key():
+    body = "MIIEow" + "Bz" * 30
+    text = BEGIN + "RSA PRIVATE KEY-----\n" + body + f"\nnote: pushed with {GH}"
+    red, rules = redact(text)
+    assert body not in red and GH not in red
+    assert red == tag("private-key") and rules == ["private-key"]
+
+
+def test_a_key_block_with_an_aws_id_comment_is_one_block():
+    block = BEGIN + "RSA PRIVATE KEY-----\n# " + AWS + "\nMIIE" + "q" * 20 + "\n" + END + \
+        "RSA PRIVATE KEY-----"
+    assert redact(block) == (tag("private-key"), ["private-key"])
+
+
+def test_bare_password_with_a_quoted_passphrase():
+    for name in ("PASSWORD", "password", "Pwd"):
+        line = f"{name}='" + "correct horse battery staple" + "'"
+        assert out(line) == f"{name}='{tag('env-secret')}'", name
+
+
+def test_real_secrets_that_start_like_code_are_still_redacted():
+    for value in ('"$Tr0ngPass!"', "%4kd9sLz2!xQ", "(Jx8!kqLmN2vB", "Summer(2024)x!",
+                  "winter.is.coming", "abcd1234.efgh5678"):
+        line = "DB_PASSWORD=" + value
+        assert "env-secret" in names(line), line
+
+
+def test_a_quoted_value_may_hold_the_other_quote():
+    line = 'DB_PASSWORD="' + "it's-a-secret-value-123" + '"'
+    assert out(line) == 'DB_PASSWORD="' + tag("env-secret") + '"'
+
+
+def test_hashes_next_to_markers_stay_idempotent():
+    for text in (f"Used {GH} to push {SHA40}", f"key {GH} {HEX64}"):
+        once, _ = redact(text)
+        assert redact(once) == (once, [])
+
+
+def test_redis_and_at_sign_passwords():
+    r = redact("cache redis://" + ":" + "s3cr3tp4ss" + "@cache.example.com:6379/0")[0]
+    assert "s3cr3tp4ss" not in r
+    p = redact("db postgres://admin:" + "P@ssw0rd99" + "@db.example.com/app")[0]
+    assert "P@ssw0rd99" not in p and "ssw0rd99" not in p and "db.example.com/app" in p
+    for kept in ("https://github.com/@user/repo", "example.com:8080/@user"):
+        assert out(kept) == kept
+
+
+def test_tokens_glued_to_an_escaped_newline_are_caught():
+    assert GH not in out('{"log": "line\\n' + GH + '"}')
+
+
+def test_keyword_hex_needs_a_whole_keyword():
+    for text in (f'{{"author": "jane", "sha": "{SHA40}"}}', f"keyword {HEX64}",
+                 f"tokenizer {HEX64}"):
+        assert out(text) == text, text
+
+
+def test_paths_and_flags_are_not_connection_passwords():
+    for text in ("PWD=/home/user/project", "pwd=$(pwd)", "--require-password=true"):
+        assert out(text) == text, text
+
+
+def test_bearer_leaves_a_sentence_full_stop():
+    value = "Qw3" * 8
+    assert out(f"use Bearer {value}.") == f"use Bearer {tag('bearer')}."
+
+
+def test_idempotent_on_generated_text():
+    import random
+    rng = random.Random(20260930)
+    pieces = [GH, AWS, SK, SLACK, JWT, HEX64, SHA40, "key", "token:", "secret", "Bearer",
+              "API_KEY=" + "abcdefgh123", "password=" + "hunter22x", "https://u:" + "pw123456" + "@" + "h.example.com/x",
+              "the", "car", "export", "=", ":", '"', "'", "\n", "author", "tokenizer"]
+    for _ in range(2000):
+        text = " ".join(rng.choice(pieces) for _ in range(rng.randint(1, 12)))
+        once, _rules = redact(text)
+        assert redact(once) == (once, []), text
+
+
+def test_many_secrets_stay_fast():
+    import time
+    text = " ".join(f"{AWS[:-4]}{i:04d}" for i in range(4000))
+    t = time.perf_counter()
+    red, rules = redact(text)
+    assert time.perf_counter() - t < 1.0 and rules == ["aws-key-id"]

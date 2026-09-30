@@ -113,6 +113,12 @@ async def index_memory_vectors(memory_id: str, content: str,
     conn = connect(path, vec=True)
     try:
         with conn:
+            row = conn.execute("SELECT content FROM memories WHERE id = ?", (memory_id,)).fetchone()
+            if row is None or row["content"] != content:
+                # Edited or deleted while the model worked: these vectors describe
+                # text that no longer exists, so write nothing.
+                return {"embedded": False, "model": model, "chunks": 0, "stale": True,
+                        "error": "content changed while embedding"}
             insert_vectors(conn, memory_id, vectors[0], model,
                            [(c.ix, c.start, c.end, v) for c, v in zip(chunks, vectors[1:])])
             conn.execute("UPDATE memories SET embedded = 1 WHERE id = ?", (memory_id,))

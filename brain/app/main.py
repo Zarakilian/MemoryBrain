@@ -28,9 +28,13 @@ from .summarise import (_get_ollama_client, _get_embed_model, _get_summarise_mod
 # 'app.main.ollama_client' and have the /readiness handler see the mock.
 # When a non-Ollama provider is active, ollama_client will be None and the
 # /readiness handler skips the Ollama-specific checks.
-ollama_client = _get_ollama_client()
-EMBED_MODEL = _get_embed_model()
-SUMMARISE_MODEL = _get_summarise_model()
+try:
+    ollama_client = _get_ollama_client()
+    EMBED_MODEL = _get_embed_model()
+    SUMMARISE_MODEL = _get_summarise_model()
+except Exception as _provider_error:  # a misconfigured provider must not stop the brain
+    logging.getLogger(__name__).error("AI provider could not start: %s", _provider_error)
+    ollama_client, EMBED_MODEL, SUMMARISE_MODEL = None, "", ""
 from .vector import get_backend, vec_ready, startup_backfill
 from .reembed import pending_count, reembed_batch, reembed_loop
 
@@ -138,7 +142,7 @@ async def lifespan(app: FastAPI):
     # v3: throttled re-embed of vectors from older models (2.x vectors have model '')
     stop_reembed = asyncio.Event()
     reembed_task = None
-    rate = _reembed_rate()
+    rate = _reembed_rate() if get_backend() == "sqlite_vec" else 0
     if rate > 0:
         reembed_task = asyncio.create_task(reembed_loop(stop_reembed, rate), name="reembed")
         logger.info("re-embed task created (%d per minute)", rate)
@@ -289,7 +293,11 @@ async def readiness():
     global ollama_client, EMBED_MODEL, SUMMARISE_MODEL  # noqa: PLW0603
 
     # Determine which provider is active
-    active_provider = _get_provider().__class__.__name__
+    try:
+        active_provider = _get_provider().__class__.__name__
+    except Exception as exc:
+        active_provider = "unavailable"
+        checks["provider"] = f"error: {exc}"[:120]
 
     if active_provider == "OllamaProvider":
         # Ollama + model presence checks
@@ -423,7 +431,8 @@ async def backfill_vectors():
     """Re-embed any memories missing a vector (after Chroma backfill gaps).
     Authenticated via the standard API-key middleware; loopback-only."""
     startup_report = startup_backfill()
-    return {"backfill": startup_report, **(await reembed_batch(500, db_path=DB_PATH))}
+    return {"backfill": startup_report,
+            **(await reembed_batch(500, db_path=DB_PATH, force=True))}
 
 
 @app.get("/next-session")

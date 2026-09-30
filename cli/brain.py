@@ -472,6 +472,13 @@ def _setup_gemini_optional():
         "GOOGLE_API_KEY=",
         f"GOOGLE_API_KEY={api_key}"
     )
+    # v3: the provider is chosen only by MEMORYBRAIN_PROVIDER, never by a key.
+    if "MEMORYBRAIN_PROVIDER=" in new_content:
+        new_content = "\n".join(
+            "MEMORYBRAIN_PROVIDER=gemini" if line.startswith("MEMORYBRAIN_PROVIDER=") else line
+            for line in new_content.split("\n"))
+    else:
+        new_content = new_content.rstrip("\n") + "\nMEMORYBRAIN_PROVIDER=gemini\n"
     env_path.write_text(new_content)
     print()
     print("\u2705 API key saved to .env")

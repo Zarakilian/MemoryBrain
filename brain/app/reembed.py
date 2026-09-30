@@ -17,6 +17,7 @@ from . import storage as _storage
 from .db import connect
 from .indexing import index_memory_vectors
 from .summarise import embed_model_id
+from .vector import get_backend
 
 logger = logging.getLogger(__name__)
 
@@ -25,14 +26,22 @@ TICK_S = 60            # one batch per tick, so the rate is per minute
 RETRY_AFTER_S = 1800   # a memory that failed waits this long before a retry
 _recent_failures: dict[str, float] = {}  # memory id -> time.monotonic() of the failure
 
-# Missing vector, a vector from another model, or flagged for a retry
-# (embedded = 0, e.g. an edit whose re-embed failed).
-_PENDING = """FROM memories m LEFT JOIN vec_memories v ON v.memory_id = m.id
-              WHERE v.memory_id IS NULL OR v.model != ? OR m.embedded = 0"""
+# Flagged for a retry (embedded = 0, e.g. an edit whose re-embed failed), or no
+# vector for the current model. The (model, memory_id) index answers the
+# subquery without reading any vector.
+_PENDING = """FROM memories m WHERE m.embedded = 0
+              OR m.id NOT IN (SELECT memory_id FROM vec_memories WHERE model = ?)"""
+
+
+def _active() -> bool:
+    """Re-embedding is a sqlite-vec job; the legacy Chroma backend keeps its own store."""
+    return get_backend() == "sqlite_vec"
 
 
 def pending_count(db_path: Optional[Path] = None) -> int:
     """Memories without a vector for the current embedding model."""
+    if not _active():
+        return 0
     conn = connect(db_path or _storage.DB_PATH)
     try:
         return conn.execute(f"SELECT COUNT(*) {_PENDING}", (embed_model_id(),)).fetchone()[0]
@@ -40,31 +49,44 @@ def pending_count(db_path: Optional[Path] = None) -> int:
         conn.close()
 
 
-def _candidates(limit: int, model: str, db_path: Path) -> list[tuple[str, str]]:
-    """Oldest pending memories, skipping ones that failed recently so a few
-    bad rows can never starve the rest of the queue."""
+def _candidates(limit: int, model: str, db_path: Path, force: bool = False) -> list[tuple[str, str]]:
+    """Oldest pending memories, skipping ones that failed recently (unless
+    forced) so a few bad rows can never starve the rest of the queue."""
     now = time.monotonic()
     for memory_id, failed_at in list(_recent_failures.items()):
         if now - failed_at >= RETRY_AFTER_S:
             del _recent_failures[memory_id]
+    skip = set() if force else set(_recent_failures)
     conn = connect(db_path)
     try:
-        rows = conn.execute(
-            f"SELECT m.id, m.content {_PENDING} ORDER BY m.timestamp ASC, m.id LIMIT ?",
-            (model, limit + len(_recent_failures))).fetchall()
+        ids = [r["id"] for r in conn.execute(
+            f"SELECT m.id {_PENDING} ORDER BY m.timestamp ASC, m.id LIMIT ?",
+            (model, limit + len(skip))).fetchall() if r["id"] not in skip][:limit]
+        if not ids:
+            return []
+        content = {r["id"]: r["content"] for r in conn.execute(
+            f"SELECT id, content FROM memories WHERE id IN ({','.join('?' * len(ids))})", ids)}
     finally:
         conn.close()
-    return [(r["id"], r["content"]) for r in rows if r["id"] not in _recent_failures][:limit]
+    return [(i, content[i]) for i in ids if i in content]
 
 
-async def reembed_batch(limit: int, db_path: Optional[Path] = None) -> dict:
-    """Re-embed up to `limit` pending memories. One failure is counted and
-    logged, never stops the batch. Returns {"done", "failed", "pending"}."""
+async def reembed_batch(limit: int, db_path: Optional[Path] = None, force: bool = False) -> dict:
+    """Re-embed up to `limit` pending memories. One failure (provider or
+    storage) is counted and logged, never stops the batch. force=True also
+    retries memories that failed recently. Returns {"done", "failed", "pending"}."""
+    if not _active():
+        return {"done": 0, "failed": 0, "pending": 0}
     path = db_path or _storage.DB_PATH
     done = failed = 0
     first_error = None
-    for memory_id, content in _candidates(limit, embed_model_id(), path):
-        result = await index_memory_vectors(memory_id, content, db_path=path)
+    for memory_id, content in _candidates(limit, embed_model_id(), path, force=force):
+        try:
+            result = await index_memory_vectors(memory_id, content, db_path=path)
+        except Exception as exc:  # storage trouble for this row only
+            result = {"embedded": False, "error": f"{type(exc).__name__}: {exc}"[:200]}
+        if result.get("stale"):
+            continue  # edited while embedding; the edit path re-indexes it
         if result["embedded"]:
             done += 1
             _recent_failures.pop(memory_id, None)

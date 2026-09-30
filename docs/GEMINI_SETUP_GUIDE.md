@@ -68,8 +68,9 @@ Find this line:
 GOOGLE_API_KEY=
 ```
 
-Paste your key:
+Paste your key and choose the provider (a key alone no longer switches it):
 ```bash
+MEMORYBRAIN_PROVIDER=gemini
 GOOGLE_API_KEY=<your-google-ai-studio-key>
 ```
 
@@ -133,7 +134,7 @@ This will:
 ### "Rate limit exceeded"
 - Google's free tier allows 15,000 requests/month (~500/day)
 - If you hit this, wait 24 hours or upgrade to a paid plan
-- Or switch back to Ollama: just remove `GOOGLE_API_KEY=` from `.env`
+- Or switch back to Ollama: set `MEMORYBRAIN_PROVIDER=ollama` in `.env`
 
 ### "Network error / can't reach Google"
 - Check your internet connection
@@ -153,26 +154,25 @@ You can easily switch between all three:
 
 ### Use Gemini (cloud, fast, free tier)
 ```bash
-GOOGLE_API_KEY=sk-proj-xxxx
-# (leave OPENAI_API_KEY blank)
+MEMORYBRAIN_PROVIDER=gemini
+GOOGLE_API_KEY=<your-google-ai-studio-key>
 ```
 
 ### Use OpenAI (cloud, paid)
 ```bash
-OPENAI_API_KEY=sk-xxxxx
-# (leave GOOGLE_API_KEY blank)
+MEMORYBRAIN_PROVIDER=openai
+OPENAI_API_KEY=<your-openai-key>
 ```
 
 ### Use Ollama (local, private, free)
 ```bash
-# Leave both API keys blank
-GOOGLE_API_KEY=
-OPENAI_API_KEY=
+MEMORYBRAIN_PROVIDER=ollama
 ```
 
 Restart: `docker compose restart brain`
 
-**Provider priority:** Gemini > OpenAI > Ollama (whichever key is set first is used)
+**Provider choice:** only `MEMORYBRAIN_PROVIDER` decides. A key that is set while the
+provider is `ollama` is ignored, and `/readiness` reports it as `provider_warning`.
 
 ---
 

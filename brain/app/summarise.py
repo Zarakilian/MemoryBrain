@@ -125,6 +125,8 @@ class GeminiProvider(SummariseProvider):
 
     def __init__(self):
         from google import genai
+        if not os.getenv("GOOGLE_API_KEY"):
+            raise ValueError("MEMORYBRAIN_PROVIDER=gemini needs GOOGLE_API_KEY in .env")
         self._client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
         self._embed_model = os.getenv("GEMINI_EMBED_MODEL", "models/text-embedding-004")
         self._summarise_model = os.getenv("GEMINI_SUMMARISE_MODEL", "gemini-2.0-flash")
@@ -173,6 +175,8 @@ class OpenAIProvider(SummariseProvider):
 
     def __init__(self):
         from openai import AsyncOpenAI
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ValueError("MEMORYBRAIN_PROVIDER=openai needs OPENAI_API_KEY in .env")
         self._client = AsyncOpenAI(
             api_key=os.environ["OPENAI_API_KEY"],
             base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
