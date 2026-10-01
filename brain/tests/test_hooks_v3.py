@@ -303,3 +303,14 @@ def test_an_empty_marker_does_not_stop_the_search_in_either_hook(tmp_path):
     assert pre_compact.detect_project(inner) == "acme"
     r = _session_hook(tmp_path, {"project": "acme"}, inner, extra_env={"MEMORYBRAIN_DEBUG": "1"})
     assert "slug=acme" in r.stderr.decode("utf-8", errors="replace")
+
+
+@needs_bash
+def test_a_brief_that_fails_to_load_is_not_reported_as_empty(tmp_path):
+    folder = _project(tmp_path)
+    bad = tmp_path / "bad.json"
+    bad.write_text("<html>proxy error</html>", encoding="utf-8")
+    r = _session_hook(tmp_path, {"project": "acme"}, folder, extra_env={"STUB_BRIEF": str(bad)})
+    out = r.stdout.decode("utf-8", errors="replace")
+    assert r.returncode == 0
+    assert "no stored notes" not in out and "Stored notes from MemoryBrain" not in out

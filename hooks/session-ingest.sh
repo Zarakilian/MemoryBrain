@@ -190,10 +190,14 @@ if [ -n "$PROJECT_SLUG" ] && [ -f "${HOOK_DIR}/render_brief.py" ]; then
     BRIEF=$("${CURL[@]}" "${BRAIN_URL}/project-brief?project=${PROJECT_SLUG}&max_chars=3500" \
         | "$PY" "${HOOK_DIR}/render_brief.py" 2>/dev/null || echo "")
 fi
-if [ "$(printf '%s\n' "$BRIEF" | grep -c . || true)" -gt 1 ]; then
+# One line back (the data-not-instructions header alone) means nothing is
+# stored; no lines means the brief could not be fetched or rendered, which is
+# not the same thing, so say nothing rather than claim the project is empty.
+BRIEF_LINES=$(printf '%s\n' "$BRIEF" | grep -c . || true)
+if [ "$BRIEF_LINES" -gt 1 ]; then
     echo ""
     echo "$BRIEF"
-elif [ -n "$PROJECT_SLUG" ]; then
+elif [ "$BRIEF_LINES" -eq 1 ]; then
     echo ""
     echo "MemoryBrain has no stored notes for ${PROJECT_SLUG} yet."
 fi
