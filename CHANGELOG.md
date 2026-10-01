@@ -3,6 +3,55 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
+## 3.1.0 (2026-10-01)
+
+The brain you can see. The Constellation opens on a glass brain, the camera
+frames whatever shape you pick, and the cursor familiar has new forms and
+real legs. UI only: no migration, no new setting. Rebuild and reload.
+
+### Atlas
+
+- **The Brain layout**, now the default for a first visit: two hemispheres
+  with a narrow fissure, a cerebellum and a brainstem, drawn as glass lit at
+  its edge and along winding folds, with sparks on the folds and slow waves
+  of light. Projects become lobes. A project too big for one lobe spans both
+  hemispheres, split by family so related memories stay together. Idle
+  synapses stay faint so the folds read; a touched star lights its own.
+- **Framing.** When a shape settles, the camera glides to fit the bulk of
+  it (a few far planets no longer shrink the view), from that shape's best
+  side: the Brain in three-quarter view, flat shapes face on. The stars
+  centre in the part of the window you can see, not behind the rail. Your
+  hand on the camera always wins. The saved layout applies from the first
+  frame, so a load settles once.
+- **Living synapses.** Filaments curve and fire: pulses race away from a
+  touched star and light ripples out. Far stars twinkle behind the fog.
+  Changing layout morphs instead of jumping. A slow machine drops its pixel
+  ratio before it drops frames.
+- **The familiar** gains a comet and a swarm of wisps, sheds stardust, and
+  bursts into starlight where you click. Pick a form in the palette
+  (`Familiar: Comet`, `Familiar: Wisps`, ... or `Familiar: Cycle forms`).
+  The spider runs on eight legs in a real gait, paced by the ground it
+  covers. Its silk is a rope, not a spring: it lowers itself head-down,
+  swings like a pendulum when you move, and climbs back hand over hand.
+  Every form dozes after 12 seconds of a still hand, so nothing runs while
+  you read.
+- **Sturdier after a GPU reset** (sleep and wake, a driver hiccup): glows
+  and textures come back by themselves, and if the browser will not give 3D
+  back, the Constellation shows 2D instead of an empty sky.
+- **Glass polish:** starlight runs along the chosen lens, the logo breathes,
+  rows warm on hover, scrollbars are thin. All of it stays still under
+  reduced motion.
+- **For the console:** `Nebula.view("front" | "back" | "left" | "right" |
+  "top")`, `Nebula.debug()` (framing and the brain's balance),
+  `Nebula.profile(n)` (frame cost with a GPU fence), `Familiar.state()` and
+  `Familiar.choose(form)`.
+
+### Build
+
+- The image build rides out a PyPI or network blip (`pip --retries 8
+  --timeout 60`). One failed a CI run on 2026-10-01; the same requirements
+  built cleanly minutes later.
+
 ## 3.0.0 (2026-10-01)
 
 A brain you can trust: nothing an agent writes is lost or silently rewritten,

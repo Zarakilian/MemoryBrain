@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-3.0.0-ffd98a?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-3.1.0-ffd98a?style=flat-square" />
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-15%20core%20%C2%B7%2035-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
@@ -122,6 +122,13 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
 
 ## What's new
 
+### v3.1.0 — the brain you can see
+- **The Brain layout:** the Constellation opens on a glass brain, two hemispheres and their folds, with each project as a lobe.
+- **A camera that frames:** every shape settles into view from its best side and centres where you can see it.
+- **Living synapses:** curved filaments fire from the star you touch, far stars twinkle, layouts morph.
+- **The familiar:** a comet, a swarm of wisps, stardust and click bursts; the spider runs on eight legs and swings on real silk; everything dozes when your hand is still.
+- UI only, nothing to migrate. See [CHANGELOG.md](CHANGELOG.md).
+
 ### v3.0.0 — a brain you can trust
 - **Nothing is lost:** every write is stored first, in one transaction; WAL, atomic migrations with automatic backups; deletes archive with an audit row.
 - **Search finds it:** questions work, long memories are chunked, fused keyword and vector ranking, `as_of` for "what was true then".
@@ -231,7 +238,7 @@ See [`.env.example`](.env.example). Highlights:
 
 | Ref | Meaning |
 |-----|---------|
-| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.0.0) |
+| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.1.0) |
 | Tags `v3.x.x` | Releases |
 | Old feature branches | Fully merged and removed; do not checkout `feature/memorybrain-2.0` |
 
