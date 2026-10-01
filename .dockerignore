@@ -5,3 +5,9 @@
 .git
 .env
 **/.DS_Store
+# Machine notes, agent scratch and worktrees never enter a build context
+.local
+.claude
+.superpowers
+data
+*.tar.gz
