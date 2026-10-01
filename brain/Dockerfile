@@ -1,7 +1,9 @@
 FROM python:3.11-slim
 WORKDIR /app
 COPY brain/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# a PyPI or network blip must not fail a build (one did, in CI): more
+# retries and a longer timeout than pip's 5 and 15 s
+RUN pip install --no-cache-dir --retries 8 --timeout 60 -r requirements.txt
 COPY brain/app/ app/
 COPY VERSION VERSION
 COPY .env.example .env.example
