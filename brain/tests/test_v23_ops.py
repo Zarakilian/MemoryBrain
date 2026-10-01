@@ -128,3 +128,15 @@ async def test_light_consolidate_skips_beliefs(tmp_db, mock_ollama, monkeypatch)
     beliefs = [p for p in report.get("projects", []) if p.get("beliefs")]
     # empty beliefs lists are fine
     assert report["mode"] == "light"
+
+
+
+@pytest.mark.asyncio
+async def test_a_night_that_overlaps_a_manual_sleep_is_not_marked_done(tmp_db, monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.scheduler import META_LAST_RUN
+    _add(tmp_db)
+    monkeypatch.setattr("app.consolidate.consolidate",
+                        AsyncMock(return_value={"skipped": "already running"}))
+    await run_auto_consolidate(db_path=tmp_db, force=True)
+    assert get_meta(META_LAST_RUN, db_path=tmp_db) == ""  # tried again at the next tick

@@ -44,15 +44,19 @@ EXCERPT_CHARS = 400
 STOPWORDS = frozenset("""
 a about above after again against all almost also am an and any are around as at
 be because been before being below between both but by can cannot could did do does
-doing done down during each either else ever every few for from further get gets
+doing during each either else ever every few for from further get gets
 got had has have having he her here hers herself him himself his how i if in into is
 it its itself just like may me might more most much must my myself no nor not now of
-off on once only or other ought our ours ourselves out over own same shall she should
+on once only or other ought our ours ourselves own same shall she should
 so some such than that the their theirs them themselves then there these they this
-those through thus to too under until up upon us very was we were what when where
+those through thus to too under until upon us very was we were what when where
 whether which while who whom whose why will with would yet you your yours yourself
 yourselves
+aren couldn didn doesn don hadn hasn haven isn ll mustn re shan shouldn ve wasn
+weren won wouldn
 """.split())
+# down, up, out, off, over and done stay: in ops notes they are the answer
+# ("which server is down"). The second block is what contractions leave.
 
 _PHRASE = re.compile(r'"([^"]+)"')
 _WORD = re.compile(r"[\w][\w.\-/:\\]*")
@@ -63,7 +67,8 @@ def query_terms(query: str) -> tuple[list[str], list[str]]:
     phrases = [p.strip().lower() for p in _PHRASE.findall(query or "") if p.strip()]
     rest = _PHRASE.sub(" ", query or "").lower()
     words = [w.strip(".-/:\\") for w in _WORD.findall(rest)]
-    return phrases, list(dict.fromkeys(w for w in words if w and w not in STOPWORDS))
+    return phrases, list(dict.fromkeys(w for w in words
+                                       if len(w) > 1 and w not in STOPWORDS))
 
 
 def build_fts_query(query: str) -> str:

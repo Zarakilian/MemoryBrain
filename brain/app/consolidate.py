@@ -546,8 +546,10 @@ async def _consolidate(project: Optional[str], idle_days: int, db_path: Path,
             entry_report["skipped_clusters"] = len(skip)
             conflicts = _find_conflicts(conn, proj, db_path)
             loops = _extract_loops(conn, proj)
-            conflict_summaries = {r["id"]: r["summary"] for r in conn.execute(
-                "SELECT id, summary FROM memories WHERE project = ? AND status = 'active'",
+            # the judge reads the summary, or the opening of the text when there is none
+            conflict_summaries = {r["id"]: r["summary"] or (r["content"] or "")[:400]
+                                  for r in conn.execute(
+                "SELECT id, summary, content FROM memories WHERE project = ? AND status = 'active'",
                 (proj,))} if conflicts else {}
         conflicts = await _judge_conflicts(conflicts, conflict_summaries)
 

@@ -256,3 +256,10 @@ async def test_history_and_as_of_never_return_a_proposal(brain):
     assert proposal not in await _ids("export job fragile", brain, include_history=True)
     assert proposal not in await _ids("export job fragile", brain,
                                       as_of=datetime.now(timezone.utc).isoformat())
+
+
+def test_ops_words_count_and_contraction_fragments_do_not():
+    from app.search import query_terms
+    _, words = query_terms("Which server is down? What's broken, it didn't start up")
+    assert {"server", "down", "broken", "start", "up"} <= set(words)
+    assert not {"s", "t", "didn", "which", "is"} & set(words)

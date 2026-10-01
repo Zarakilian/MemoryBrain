@@ -122,6 +122,9 @@ async def run_auto_consolidate(db_path: Path = DB_PATH,
             reports.append({"project": proj, "error": str(e)})
 
     finished = datetime.now(timezone.utc).isoformat()
+    if any(isinstance(r, dict) and r.get("skipped") == "already running" for r in reports):
+        # a manual sleep was running: this night did not happen, try again next tick
+        return {"skipped": True, "reason": "already_running", "reports": reports}
     summary = {
         "mode": mode,
         "projects": projects,

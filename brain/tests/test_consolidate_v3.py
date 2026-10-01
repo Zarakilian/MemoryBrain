@@ -368,3 +368,13 @@ def test_atlas_cannot_restore_a_proposal_either(tmp_db, monkeypatch):
     assert r.status_code == 422 and "approve" in r.json()["detail"].lower()
     stored = get_memory(belief, db_path=tmp_db)
     assert stored.status == "proposed" and stored.summary != "changed"
+
+
+
+@pytest.mark.asyncio
+async def test_the_judge_reads_the_content_when_a_summary_is_empty(tmp_db, model, monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_JUDGE", "on")
+    _two_facts_at(tmp_db, 0.90)  # stored without summaries
+    model.answers = ["NO"]
+    await cons.consolidate(project="acme", mode="light", db_path=tmp_db)
+    assert "port 8080" in model.prompts[0] and "port 9090" in model.prompts[0]
