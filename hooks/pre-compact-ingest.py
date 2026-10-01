@@ -121,6 +121,11 @@ def transcript_tail(path: Path, trigger: str) -> str:
 
 
 def post_session(content: str, project: str, trigger: str) -> bool:
+    return _post(content, project, trigger) is not None
+
+
+def _post(content: str, project: str, trigger: str):
+    """The brain's reply ({} when it is not JSON), or None when nothing was stored."""
     payload = json.dumps({"content": content, "project": project,
                           "source": f"pre-compact:{trigger}"}).encode("utf-8")
     headers = {"Content-Type": "application/json", "X-Brain-Client": "hook"}
@@ -133,16 +138,18 @@ def post_session(content: str, project: str, trigger: str) -> bool:
             raw = resp.read()
     except urllib.error.HTTPError as e:
         _log(f"brain answered HTTP {e.code}; session not ingested")
-        return False
+        return None
     except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
         _log("brain not running, timed out, or the reply was cut off; session not ingested")
-        return False
+        return None
     try:
         result = json.loads(raw)
     except ValueError:
         result = {}
-    _log(f"session ingested, id={result.get('id', '?') if isinstance(result, dict) else '?'}")
-    return True
+    if not isinstance(result, dict):
+        result = {}
+    _log(f"session ingested, id={result.get('id', '?')}")
+    return result
 
 
 def update_memory_timestamp(cwd: Path) -> None:
@@ -173,13 +180,24 @@ def main(stdin=None) -> int:
     hook = read_hook_input(stdin or sys.stdin)
     cwd = Path(hook.get("cwd") or os.getenv("CLAUDE_PROJECT_DIR") or os.getcwd())
     trigger = str(hook.get("trigger") or "auto")
-    content = recent_handover(cwd, time.time())
-    if not content and hook.get("transcript_path"):
-        content = transcript_tail(Path(hook["transcript_path"]), trigger)
+    project = detect_project(cwd)
+    handover = recent_handover(cwd, time.time())
+    if handover:
+        reply = _post(handover, project, trigger)
+        if reply is None:
+            return 0
+        if not reply.get("duplicate"):
+            update_memory_timestamp(cwd)
+            return 0
+        # that handover is already stored (an earlier compaction today): the
+        # conversation since then is what is new
+    content = transcript_tail(Path(hook["transcript_path"]), trigger) \
+        if hook.get("transcript_path") else ""
     if not content:
-        _log("nothing to ingest (no recent handover, no transcript text)")
+        if not handover:
+            _log("nothing to ingest (no recent handover, no transcript text)")
         return 0
-    if post_session(content, detect_project(cwd), trigger):
+    if post_session(content, project, trigger):
         update_memory_timestamp(cwd)
     return 0
 

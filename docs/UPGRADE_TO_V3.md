@@ -47,7 +47,7 @@ cd ~/memorybrain
 python3 cli/brain.py upgrade
 ```
 
-It refuses to start if the clone is old, if `.env` is missing, or if this folder has no brain volume. Then it counts memories, stops the brain, backs the volume up to `~/memorybrain-backups`, rebuilds, starts, waits for readiness, counts again, and reinstalls hooks and skills. A hook it replaces keeps a `.bak-<date>` copy beside it. A skill you edited is never replaced: the new version is saved beside it as `SKILL.md.new`, for you to merge by hand.
+It refuses to start if the clone is old, if `.env` is missing, or if this folder has no brain volume. Then it counts memories, stops the brain, backs the volume up to `~/memorybrain-backups`, rebuilds, starts, waits for readiness, counts again, and reinstalls hooks and skills. A hook it replaces keeps a `.bak-<date>` copy beside it. A skill you edited is never replaced: the new version is saved beside it as `SKILL.md.new`, for you to merge by hand. Merge it soon: a kept skill may call a tool that the core profile hides (for example `get_project_files`), which most clients cannot call until it goes through `brain_admin`.
 
 **Expect:** lines like `✅ 1234 memories in memorybrain_brain_data`, `✅ Backup: …tar.gz`, `✅ 1234 memories after the upgrade (before: 1234)`, `reembed_pending: …`, `✅ Upgrade complete.`
 **If wrong:** it stops at the first problem and says which. Nothing after the failing step ran. The table at the end covers each message.
@@ -118,6 +118,10 @@ docker compose -p memorybrain up -d --build
 ```
 
 **This replaces the database with the backup.** Memories written after the backup are lost. `-p memorybrain` makes the old folder use the same volume despite its new name.
+
+Then put the 2.x hooks and skills back: in `~/.claude/hooks` and in each folder under `~/.claude/skills`, copy the newest `*.bak-<date>` file over the file it was made from. The v3 versions call `brain_admin` and `record_correction`, which 2.x does not have.
+
+A faster source than the tar, if the brain itself is fine: the migration runner copied the database to `/app/data/backups/brain-pre-009_v3-<time>.db` inside the volume just before upgrading it.
 
 ## What I have not verified
 

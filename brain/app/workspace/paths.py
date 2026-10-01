@@ -11,7 +11,9 @@ _EXT = "(?:" + "|".join(KNOWN_EXTS) + ")"
 _SEG = r"[\w.()&+\-]+"          # first segment: no spaces
 _SEG_SP = r"[\w .()&+\-]+"      # later segments: spaces allowed ("Daily Reports")
 
-_URL_RE = re.compile(r"[a-z][a-z0-9+.\-]*://\S+", re.I)
+# A scheme is short; an unbounded one made a long dotted run ("a.a.a...")
+# backtrack quadratically on every ingest.
+_URL_RE = re.compile(r"[a-z][a-z0-9+.\-]{0,30}://\S+", re.I)
 # prefix kept whole when present: drive letter, tilde, a single leading slash, or a UNC
 # double backslash. A single lone backslash is not a listed case on its own (it shows up
 # mid string after things like %USERPROFILE%) so it is left out on purpose.

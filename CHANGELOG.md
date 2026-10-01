@@ -14,8 +14,10 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
 
 - **Core tool profile.** Agents see 15 MCP tools by default instead of 33.
   Everything else runs through `brain_admin(action, args)` with the same
-  arguments. Set `MEMORYBRAIN_TOOLS=full` to list every tool again. Every
-  tool still answers when called by name.
+  arguments. Set `MEMORYBRAIN_TOOLS=full` to list every tool again. The
+  server still answers a hidden tool called by name, but most clients
+  (Claude Code, Codex, Gemini) only let the model call listed tools: a skill
+  or prompt that names a hidden tool must use `brain_admin`, or set `full`.
 - **Write protection.** Without `BRAIN_API_KEY`, a state-changing request
   needs `Content-Type: application/json` or an `X-Brain-Client` header, or it
   gets 403. A request with a Host header other than localhost, 127.0.0.1 or
@@ -35,6 +37,11 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
   - `RECENCY_DECAY_RATE` is gone: sessions, handovers and notes age by a fixed curve instead, and facts do not age.
   - `as_of` must be an ISO date or datetime; anything else is an error instead of meaning "now".
   - `GET /exchange/inbox` never marks messages read; `POST /exchange/inbox` does.
+  - `add_memory` no longer writes beliefs or rules: beliefs come from the sleep cycle, rules from `record_correction`.
+  - `search_memory` returns `{results, degraded}` instead of a list when semantic search is down.
+  - A duplicate REST ingest returns 200 with the earlier memory's id.
+  - `GET /next-session` with no project returns nothing (2.x returned the newest note of any project).
+  - The Obsidian import refuses a folder outside `MEMORYBRAIN_IMPORT_DIR` with 422.
 
 ### Data safety
 
@@ -46,6 +53,9 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
 - Migration 009 only adds: writer, trust, embedded and validity columns,
   chunk vectors, the audit log and the entity tables. Existing rows get safe
   defaults. Migration 010 turns notes tagged `open-loop` into open loops.
+  Migration 011 repairs 2.x rows: superseded memories get their validity
+  end, 2.x decay is taken out of the strength column (3.0 computes it at read
+  time), and policy rows holding the old 3,500 default move to 6,000.
 - Store first: a memory is stored in one transaction before anything that can
   fail later. A summariser or embedder failure no longer loses the write; the
   memory is kept, flagged `embedded=0`, and embedded later. The same holds
@@ -113,7 +123,8 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
 
 ### Security
 
-- Secrets are redacted on every write: GitHub, OpenAI and Anthropic, AWS and
+- Secrets are redacted on every write (memories, rules, exchange threads,
+  project descriptions and policy notes): GitHub, OpenAI and Anthropic, AWS and
   Slack tokens, private keys, bearer tokens, JWTs, credentials in URLs,
   connection-string passwords, `NAME=secret` assignments and long hex keys.
   A value that is only a reference (`${VAR}`, `%VAR%`, `os.environ[...]`) is

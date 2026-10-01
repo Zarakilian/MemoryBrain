@@ -137,6 +137,9 @@ def post_task(
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Create a thread with its opening message."""
+    from .redact import redact
+    title, _ = redact(title or "")
+    body, _ = redact(body or "")
     if not title or not title.strip():
         raise ValueError("title must not be empty")
     if not body or not body.strip():
@@ -193,6 +196,8 @@ def reply_to_thread(
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Append a message to a thread; optionally flip its status in one call."""
+    from .redact import redact
+    body, _ = redact(body or "")
     if not body or not body.strip():
         raise ValueError("body must not be empty")
     _check_limits(body, refs)

@@ -72,7 +72,14 @@ async def _check_supersession(
     for candidate in candidates:
         similarity = round(1.0 - candidate["distance"], 4)
         cid = candidate["id"]
-        if auto_threshold is not None and similarity >= auto_threshold:
+        # What the user wrote is only ever retired by the user: an agent's
+        # near-copy is reported instead.
+        theirs = (candidate.get("metadata") or {}).get("trust")
+        if theirs is None:
+            mem = get_memory(cid, db_path=DB_PATH)
+            theirs = mem.trust if mem else "agent"
+        protected = theirs == "user" and entry.trust != "user"
+        if auto_threshold is not None and similarity >= auto_threshold and not protected:
             superseded.append(cid)
         elif warn_threshold is not None and similarity >= warn_threshold:
             mem = get_memory(cid, db_path=DB_PATH)

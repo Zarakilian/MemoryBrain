@@ -283,3 +283,30 @@ def test_many_secrets_stay_fast():
     t = time.perf_counter()
     red, rules = redact(text)
     assert time.perf_counter() - t < 1.0 and rules == ["aws-key-id"]
+
+
+
+def test_threads_descriptions_and_policy_notes_are_redacted(tmp_db):
+    from app.db import connect
+    from app.exchange import post_task, reply_to_thread
+    from app.models import Project
+    from app.policy import get_policy, set_policy
+    from app.storage import get_project, upsert_project
+    from app.workspace.identity import set_identity
+    token = "ghp_" + "b" * 36
+    thread = post_task(project="acme", title=f"Mirror {token}", body=f"use {token} to push",
+                       from_agent="claude", db_path=tmp_db)
+    reply_to_thread(thread["thread_id"], body=f"done with {token}", from_agent="grok",
+                    db_path=tmp_db)
+    conn = connect(tmp_db)
+    try:
+        stored = " ".join(r[0] for r in conn.execute("SELECT body FROM agent_messages"))
+        stored += " ".join(r[0] for r in conn.execute("SELECT title FROM agent_threads"))
+    finally:
+        conn.close()
+    assert token not in stored and "[REDACTED:github-token]" in stored
+    upsert_project(Project(slug="acme", name="Acme"), db_path=tmp_db)
+    set_identity("acme", tmp_db, description=f"Acme billing, deploy key {token}")
+    assert token not in get_project("acme", db_path=tmp_db).description
+    set_policy("acme", notes=f"push with {token}", db_path=tmp_db)
+    assert token not in get_policy("acme", db_path=tmp_db)["notes"]

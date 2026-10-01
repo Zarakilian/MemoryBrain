@@ -31,7 +31,7 @@ from ..ingest_pipeline import ingest
 from ..models import MemoryEntry, Project, ValidationError
 from ..redact import redact
 from ..storage import (DB_PATH, DERIVED_EDGE_KINDS, archive_memory_audited, content_hash,
-                       get_memory, get_project, hard_delete_memory, record_recall,
+                       audit, get_memory, get_project, hard_delete_memory, record_recall,
                        restore_memory, set_belief_status, upsert_project)
 from ..vector import vec_delete
 from . import queries as q
@@ -296,6 +296,9 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
             conn.execute(f"UPDATE memories SET {' , '.join(fields)} WHERE id = ?",
                          (*params, memory_id))
             conn.commit()
+        audit(memory_id, "edit", actor="ui",
+              reason=", ".join(c for c in updated_cols if c != "content_hash"
+                               and c != "content_updated_at"), db_path=DB_PATH)
     if body.status is not None and body.status != entry.status:
         # Status changes go through the audited path so the trail is complete.
         if body.status == "archived":

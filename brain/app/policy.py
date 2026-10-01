@@ -63,7 +63,8 @@ def set_policy(
     chars = cur["max_brief_chars"] if max_brief_chars is None else int(max_brief_chars)
     chars = max(800, min(chars, 12000))
     tags = cur["default_tags"] if default_tags is None else list(default_tags)[:20]
-    notes_s = cur["notes"] if notes is None else str(notes)[:2000]
+    from .redact import redact
+    notes_s = cur["notes"] if notes is None else redact(str(notes)[:2000])[0]
     with _connect(db_path) as conn:
         conn.execute(
             """INSERT INTO project_policy

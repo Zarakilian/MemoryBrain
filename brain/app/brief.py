@@ -74,7 +74,7 @@ def _memories_by_types(
     current = " AND valid_to IS NULL" if current_only else ""
     with _connect(db_path) as conn:
         rows = conn.execute(
-            f"""SELECT id, summary, type, importance, timestamp, tags,
+            f"""SELECT id, summary, type, importance, timestamp, tags, trust,
                        substr(content, 1, 280) AS content_preview,
                        COALESCE(strength, 1.0) AS strength
                 FROM memories
@@ -100,6 +100,7 @@ def _memories_by_types(
             "timestamp": r["timestamp"],
             "tags": tags,
             "content_preview": r["content_preview"],
+            "trust": r["trust"],
         })
     return out
 
@@ -327,7 +328,10 @@ async def build_project_brief(
                    "trust": r["trust"], "writer": r["writer"], "timestamp": r["timestamp"]}
                   for r in active_procedures(project, db_path=db_path)]
 
-    beliefs_raw = _memories_by_types(project, ("belief",), 8, db_path)
+    # only beliefs the sleep cycle derived and the user approved; never one an
+    # agent wrote in by hand
+    beliefs_raw = [b for b in _memories_by_types(project, ("belief",), 16, db_path)
+                   if b.get("trust") == "derived"][:8]
     beliefs = []
     for b in beliefs_raw:
         item = dict(b)

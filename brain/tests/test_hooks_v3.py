@@ -328,3 +328,24 @@ def test_a_brief_that_fails_to_load_is_not_reported_as_empty(tmp_path):
     out = r.stdout.decode("utf-8", errors="replace")
     assert r.returncode == 0
     assert "no stored notes" not in out and "Stored notes from MemoryBrain" not in out
+
+
+
+def test_a_handover_already_stored_lets_the_transcript_through(tmp_path):
+    captured = []
+
+    def duplicate_first(req, timeout=None):
+        captured.append(json.loads(req.data.decode("utf-8")))
+        resp = MagicMock()
+        resp.read.return_value = b'{"id": "h1", "duplicate": true}' if len(captured) == 1 \
+            else b'{"id": "t1", "duplicate": false}'
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=None)
+        return resp
+
+    (tmp_path / "HANDOVER-2026-10-01-0900.md").write_text("# Morning handover", encoding="utf-8")
+    hook_json = {"trigger": "auto", "cwd": str(tmp_path),
+                 "transcript_path": str(_transcript(tmp_path / "t.jsonl"))}
+    _run(tmp_path, hook_json, duplicate_first)
+    assert captured[0]["content"] == "# Morning handover"
+    assert captured[1]["content"].startswith("Session transcript tail")

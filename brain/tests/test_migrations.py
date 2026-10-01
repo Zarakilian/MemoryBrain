@@ -273,3 +273,35 @@ def test_retrying_a_failed_migration_at_once_still_backs_up(tmp_path):
     run_migrations(db_path=db, migrations_dir=migs)
     assert len(_backups(db)) == 2
     assert not list((db.parent / "backups").glob("*.tmp"))
+
+
+
+def test_migration_011_repairs_2x_rows(tmp_path):
+    import shutil
+    import sqlite3
+    from app.migrations.runner import MIGRATIONS_DIR, run_migrations
+    db = tmp_path / "brain.db"
+    _make_minimal_db(db)
+    pre = tmp_path / "pre011"
+    pre.mkdir()
+    for mf in sorted(MIGRATIONS_DIR.glob("*.sql")):
+        if mf.name < "011":
+            shutil.copy(mf, pre / mf.name)
+    run_migrations(db_path=db, migrations_dir=pre)
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO memories (id, content, type, project, timestamp, status, strength)"
+                     " VALUES ('new', 'port 9090', 'fact', 'acme', '2026-05-01T00:00:00+00:00',"
+                     " 'active', 0.4)")
+        conn.execute("INSERT INTO memories (id, content, type, project, timestamp, status, strength,"
+                     " superseded_by) VALUES ('old', 'port 8080', 'fact', 'acme',"
+                     " '2026-01-01T00:00:00+00:00', 'archived', 1.0, 'new')")
+        conn.execute("INSERT INTO project_policy (project, max_brief_chars, updated_at)"
+                     " VALUES ('acme', 3500, '2026-01-01')")
+        conn.commit()
+    run_migrations(db_path=db)
+    with sqlite3.connect(db) as conn:
+        old_valid_to = conn.execute("SELECT valid_to FROM memories WHERE id = 'old'").fetchone()[0]
+        new_strength = conn.execute("SELECT strength FROM memories WHERE id = 'new'").fetchone()[0]
+        chars = conn.execute("SELECT max_brief_chars FROM project_policy").fetchone()[0]
+    assert old_valid_to == "2026-05-01T00:00:00+00:00"
+    assert new_strength == 1.0 and chars == 6000

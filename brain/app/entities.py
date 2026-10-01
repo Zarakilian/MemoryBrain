@@ -36,8 +36,12 @@ def extract_entities(text: str) -> list[tuple[str, str]]:
             found.append((kind, name))
 
     text = text or ""
-    for m in _HOST.finditer(text):
-        add("host", m.group(0))
+    # hosts are matched word by word: a host name is at most 253 characters,
+    # and a long run like "a.a.a.…" would make the pattern backtrack for minutes
+    for word in text.split():
+        if 4 <= len(word) <= 260:  # a host name is at most 253 characters
+            for m in _HOST.finditer(word):
+                add("host", m.group(0))
     for m in _TICKET.finditer(text):
         if m.group(1) not in _NOT_TICKETS:
             add("ticket", m.group(0))

@@ -51,7 +51,7 @@ REST, CLI, Atlas  ─┘                     │   ingest · search · brief · 
 | Field | Meaning |
 |---|---|
 | `writer` | Who wrote it: the MCP client's name from its initialize request, else an `X-Brain-Agent` header, else the `source` argument, else `unknown`. REST writes say `rest`, Atlas writes `ui`. |
-| `trust` | `user` (you, in Atlas), `agent` (any MCP or REST caller; an agent cannot claim `user`), `derived` (made by the brain, such as beliefs), `imported` (Obsidian import). |
+| `trust` | `user` (written in Atlas), `agent` (any MCP or REST caller: neither can set `user`), `derived` (made by the brain, such as beliefs), `imported` (Obsidian import). Atlas is the person's door, so anything on this machine that can reach Atlas can write as `user`; set `BRAIN_API_KEY` if local processes you do not trust run here. |
 | `valid_from`, `valid_to`, `invalidated_by` | When a fact was true. Superseding sets `valid_to`; restoring clears it. Search and the timeline take `as_of` to answer "what was true on that date". |
 | `memory_audit` | One row per archive, restore, supersede, pin, unpin and hard delete: who, when, why. |
 
@@ -93,7 +93,7 @@ When you correct how an agent works, the agent calls `record_correction(rule, ev
 
 - **Transports.** MCP over SSE (`/sse`, Claude Code), streamable HTTP (`/mcp`, Grok) and stdio through `docker exec` (Codex, Gemini), plus REST for anything else. They all reach the same tools.
 - **Core profile.** By default the tool list holds 15 tools: `search_memory`, `get_memory`, `add_memory`, `get_project_brief`, `get_startup_summary`, `get_recent_context`, `pin_memory`, `set_project_info`, `get_file_context`, `get_agent_inbox`, `post_task`, `reply_to_thread`, `get_thread`, `record_correction` and `brain_admin`. The list is about 7,000 characters of schema, which matters because every agent loads it at session start.
-- **brain_admin.** One tool runs the 24 less common operations, with the same arguments and validation as the full tools. `MEMORYBRAIN_TOOLS=full` lists every tool again. A tool that is not listed still answers when called by name.
+- **brain_admin.** One tool runs the 24 less common operations, with the same arguments and validation as the full tools. `MEMORYBRAIN_TOOLS=full` lists every tool again. The server still answers a hidden tool called by name, but most clients only let the model call listed tools, so skills and prompts use `brain_admin`.
 - **Explicit refs.** `add_memory(refs=[{"path", "kind"}])` names up to 25 files, folders, urls, tasks or services. File refs resolve against the workspace index and are kept even when they dangle; they survive every relink and rebuild.
 - **Synapse.** Agents hand each other work through threads with a pull inbox. See [docs/AGENT_EXCHANGE.md](docs/AGENT_EXCHANGE.md).
 
@@ -108,7 +108,7 @@ When you correct how an agent works, the agent calls `record_correction(rule, ev
 |---|---|
 | Loopback only | Requests whose Host is not `localhost`, `127.0.0.1` or `[::1]` get 421, on REST and on every MCP transport. `MEMORYBRAIN_ALLOWED_HOSTS` adds names. This stops DNS rebinding. |
 | Write guard | Without `BRAIN_API_KEY`, a POST, PUT, PATCH or DELETE needs `Content-Type: application/json` or an `X-Brain-Client` header, or it gets 403. A web page cannot send either without a CORS preflight, which the brain never grants. |
-| API key | With `BRAIN_API_KEY` set, every write and admin call needs `X-Brain-Key`. The CLI never sends the key to a non-localhost URL. |
+| API key | With `BRAIN_API_KEY` set, every REST write and admin call needs `X-Brain-Key`. The MCP transports (`/sse`, `/messages/`, `/mcp`) are exempt and rely on the loopback Host check. The CLI never sends the key to a non-localhost URL. |
 | No GET side effects | A GET never changes state. Exports, imports and rebuilds are POSTs; `GET /search` records nothing. |
 | Redaction | On every write and every edit: GitHub tokens, `sk-` API keys (OpenAI, Anthropic), AWS key ids, Slack tokens, private key blocks, bearer tokens, JWTs, credentials in URLs, connection-string passwords, `NAME=secret` assignments and long hex keys next to words like token or key. A value that is only a reference (`${VAR}`, `%VAR%`, `os.environ[...]`, `<placeholder>`) is left alone. |
 | Imports | The Obsidian import reads only from `MEMORYBRAIN_IMPORT_DIR`, skips files over 1 MB, ignores privileged front matter and marks everything `trust=imported`. |
@@ -120,7 +120,7 @@ Redaction is a net, not a licence: agents are still told never to write secrets.
 
 - **Where the data is.** Everything lives in the Docker volume `<folder>_brain_data` (for a folder called `memorybrain`, `memorybrain_brain_data`), mounted at `/app/data`. Nothing is kept in the git folder. `docker compose down -v` deletes the volume: never run it on a brain you care about.
 - **SQLite settings.** WAL journal, foreign keys on, `busy_timeout` 5 seconds, `synchronous=NORMAL`.
-- **Migrations.** They run at startup. Each one runs inside one transaction, so a failure leaves the database as it was. Before each one, a copy is taken with `VACUUM INTO` into `/app/data/backups/` (written to a temporary name, then renamed; the last 5 kept). A migration that tries to end its own transaction is refused.
+- **Migrations.** They run at startup. 009 and 010 add the v3 columns and tables; 011 repairs 2.x rows (validity ends for superseded memories, decay taken out of stored strength, old 3,500 policy defaults). Each one runs inside one transaction, so a failure leaves the database as it was. Before each one, a copy is taken with `VACUUM INTO` into `/app/data/backups/` (written to a temporary name, then renamed; the last 5 kept). A migration that tries to end its own transaction is refused.
 - **Backups.** `brain upgrade` stops the brain, tars the volume into `~/memorybrain-backups`, and refuses to rebuild unless the archive reached this machine. By hand, stop the brain first: a tar of a live WAL database can be torn.
 - **The re-embed job.** After an upgrade or a model change, memories with `embedded=0` or no vector for the current model are re-embedded in the background: 30 seconds after startup, then a batch every minute at `MEMORYBRAIN_REEMBED_RATE` (default 25). A memory whose embedding fails waits 30 minutes before another try. `/readiness` and the doctor page show `reembed_pending`; search keeps working meanwhile.
 

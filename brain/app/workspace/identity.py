@@ -59,7 +59,8 @@ def _write_description(slug: str, text: str, source: str, db_path: Path) -> bool
     cur_rank = SOURCE_RANK.get(current.description_source if current else "", 0)
     if current and current.description and SOURCE_RANK.get(source, 0) < cur_rank:
         return False
-    text = " ".join((text or "").split())[:MAX_DESCRIPTION]
+    from ..redact import redact
+    text, _ = redact(" ".join((text or "").split())[:MAX_DESCRIPTION])
     with _st._connect(db_path) as conn:
         conn.execute("""UPDATE projects SET description = ?, description_source = ?,
                         description_updated_at = ? WHERE slug = ?""",

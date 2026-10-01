@@ -55,6 +55,22 @@ def _brain_key() -> str:
     return ""
 
 
+def _env_settings(env_path: Path) -> dict:
+    """KEY=value lines of an env file (comments skipped, quotes stripped).
+    Values are for checks only: never print them."""
+    settings = {}
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#") or "=" not in s:
+                continue
+            key, value = s.split("=", 1)
+            settings[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return settings
+
+
 def _brain_headers(content_type: bool = False) -> dict:
     headers = {"X-Brain-Client": "cli"}
     if content_type:
@@ -665,6 +681,15 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
     if not (repo / ".env").is_file():
         return fail(f"No .env in {repo}. Copy the .env from your old install folder into this "
                     "one (it holds your settings and key), then run brain upgrade again.")
+    settings = _env_settings(repo / ".env")
+    cloud = [k for k in ("GOOGLE_API_KEY", "OPENAI_API_KEY") if settings.get(k)]
+    if cloud and not settings.get("MEMORYBRAIN_PROVIDER"):
+        return fail(f"Your .env sets {' and '.join(cloud)} but not MEMORYBRAIN_PROVIDER. 2.x used "
+                    "such a key on its own; 3.0 uses only MEMORYBRAIN_PROVIDER, so the brain would "
+                    "quietly move to local Ollama and compare your old cloud vectors with new "
+                    "local ones. Add MEMORYBRAIN_PROVIDER=gemini (or openai) to keep the cloud "
+                    "provider, or MEMORYBRAIN_PROVIDER=ollama to move to local models, then run "
+                    "brain upgrade again.")
 
     # 2. The brain this folder's compose project owns must already exist.
     project = _compose_project(repo, run)

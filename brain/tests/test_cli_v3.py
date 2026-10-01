@@ -323,3 +323,18 @@ def test_a_stopped_brain_is_counted_from_the_volume_read_only(tmp_path):
     counts = [" ".join(c) for c in fake.calls if "SELECT COUNT(*) FROM memories" in " ".join(c)]
     assert counts[0].startswith("docker compose exec")       # tried the running brain first
     assert ":ro" in counts[1] and "immutable=1" in counts[1]   # a stopped WAL brain has no -shm
+
+
+
+def test_upgrade_stops_when_a_cloud_key_would_be_dropped(tmp_path, capsys):
+    fake = FakeRun()
+    repo = _repo_with_hooks(tmp_path)
+    (repo / "skills").mkdir()
+    (repo / ".env").write_text("GOOGLE_API_KEY=" + "k" * 20 + "\nBRAIN_PORT=7741\n",
+                               encoding="utf-8")
+    code = cli.cmd_upgrade(repo=repo, backup_dir=tmp_path / "backups", run=fake,
+                           get_json=lambda url: {"ready": True}, sleep=lambda s: None,
+                           home=tmp_path / "home")
+    out = capsys.readouterr().out
+    assert code == 1 and "MEMORYBRAIN_PROVIDER" in out and "k" * 20 not in out
+    assert not any("compose stop" in c for c in _joined(fake))

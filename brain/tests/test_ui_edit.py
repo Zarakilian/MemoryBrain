@@ -148,3 +148,18 @@ def test_edit_endpoints_enforce_api_key(edit_client, monkeypatch):
     # reads: still bypassed, exactly as before
     assert c.get("/api/ui/stats").status_code == 200
     assert c.get("/ui").status_code == 200
+
+
+
+def test_an_atlas_edit_leaves_an_audit_row(edit_client):
+    from app.db import connect
+    c, db = edit_client
+    assert c.patch("/api/ui/edit/memories/m1", json={"summary": "better summary"}).status_code == 200
+    conn = connect(db)
+    try:
+        rows = conn.execute("SELECT action, actor, reason FROM memory_audit WHERE memory_id = 'm1'"
+                            ).fetchall()
+    finally:
+        conn.close()
+    assert [(r["action"], r["actor"]) for r in rows] == [("edit", "ui")]
+    assert "summary" in rows[0]["reason"]

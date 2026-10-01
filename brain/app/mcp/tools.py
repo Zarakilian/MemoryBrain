@@ -120,6 +120,12 @@ MEMORY_TYPE_ENUM = [
     "note", "fact", "session", "handover", "file", "reference",
     "belief", "decision", "open_loop",
 ]
+# What an agent may write. A belief comes only from the sleep cycle and a rule
+# only from record_correction: both wait for the user, so neither is writable.
+WRITE_TYPE_ENUM = [t for t in MEMORY_TYPE_ENUM if t != "belief"]
+# Names the brain itself writes under; a client claiming one is marked as a client.
+RESERVED_WRITERS = frozenset({"ui", "rest", "consolidation", "obsidian-import", "ingest",
+                              "system", "user", "hook", "cli"})
 
 
 def _belief_sources(memory_id: str) -> list[dict]:
@@ -258,6 +264,10 @@ async def handle_add_memory(
     # v3 provenance: the writer is who the transport says is calling, else the
     # caller's source, else unknown. Trust is always "agent" here; an MCP caller
     # cannot claim a human wrote it.
+    if type not in WRITE_TYPE_ENUM:
+        return json.dumps({"error": f"add_memory cannot write type {type!r}: beliefs come from "
+                                    "the sleep cycle and rules from record_correction, and both "
+                                    "wait for the user's approval"})
     try:
         named = clean_refs(refs)
     except ValueError as e:
@@ -310,8 +320,10 @@ def _client_identity() -> str:
 
 
 def _resolve_writer(claimed: str = "") -> str:
-    """clientInfo, then X-Brain-Agent, then the caller's source or from_agent, then unknown."""
-    return _client_identity() or _writer_from_source(claimed) or "unknown"
+    """clientInfo, then X-Brain-Agent, then the caller's source or from_agent, then
+    unknown. A client cannot sign as the brain itself ("ui", "consolidation", ...)."""
+    writer = _client_identity() or _writer_from_source(claimed) or "unknown"
+    return f"mcp:{writer}" if writer in RESERVED_WRITERS else writer
 
 
 def _mcp_actor() -> str:
@@ -834,7 +846,7 @@ def _all_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {
                     "content": {"type": "string"},
-                    "type": {"type": "string", "enum": MEMORY_TYPE_ENUM},
+                    "type": {"type": "string", "enum": WRITE_TYPE_ENUM},
                     "project": {"type": "string"},
                     "tags": {"type": "array", "items": {"type": "string"}},
                     "source": {"type": "string"},

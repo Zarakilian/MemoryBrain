@@ -38,7 +38,8 @@ def render(pack: dict) -> str:
     conflicts = int(pack.get("conflict_count") or 0)
     if conflicts:
         out += ["", "## Conflicts",
-                f"- {conflicts} unresolved contradiction(s); run list_conflicts to review"]
+                f"- {conflicts} unresolved contradiction(s); review them with "
+                f"brain_admin(action=\"list_conflicts\") or in Atlas"]
     recent = []
     for item in pack.get("recent") or []:
         text = _text(item)

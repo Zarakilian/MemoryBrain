@@ -417,3 +417,25 @@ async def test_urls_that_differ_only_in_case_stay_two_refs(mcp_db):
         "refs": [{"path": "https://wiki.example.com/Export", "kind": "url"},
                  {"path": "https://wiki.example.com/export", "kind": "url"}]})
     assert reply["refs"] == {"file": 0, "dangling": 2}
+
+
+
+# ------------------------------------------------------------- final review
+
+@pytest.mark.parametrize("kind", ["belief", "procedure"])
+async def test_an_agent_cannot_write_a_belief_or_a_rule_directly(mcp_db, kind):
+    reply = await _call("add_memory", {"content": "The export is fragile.", "type": kind,
+                                       "project": "acme"})
+    assert "error" in reply
+    reply = json.loads(await T.handle_add_memory("The export is fragile.", kind, "acme"))
+    assert kind in reply["error"]
+
+
+async def test_a_client_cannot_take_an_internal_writer_name(mcp_db):
+    token = request_ctx.set(_ctx("UI"))
+    try:
+        reply = await _call("add_memory", {"content": "A note signed ui.", "type": "note",
+                                           "project": "acme"})
+    finally:
+        request_ctx.reset(token)
+    assert reply["writer"] == "mcp:ui"

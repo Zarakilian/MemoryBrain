@@ -78,3 +78,11 @@ def test_entities_are_backfilled_once_for_an_upgraded_brain(tmp_db):
     names = {e["name"].lower() for e in top_entities("acme", db_path=tmp_db)}
     assert "wiki.example.com" in names and "inc-4821" in names
     assert backfill_entities(db_path=tmp_db) == 0  # once only
+
+
+
+def test_a_long_dotted_run_does_not_stall_extraction():
+    import time
+    started = time.perf_counter()
+    extract_entities("a." * 20000 + " see db01.example.internal")
+    assert time.perf_counter() - started < 1.0

@@ -323,3 +323,20 @@ async def test_a_vector_store_that_will_not_load_still_stores_the_memory(ing_db,
     assert result.embedded is False
     assert any("vector store unavailable" in w for w in result.warnings)
     assert _row(ing_db, result.id, "embedded")["embedded"] == 0
+
+
+
+@pytest.mark.asyncio
+async def test_an_agent_write_never_retires_the_users_own_fact(ing_db, fake_provider):
+    new_vector = await s.embed_document("The car is red.")
+    mine = await _old_fact(ing_db, "The car is green.", _vector_at_cosine(new_vector, 0.98))
+    conn = connect(ing_db)
+    try:
+        with conn:
+            conn.execute("UPDATE memories SET trust = 'user', writer = 'ui' WHERE id = ?", (mine,))
+    finally:
+        conn.close()
+    result = await ingest(MemoryEntry(content="The car is red.", type="fact", project="acme"))
+    assert result.superseded == []
+    assert [p["id"] for p in result.potential_supersessions] == [mine]
+    assert get_memory(mine, db_path=ing_db).status == "active"
