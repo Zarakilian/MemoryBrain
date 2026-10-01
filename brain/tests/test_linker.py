@@ -226,7 +226,7 @@ def test_linker_failure_does_not_fail_ingest(gdb, mock_ollama, monkeypatch):
     from app.ingest_pipeline import ingest
     import asyncio
     entry = _mem(None, content="ingest survives linker explosion")
-    result = asyncio.get_event_loop().run_until_complete(ingest(entry))
+    result = asyncio.run(ingest(entry))
     with sqlite3.connect(gdb) as c:
         assert c.execute("SELECT COUNT(*) FROM memories WHERE id=?",
                          (result.id,)).fetchone()[0] == 1

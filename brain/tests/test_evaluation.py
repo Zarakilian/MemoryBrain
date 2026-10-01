@@ -166,3 +166,10 @@ async def test_synthetic_baseline_runs_and_reports(tmp_db, monkeypatch, capsys):
           f"mrr={report['mrr']}")
     for row in worst:
         print(f"  worst: rr={row['rr']:.2f} r@10={row['recall@10']:.2f} {row['query']}")
+
+
+def test_unlabelled_questions_are_skipped_not_scored_as_misses():
+    report = score_run({"q1": ["a"], "q2": ["b"]}, {"q1": {"a"}, "q2": set()})
+    assert report["queries"] == 1 and report["skipped"] == 1
+    assert report["mrr"] == 1.0 and report["recall@5"] == 1.0
+    assert [row["query"] for row in report["per_query"]] == ["q1"]

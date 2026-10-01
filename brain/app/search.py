@@ -25,7 +25,6 @@ from .vector import legacy_vector_count, vec_search_multi
 logger = logging.getLogger(__name__)
 
 DEGRADED_SEMANTIC = "semantic search unavailable"
-RECENCY_DECAY_RATE = float(os.getenv("RECENCY_DECAY_RATE", "0.02"))
 # How much reinforcement/decay sways ranking. strength ∈ [0.2, 3.0];
 # the multiplier maps that to roughly [0.68, 1.4] — a thumb on the
 # scale, never a veto. 0 disables.
@@ -33,6 +32,8 @@ STRENGTH_WEIGHT = float(os.getenv("MEMORYBRAIN_STRENGTH_WEIGHT", "0.4"))
 
 RRF_K = 60
 CANDIDATES = 30
+# as_of filters after the candidates are fetched, so look deeper into history
+AS_OF_CANDIDATES = 300
 AGING_TYPES = DECAYING_TYPES  # sessions, handovers, notes
 AGE_HALF_LIFE_DAYS = 45
 AGE_FLOOR = 0.5
@@ -91,15 +92,6 @@ def _parse_time(value: str) -> Optional[datetime]:
     return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
 
 
-def recency_factor(timestamp_str: str, decay_rate: float) -> float:
-    """Returns a score in (0, 1] — 1.0 for today, decaying gently with age."""
-    ts = _parse_time(timestamp_str)
-    if ts is None:
-        return 1.0
-    days_old = (datetime.now(timezone.utc) - ts).total_seconds() / 86400
-    return 1.0 / (1.0 + max(0.0, days_old) * decay_rate)
-
-
 def age_factor(memory_type: str, timestamp_str: str) -> float:
     """v3 recency: only sessions, handovers and notes age, halving every 45
     days down to a floor of 0.5. Facts, decisions and the rest do not age."""
@@ -112,49 +104,22 @@ def age_factor(memory_type: str, timestamp_str: str) -> float:
     return max(AGE_FLOOR, 0.5 ** (days_old / AGE_HALF_LIFE_DAYS))
 
 
-def reciprocal_rank_fusion(
-    keyword_results: list[dict],
-    semantic_results: list[dict],
-    k: int = 60,
-    decay_rate: float = RECENCY_DECAY_RATE,
-    strengths: Optional[dict] = None,
-    feedback: Optional[dict] = None,
-) -> list[str]:
-    """Generic RRF over two ranked lists, with optional multipliers."""
+def fuse(keyword_ids: list[str], semantic_ids: list[str], k: int = None) -> dict[str, float]:
+    """Reciprocal rank fusion of two ranked id lists: 1 / (k + rank) summed over
+    the lists an id appears in (rank counted from 1)."""
+    k = RRF_K if k is None else k
     scores: dict[str, float] = {}
-    ts_map: dict[str, str] = {}
-
-    for rank, item in enumerate(keyword_results):
-        id_ = item["id"]
-        scores[id_] = scores.get(id_, 0.0) + 1.0 / (k + rank + 1)
-        if "timestamp" in item:
-            ts_map[id_] = item["timestamp"]
-
-    for rank, item in enumerate(semantic_results):
-        id_ = item["id"]
-        scores[id_] = scores.get(id_, 0.0) + 1.0 / (k + rank + 1)
-        if "timestamp" in item:
-            ts_map.setdefault(id_, item["timestamp"])
-
-    if decay_rate > 0:
-        for id_ in scores:
-            if id_ in ts_map:
-                scores[id_] *= recency_factor(ts_map[id_], decay_rate)
-
-    if strengths:
-        for id_ in scores:
-            if id_ in strengths:
-                scores[id_] *= strength_factor(strengths[id_])
-
-    if feedback:
-        for id_ in scores:
-            if id_ in feedback:
-                scores[id_] *= feedback[id_]
-
-    return sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
+    for ranked in (keyword_ids, semantic_ids):
+        for rank, memory_id in enumerate(ranked):
+            scores[memory_id] = scores.get(memory_id, 0.0) + 1.0 / (k + rank + 1)
+    return scores
 
 
 def _valid_at(row, as_of: datetime) -> bool:
+    """Was this memory current at that moment? An archived memory with no
+    validity end was removed (deleted as wrong), not superseded: never."""
+    if row["status"] == "archived" and not row["valid_to"]:
+        return False
     ts, start, end = (_parse_time(row["timestamp"]), _parse_time(row["valid_from"] or ""),
                       _parse_time(row["valid_to"] or ""))
     return ((ts is None or ts <= as_of) and (start is None or start <= as_of)
@@ -162,8 +127,11 @@ def _valid_at(row, as_of: datetime) -> bool:
 
 
 def _as_of_moment(as_of: str) -> Optional[datetime]:
-    """An ISO datetime, or a bare date meaning the end of that day (UTC)."""
+    """An ISO datetime, or a bare date meaning the end of that day (UTC).
+    Anything else is a ValueError: a typo must not quietly mean "now"."""
     moment = _parse_time(as_of)
+    if moment is None:
+        raise ValueError(f"as_of must be an ISO date or datetime (2026-09-30), got {as_of!r}")
     if moment is not None and len(as_of.strip()) == 10:
         moment = moment.replace(hour=23, minute=59, second=59, microsecond=999999)
     return moment
@@ -192,12 +160,15 @@ def _window(text: str, terms: list[str], size: int = EXCERPT_CHARS) -> str:
     return flat[start:start + size]
 
 
-def _diversify(ranked: list[str], rows: dict, limit: int) -> list[str]:
-    """At most MAX_SESSIONS_PER_PROJECT sessions or handovers per project."""
+def _diversify(ranked: list[str], rows: dict, limit: int,
+               type_filter: Optional[str] = None) -> list[str]:
+    """At most MAX_SESSIONS_PER_PROJECT sessions or handovers per project,
+    unless the caller asked for that type: then the cap would hide the answer."""
+    capped = type_filter not in ("session", "handover")
     picked, per_project = [], {}
     for memory_id in ranked:
         row = rows[memory_id]
-        if row["type"] in ("session", "handover"):
+        if capped and row["type"] in ("session", "handover"):
             n = per_project.get(row["project"], 0)
             if n >= MAX_SESSIONS_PER_PROJECT:
                 continue
@@ -242,9 +213,10 @@ async def search_with_status(
     moment = _as_of_moment(as_of) if as_of else None
     history = include_history or moment is not None
 
+    pool = AS_OF_CANDIDATES if moment is not None else CANDIDATES
     match = build_fts_query(query)
     kw_results = keyword_search(
-        query, limit=CANDIDATES, project=project, type_filter=type_filter, days=days,
+        query, limit=pool, project=project, type_filter=type_filter, days=days,
         tags=tags, include_history=history, db_path=path, match=match) if match else []
 
     vec_filters: dict = {}
@@ -264,7 +236,7 @@ async def search_with_status(
             query_vectors = {embed_model_id(): current, "": raw}
         else:
             query_vectors = {embed_model_id(): await embed_query(query)}
-        sem_results = vec_search_multi(query_vectors, n_results=CANDIDATES, filters=vec_filters,
+        sem_results = vec_search_multi(query_vectors, n_results=pool, filters=vec_filters,
                                        db_path=path, include_chunks=True)
     except Exception as exc:
         logger.warning("%s (%s): keyword results only", DEGRADED_SEMANTIC, type(exc).__name__)
@@ -285,9 +257,10 @@ async def search_with_status(
     except Exception:
         feedback = {}
 
+    fused_scores = fuse([r["id"] for r in kw_results], [r["id"] for r in sem_results])
     scores = {}
     for i in ids:
-        fused = sum(1.0 / (RRF_K + ranks[i] + 1) for ranks in (kw_rank, sem_rank) if i in ranks)
+        fused = fused_scores[i]
         row = rows[i]
         strength = effective_strength(row["strength"], row["timestamp"], row["last_recalled"],
                                       bool(row["pinned"]), memory_type=row["type"])
@@ -299,7 +272,7 @@ async def search_with_status(
     phrases, words = query_terms(query)
     terms = phrases + words
     output = []
-    for i in _diversify(ranked, rows, limit):
+    for i in _diversify(ranked, rows, limit, type_filter):
         row = rows[i]
         chunk = chunks.get(i)
         if chunk:

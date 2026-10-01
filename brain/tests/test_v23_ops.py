@@ -12,7 +12,6 @@ from app.policy import get_policy, set_policy
 from app.timeline import get_timeline, get_entities
 from app.obsidian import export_project_markdown
 from app.scheduler import scheduler_status, run_auto_consolidate
-from app.search import reciprocal_rank_fusion
 
 
 def _add(db, **kw):
@@ -50,14 +49,6 @@ def test_record_retrieval_and_feedback(tmp_db):
     boosts = feedback_boosts(["m-chosen", "other"], db_path=tmp_db)
     assert boosts["m-chosen"] > 1.0
     assert "other" not in boosts
-
-
-def test_rrf_applies_feedback():
-    kw = [{"id": "a", "timestamp": datetime.now(timezone.utc).isoformat()},
-          {"id": "b", "timestamp": datetime.now(timezone.utc).isoformat()}]
-    sem = []
-    order = reciprocal_rank_fusion(kw, sem, feedback={"b": 3.0})
-    assert order[0] == "b"
 
 
 def test_policy_set_get(tmp_db):

@@ -666,6 +666,8 @@ async def search_endpoint(q: str, project: str = "", type: str = "", limit: int 
         q, limit=max(1, min(int(limit), 100)), project=project or None,
         type_filter=type or None, source="rest-search", as_of=as_of or None, record=False))
     headers = {"X-Took-Ms": f"{(_time.perf_counter() - started) * 1000:.1f}"}
+    if isinstance(reply, dict) and reply.get("error"):
+        raise HTTPException(422, reply["error"])
     if isinstance(reply, dict):  # degraded: {"results", "degraded"}
         headers["X-Degraded"] = reply.get("degraded", "")
         reply = reply.get("results", [])

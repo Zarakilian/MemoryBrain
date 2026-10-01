@@ -17,7 +17,7 @@ from app.storage import (add_memory, upsert_project, record_recall,
                          STRENGTH_FLOOR)
 from app.linker import _write_edges
 from app.consolidate import consolidate, LOOP_TAG
-from app.search import strength_factor, reciprocal_rank_fusion
+from app.search import strength_factor
 
 
 def _mem(id_, proj="proj-a", type_="session", content=None, ts=None,
@@ -190,13 +190,7 @@ def test_strength_factor_bounds_and_ranking_effect():
     assert strength_factor(3.0) > 1.0
     assert strength_factor(99.0) == strength_factor(3.0)    # clamped
     assert strength_factor(1.0, weight=0.0) == 1.0          # disabled
-
-    kw = [{"id": "weak", "timestamp": "2026-07-01T00:00:00+00:00"},
-          {"id": "strong", "timestamp": "2026-07-01T00:00:00+00:00"}]
-    # equal RRF rank contributions except order; strength flips the outcome
-    order = reciprocal_rank_fusion(kw, [], decay_rate=0,
-                                   strengths={"weak": 0.3, "strong": 2.5})
-    assert order[0] == "strong"
+    # its effect on a real ranking: test_search_v3 strength test
 
 
 # ------------------------------------------------------------ contradictions

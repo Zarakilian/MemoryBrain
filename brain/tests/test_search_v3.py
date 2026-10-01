@@ -144,8 +144,9 @@ async def test_synthetic_questions_meet_the_bar(brain, capsys):
     report = await _synthetic(brain, cross_project=False)
     print(f"\nSEARCH V3 per-project recall@5={report['recall@5']} "
           f"recall@10={report['recall@10']} mrr={report['mrr']} (baseline {BASELINE})")
-    assert report["recall@10"] >= 0.85
-    assert report["mrr"] >= BASELINE["mrr"]
+    # recall@10 cannot fail here (10 memories per project, limit 10: the
+    # fixture size is the plan's), so MRR and recall@5 carry the check.
+    assert report["recall@5"] >= 0.95 and report["mrr"] >= 0.95
 
 
 @pytest.mark.asyncio
@@ -154,3 +155,96 @@ async def test_synthetic_questions_across_all_projects(brain, capsys):
     print(f"\nSEARCH V3 all-projects recall@5={report['recall@5']} "
           f"recall@10={report['recall@10']} mrr={report['mrr']}")
     assert report["recall@10"] >= 0.85
+    assert report["recall@5"] >= 0.95 and report["mrr"] >= 0.95
+
+
+# ------------------------------------------------------------- review follow-ups
+
+@pytest.mark.asyncio
+async def test_a_bad_as_of_is_refused_not_ignored(brain, monkeypatch):
+    import json
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.mcp.tools import handle_search_memory
+    from app.search import search_with_status
+    await _add("The export runs nightly.", "fact")
+    with pytest.raises(ValueError):
+        await search_with_status("export", as_of="yesterday", db_path=brain)
+    monkeypatch.setattr("app.mcp.tools.DB_PATH", brain)
+    reply = json.loads(await handle_search_memory("export", as_of="2026-13-40"))
+    assert "as_of" in reply["error"]
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    monkeypatch.setattr("app.main.DB_PATH", brain)
+    r = TestClient(app, base_url="http://localhost:7741").get(
+        "/search", params={"q": "export", "as_of": "yesterday"})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_as_of_finds_an_old_match_behind_thirty_newer_ones(brain):
+    old = await _add("The export runs at two.", "fact", age_days=30)
+    for i in range(40):
+        await _add(f"export export export job {i}", "fact")
+    as_of = (datetime.now(timezone.utc) - timedelta(days=20)).isoformat()
+    assert old in await _ids("export", brain, as_of=as_of)
+
+
+@pytest.mark.asyncio
+async def test_as_of_never_brings_back_a_deleted_memory(brain):
+    from app.storage import archive_memory_audited
+    gone = await _add("The gateway runs on SRVDB01.", "fact", age_days=10)
+    archive_memory_audited(gone, actor="ui", reason="wrong", db_path=brain)
+    assert gone not in await _ids("gateway", brain, as_of=datetime.now(timezone.utc).isoformat())
+
+
+@pytest.mark.asyncio
+async def test_a_session_type_filter_is_not_capped(brain):
+    for i in range(5):
+        await _add(f"Session {i}: rebuilt the export pipeline", "session")
+    results = await hybrid_search("export pipeline", limit=10, type_filter="session",
+                                  project="acme", db_path=brain)
+    assert len(results) == 5
+
+
+@pytest.mark.asyncio
+async def test_a_strong_memory_outranks_a_weak_twin(brain):
+    weak = await _add("The invoice export job retries twice.", "fact")
+    strong = await _add("The invoice export job retries two times.", "fact")
+    conn = connect(brain)
+    try:
+        with conn:
+            conn.execute("UPDATE memories SET strength = 0.3 WHERE id = ?", (weak,))
+            conn.execute("UPDATE memories SET strength = 2.5 WHERE id = ?", (strong,))
+    finally:
+        conn.close()
+    order = await _ids("invoice export job retries", brain)
+    assert order.index(strong) < order.index(weak)
+
+
+def test_the_age_curve_halves_every_45_days_down_to_a_floor():
+    from app.search import age_factor
+    now = datetime.now(timezone.utc)
+    assert age_factor("session", now.isoformat()) == pytest.approx(1.0, abs=1e-3)
+    assert age_factor("session", (now - timedelta(days=45)).isoformat()) == pytest.approx(0.5, abs=1e-3)
+    assert age_factor("note", (now - timedelta(days=400)).isoformat()) == 0.5
+    assert age_factor("fact", (now - timedelta(days=400)).isoformat()) == 1.0
+
+
+def test_chunk_vectors_compete_and_name_their_span(tmp_db):
+    from app.models import MemoryEntry
+    from app.storage import add_memory
+    from app.vector import insert_vectors, vec_search_multi
+    entry = MemoryEntry(content="x" * 1800, type="session", project="acme")
+    add_memory(entry, db_path=tmp_db)
+    conn = connect(tmp_db, vec=True)
+    try:
+        with conn:
+            insert_vectors(conn, entry.id, [1.0, 0.0, 0.0, 0.0], "m",
+                           [(0, 0, 900, [0.0, 1.0, 0.0, 0.0]), (1, 900, 1800, [0.0, 0.0, 1.0, 0.0])])
+    finally:
+        conn.close()
+    (hit,) = vec_search_multi({"m": [0.0, 0.0, 1.0, 0.0]}, n_results=5, db_path=tmp_db,
+                              include_chunks=True)
+    assert hit["id"] == entry.id and hit["chunk"] == {"start": 900, "end": 1800}
+    (whole,) = vec_search_multi({"m": [0.0, 0.0, 1.0, 0.0]}, n_results=5, db_path=tmp_db)
+    assert "chunk" not in whole

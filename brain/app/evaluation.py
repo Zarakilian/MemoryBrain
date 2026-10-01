@@ -30,10 +30,16 @@ def reciprocal_rank(ranked_ids: list[str], relevant: set[str]) -> float:
 
 def score_run(results: dict[str, list[str]], labels: dict[str, set[str]],
               ks: Iterable[int] = (5, 10)) -> dict:
-    """Average recall@k and MRR over labelled questions, with a row per question."""
+    """Average recall@k and MRR over labelled questions, with a row per question.
+    A question with no relevant ids is not labelled yet: it is skipped and
+    counted, never scored as a miss."""
     ks = tuple(ks)
     rows = []
+    skipped = 0
     for query, relevant in labels.items():
+        if not relevant:
+            skipped += 1
+            continue
         ranked = results.get(query, [])
         row = {"query": query, "relevant": sorted(relevant), "ranked": ranked[:max(ks)],
                "rr": reciprocal_rank(ranked, relevant)}
@@ -41,7 +47,7 @@ def score_run(results: dict[str, list[str]], labels: dict[str, set[str]],
             row[f"recall@{k}"] = recall_at_k(ranked, relevant, k)
         rows.append(row)
     n = len(rows)
-    report: dict = {"queries": n}
+    report: dict = {"queries": n, "skipped": skipped}
     for k in ks:
         report[f"recall@{k}"] = round(sum(r[f"recall@{k}"] for r in rows) / n, 4) if n else 0.0
     report["mrr"] = round(sum(r["rr"] for r in rows) / n, 4) if n else 0.0

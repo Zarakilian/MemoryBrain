@@ -1,27 +1,27 @@
 # tests/test_search.py
 import pytest
-from app.search import reciprocal_rank_fusion, hybrid_search
+from app.search import fuse, hybrid_search
 from unittest.mock import patch, AsyncMock
 
 
-def test_rrf_merges_two_lists_by_rank():
-    kw = [{"id": "a"}, {"id": "b"}, {"id": "c"}]
-    sem = [{"id": "b"}, {"id": "d"}, {"id": "a"}]
-    merged = reciprocal_rank_fusion(kw, sem)
-    # "b" appears in both at high rank — should score highest
-    assert merged[0] == "b"
-    assert "a" in merged
-    assert "d" in merged
+def _order(scores):
+    return sorted(scores, key=lambda i: scores[i], reverse=True)
 
 
-def test_rrf_empty_lists():
-    assert reciprocal_rank_fusion([], []) == []
+def test_fuse_merges_two_lists_by_rank():
+    scores = fuse(["a", "b", "c"], ["b", "d", "a"])
+    # "b" is near the top of both lists, so it scores highest
+    assert _order(scores)[0] == "b"
+    assert {"a", "c", "d"} <= set(scores)
+    assert scores["b"] == pytest.approx(1 / 62 + 1 / 61)
 
 
-def test_rrf_one_empty_list():
-    kw = [{"id": "x"}, {"id": "y"}]
-    merged = reciprocal_rank_fusion(kw, [])
-    assert merged == ["x", "y"]
+def test_fuse_empty_lists():
+    assert fuse([], []) == {}
+
+
+def test_fuse_one_empty_list_keeps_its_order():
+    assert _order(fuse(["x", "y"], [])) == ["x", "y"]
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,9 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
   - The REST inbox no longer marks messages read unless asked (`mark_read=true`).
   - The provider is chosen only by `MEMORYBRAIN_PROVIDER`; an API key alone no longer switches it.
   - An MCP write with no client name, header or `source` records the writer as `unknown` (was `mcp`).
+  - `RECENCY_DECAY_RATE` is gone: sessions, handovers and notes age by a fixed curve instead, and facts do not age.
+  - `as_of` must be an ISO date or datetime; anything else is an error instead of meaning "now".
+  - `GET /exchange/inbox` never marks messages read; `POST /exchange/inbox` does.
 
 ### Data safety
 

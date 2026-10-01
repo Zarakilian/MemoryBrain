@@ -151,10 +151,13 @@ async def handle_search_memory(
     record: bool = True,
 ) -> str:
     """record=False is a pure read: no recall boost, no retrieval row (GET /search)."""
-    results, degraded = await search_with_status(
-        query, limit=limit, project=project, type_filter=type_filter,
-        days=days, tags=tags, include_history=include_history, as_of=as_of,
-    )
+    try:
+        results, degraded = await search_with_status(
+            query, limit=limit, project=project, type_filter=type_filter,
+            days=days, tags=tags, include_history=include_history, as_of=as_of,
+        )
+    except ValueError as e:  # a bad as_of
+        return json.dumps({"error": str(e)})
     if record:
         try:
             record_recall([r["id"] for r in results],

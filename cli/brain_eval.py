@@ -8,6 +8,7 @@
 Labels hold real memory ids and questions, so every output path must be
 outside the repo.
 """
+import asyncio
 import json
 import sys
 import urllib.parse
@@ -18,7 +19,7 @@ for _root in (Path(__file__).resolve().parents[1] / "brain", Path(__file__).reso
         sys.path.insert(0, str(_root))
         break
 
-from app.evaluation import read_labels, score_run  # noqa: E402  (stdlib only)
+from app.evaluation import run_labels  # noqa: E402  (stdlib only)
 
 
 def _outside_repo(path: Path, repo: Path) -> bool:
@@ -45,17 +46,17 @@ def export_log(out: Path, get, repo: Path) -> int:
 def run(labels: Path, get, repo: Path, as_json: bool = False, out: Path = None) -> int:
     if out is not None and not _outside_repo(out, repo):
         return 1
-    results, wanted = {}, {}
-    for item in read_labels(labels):
-        query, project = item["query"], item.get("project")
+    def search(query, project):
         params = {"q": query, "limit": 10}
         if project:
             params["project"] = project
-        hits = get("/search?" + urllib.parse.urlencode(params))
-        key = f"{project}: {query}" if project else query
-        results[key] = [h["id"] for h in hits if isinstance(h, dict) and "id" in h]
-        wanted[key] = set(item.get("relevant") or [])
-    report = score_run(results, wanted)
+        return get("/search?" + urllib.parse.urlencode(params))
+
+    report = asyncio.run(run_labels(labels, search))
+    if not report["queries"]:
+        print(f"No labelled questions in {labels}: fill in the relevant memory ids first "
+              f"({report['skipped']} without any).")
+        return 1
     if out is not None:
         Path(out).write_text(json.dumps(report, indent=1), encoding="utf-8")
     if as_json:

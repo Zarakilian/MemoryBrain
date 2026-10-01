@@ -38,6 +38,13 @@ def test_run_prints_scores_and_the_worst_questions(tmp_path, capsys):
     assert "project=acme" in seen[0] and "q=db+host" in seen[0]
 
 
+def test_a_file_with_no_labelled_questions_is_refused(tmp_path, capsys):
+    labels = tmp_path / "labels.jsonl"
+    labels.write_text(json.dumps({"query": "db host", "relevant": []}) + "\n", encoding="utf-8")
+    code = brain_eval.run(labels, lambda path: [{"id": "m1"}], repo=tmp_path / "repo")
+    assert code == 1 and "no labelled questions" in capsys.readouterr().out.lower()
+
+
 def test_outputs_inside_the_repo_are_refused(tmp_path, capsys):
     repo = tmp_path / "repo"
     (repo / "eval").mkdir(parents=True)
