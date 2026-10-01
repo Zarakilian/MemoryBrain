@@ -137,8 +137,10 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
 - `brain upgrade` checks the clone and the volume, counts memories, stops the
   brain, backs the volume up outside the repo, rebuilds, waits for
   readiness, counts again and reinstalls hooks and skills. It refuses when
-  anything looks wrong. A hook or skill it replaces keeps a `.bak-<date>`
-  copy beside it.
+  anything looks wrong. A hook it replaces keeps a `.bak-<date>` copy beside
+  it. A skill you edited (one that matches no version this repo ever
+  shipped) is never replaced; the new version is saved beside it as
+  `SKILL.md.new`.
 - The session hook shows this project's brief only, rendered as data, and
   labels the next-session note with who wrote it and when.
 - The pre-compact hook captures the real transcript tail (or a recent

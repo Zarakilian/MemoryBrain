@@ -47,7 +47,7 @@ cd ~/memorybrain
 python3 cli/brain.py upgrade
 ```
 
-It refuses to start if the clone is old, if `.env` is missing, or if this folder has no brain volume. Then it counts memories, stops the brain, backs the volume up to `~/memorybrain-backups`, rebuilds, starts, waits for readiness, counts again, and reinstalls hooks and skills. A hook or skill it replaces keeps a `.bak-<date>` copy beside it.
+It refuses to start if the clone is old, if `.env` is missing, or if this folder has no brain volume. Then it counts memories, stops the brain, backs the volume up to `~/memorybrain-backups`, rebuilds, starts, waits for readiness, counts again, and reinstalls hooks and skills. A hook it replaces keeps a `.bak-<date>` copy beside it. A skill you edited is never replaced: the new version is saved beside it as `SKILL.md.new`, for you to merge by hand.
 
 **Expect:** lines like `✅ 1234 memories in memorybrain_brain_data`, `✅ Backup: …tar.gz`, `✅ 1234 memories after the upgrade (before: 1234)`, `reembed_pending: …`, `✅ Upgrade complete.`
 **If wrong:** it stops at the first problem and says which. Nothing after the failing step ran. The table at the end covers each message.

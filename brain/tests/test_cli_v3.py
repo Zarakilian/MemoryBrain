@@ -226,16 +226,66 @@ def test_upgrade_still_counts_when_readiness_never_comes(tmp_path, capsys):
     assert "120 memories after the upgrade" in out and "not ready" in out
 
 
-def test_skills_install_keeps_a_backup_of_a_skill_it_replaces(tmp_path):
-    from datetime import datetime
+def _skill_repo(tmp_path, text):
     repo = tmp_path / "repo"
     (repo / "skills" / "handover").mkdir(parents=True)
-    (repo / "skills" / "handover" / "SKILL.md").write_text("# stock v3\n", encoding="utf-8")
+    (repo / "skills" / "handover" / "SKILL.md").write_text(text, encoding="utf-8")
+    return repo
+
+
+def _installed_skill(tmp_path, text):
     skills = tmp_path / "skills"
     (skills / "handover").mkdir(parents=True)
-    (skills / "handover" / "SKILL.md").write_text("# my own version\n", encoding="utf-8")
-    changed = cli.install_skills(repo, skills, now=datetime(2026, 9, 30, 12, 0, 0))
-    assert changed == ["handover"]
+    (skills / "handover" / "SKILL.md").write_text(text, encoding="utf-8")
+    return skills
+
+
+def test_a_stock_skill_is_updated_and_keeps_a_backup(tmp_path):
+    import hashlib
+    repo = _skill_repo(tmp_path, "# stock v3\n")
+    skills = _installed_skill(tmp_path, "# stock v2\n")
+    stock = {hashlib.md5(b"# stock v2\n").hexdigest()}
+    result = cli.install_skills(repo, skills, now=datetime(2026, 9, 30, 12, 0, 0),
+                                stock_hashes=lambda rel: stock)
+    assert result == {"updated": ["handover"], "kept": []}
     assert (skills / "handover" / "SKILL.md").read_text(encoding="utf-8") == "# stock v3\n"
     backup = skills / "handover" / "SKILL.md.bak-20260930-120000"
-    assert backup.read_text(encoding="utf-8") == "# my own version\n"
+    assert backup.read_text(encoding="utf-8") == "# stock v2\n"
+
+
+def test_a_skill_you_edited_is_kept_and_the_new_one_saved_beside_it(tmp_path):
+    repo = _skill_repo(tmp_path, "# stock v3\n")
+    skills = _installed_skill(tmp_path, "# my own version\n")
+    result = cli.install_skills(repo, skills, stock_hashes=lambda rel: set())
+    assert result == {"updated": [], "kept": ["handover"]}
+    assert (skills / "handover" / "SKILL.md").read_text(encoding="utf-8") == "# my own version\n"
+    assert (skills / "handover" / "SKILL.md.new").read_text(encoding="utf-8") == "# stock v3\n"
+
+
+def test_a_new_skill_is_installed(tmp_path):
+    repo = _skill_repo(tmp_path, "# stock v3\n")
+    skills = tmp_path / "skills"
+    assert cli.install_skills(repo, skills, stock_hashes=lambda rel: set()) == \
+        {"updated": ["handover"], "kept": []}
+    assert (skills / "handover" / "SKILL.md").read_text(encoding="utf-8") == "# stock v3\n"
+
+
+def test_stock_versions_come_from_every_commit_that_touched_the_skill(tmp_path):
+    import hashlib
+
+    def fake(cmd, **kwargs):
+        if cmd[:2] == ["git", "log"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="aaa\nbbb\nccc\n", stderr="")
+        sha = cmd[2].split(":")[0]
+        if sha == "ccc":  # the commit that deleted it
+            return subprocess.CompletedProcess(cmd, 128, stdout=b"", stderr=b"fatal")
+        body = {"aaa": b"# v2\r\n", "bbb": b"# v1\n"}[sha]
+        return subprocess.CompletedProcess(cmd, 0, stdout=body, stderr=b"")
+
+    hashes = cli._stock_skill_hashes(tmp_path, "skills/handover/SKILL.md", run=fake)
+    assert hashes == {hashlib.md5(b"# v2\n").hexdigest(), hashlib.md5(b"# v1\n").hexdigest()}
+
+    def no_git(cmd, **kwargs):
+        raise FileNotFoundError("git")
+
+    assert cli._stock_skill_hashes(tmp_path, "skills/handover/SKILL.md", run=no_git) == set()

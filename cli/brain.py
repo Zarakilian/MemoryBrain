@@ -243,15 +243,40 @@ def install_hooks(repo: Path, hooks_dir: Path, now: datetime = None) -> list:
     return changed
 
 
-def install_skills(repo: Path, skills_dir: Path, now: datetime = None) -> list:
-    """Copy each skills/<name>/SKILL.md that differs. A skill that is replaced
-    (perhaps one you edited) keeps a .bak-<YYYYMMDD-HHMMSS> copy beside it.
-    Returns the skill names."""
+def _text_hash(data: bytes) -> str:
+    """md5 of a text file, line endings normalised (a CRLF checkout is the same file)."""
+    return hashlib.md5(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def _stock_skill_hashes(repo: Path, rel: str, run=subprocess.run) -> set:
+    """Hashes of every version of a repo file in its git history. An installed
+    copy that matches one is stock; anything else was edited by hand. Empty
+    when git is unavailable, which makes every differing copy count as edited."""
+    try:
+        log = run(["git", "log", "--format=%H", "--", rel], cwd=repo,
+                  capture_output=True, text=True)
+        hashes = set()
+        for sha in (log.stdout or "").split():
+            blob = run(["git", "show", f"{sha}:{rel}"], cwd=repo, capture_output=True)
+            if blob.returncode == 0:
+                hashes.add(_text_hash(blob.stdout))
+        return hashes
+    except (OSError, ValueError):
+        return set()
+
+
+def install_skills(repo: Path, skills_dir: Path, now: datetime = None,
+                   stock_hashes=None) -> dict:
+    """Install each skills/<name>/SKILL.md that differs from the installed copy.
+    A stock copy (any version this repo ever shipped) is replaced and keeps a
+    .bak-<YYYYMMDD-HHMMSS> copy. A copy you edited is never replaced: the new
+    version is saved beside it as SKILL.md.new. Returns {"updated", "kept"}."""
     stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
-    changed = []
+    stock = stock_hashes or (lambda rel: _stock_skill_hashes(repo, rel))
+    result = {"updated": [], "kept": []}
     src_root = repo / "skills"
     if not src_root.exists():
-        return changed
+        return result
     for skill_dir in sorted(src_root.iterdir()):
         skill_file = skill_dir / "SKILL.md"
         if not skill_dir.is_dir() or not skill_file.exists():
@@ -261,10 +286,21 @@ def install_skills(repo: Path, skills_dir: Path, now: datetime = None) -> list:
             continue
         dst_file.parent.mkdir(parents=True, exist_ok=True)
         if dst_file.exists():
+            if _text_hash(dst_file.read_bytes()) not in stock(f"skills/{skill_dir.name}/SKILL.md"):
+                shutil.copy2(skill_file, dst_file.with_name("SKILL.md.new"))
+                result["kept"].append(skill_dir.name)
+                continue
             shutil.copy2(dst_file, dst_file.with_name(f"{dst_file.name}.bak-{stamp}"))
         shutil.copy2(skill_file, dst_file)
-        changed.append(skill_dir.name)
-    return changed
+        result["updated"].append(skill_dir.name)
+    return result
+
+
+def _print_skills(result: dict) -> None:
+    for name in result["updated"]:
+        print(f"✅ Updated skill: {name}")
+    for name in result["kept"]:
+        print(f"ℹ️  Kept your edited skill: {name} (the new version is beside it as SKILL.md.new)")
 
 
 def cmd_setup(auto_detect: bool = False):
@@ -700,8 +736,7 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
     # 5. Hooks under their installed names, and skills.
     for hook in install_hooks(repo, home / ".claude" / "hooks"):
         print(f"✅ Updated hook: {hook}")
-    for skill in install_skills(repo, home / ".claude" / "skills"):
-        print(f"✅ Updated skill: {skill}")
+    _print_skills(install_skills(repo, home / ".claude" / "skills"))
     if not ready.get("ready"):
         broken = ", ".join(f"{k}: {v}" for k, v in (ready.get("checks") or {}).items()
                            if v != "ok")
@@ -760,8 +795,7 @@ def cmd_update():
     # 3. Reinstall hooks (under their installed names) and skills if changed
     for name in install_hooks(repo_path, Path.home() / ".claude" / "hooks"):
         print(f"✅ Updated hook: {name}")
-    for name in install_skills(repo_path, Path.home() / ".claude" / "skills"):
-        print(f"✅ Updated skill: {name}")
+    _print_skills(install_skills(repo_path, Path.home() / ".claude" / "skills"))
 
     print("\n✅ MemoryBrain updated successfully.")
     print("   Open a new Claude Code session to use the updated tools.")
