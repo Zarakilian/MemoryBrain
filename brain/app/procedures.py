@@ -30,9 +30,11 @@ def record_correction(rule: str, evidence: str = "", project: Optional[str] = No
                       writer: str = "", db_path: Optional[Path] = None) -> dict:
     """Store a proposed procedure. The same rule (same words, same project) a
     second time is a duplicate, never a second row."""
+    from .redact import redact
     path = db_path or _storage.DB_PATH
-    rule = " ".join((rule or "").split())
-    evidence = " ".join((evidence or "").split())
+    # Redacted first: the rule is the summary every brief carries once confirmed.
+    rule, _ = redact(" ".join((rule or "").split()))
+    evidence, _ = redact(" ".join((evidence or "").split()))
     project = project or SYSTEM_PROJECT
     if not rule:
         raise ValueError("rule must not be empty")
@@ -48,8 +50,6 @@ def record_correction(rule: str, evidence: str = "", project: Optional[str] = No
     if existing:
         return {**existing[0], "duplicate": True}
     content = rule + (f"\n\nWhat the user said: {evidence}" if evidence else "")
-    from .redact import redact
-    content, _ = redact(content)
     entry = MemoryEntry(content=content, summary=rule, type="procedure", project=project,
                         tags=["procedure"], source="record_correction", importance=4,
                         status="proposed", trust="agent", writer=writer or "mcp",

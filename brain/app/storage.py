@@ -368,7 +368,9 @@ def get_strengths(memory_ids: list[str], db_path: Path = DB_PATH) -> dict[str, f
 def set_belief_status(memory_id: str, approve: bool, actor: str,
                       db_path: Path = DB_PATH) -> bool:
     """Approve (active) or reject (archived) a proposed belief, audited. On
-    approval the belief speaks first for its sources, which sink a little."""
+    approval the belief speaks first for its sources, which sink a little, once:
+    a source an active belief already speaks for is not damped again. An older
+    active belief whose sources all sit inside this one is retired by it."""
     with _connect(db_path) as conn:
         cur = conn.execute(
             "UPDATE memories SET status = ? WHERE id = ? AND type = 'belief' AND status = 'proposed'",
@@ -377,11 +379,28 @@ def set_belief_status(memory_id: str, approve: bool, actor: str,
             return False
         _audit(conn, memory_id, "approve" if approve else "reject", actor)
         if approve:
-            conn.execute(
-                """UPDATE memories SET strength = max(?, strength * ?)
-                   WHERE id IN (SELECT dst_id FROM memory_links
-                                WHERE src_id = ? AND kind = 'derived_from')""",
-                (STRENGTH_FLOOR, BELIEF_SOURCE_DAMP, memory_id))
+            def sources(belief_id: str) -> set[str]:
+                return {r[0] for r in conn.execute(
+                    "SELECT dst_id FROM memory_links WHERE src_id = ? AND kind = 'derived_from'",
+                    (belief_id,))}
+
+            mine = sources(memory_id)
+            spoken_for: set[str] = set()
+            now = datetime.now(timezone.utc).isoformat()
+            for (other,) in conn.execute(
+                    """SELECT id FROM memories WHERE type = 'belief' AND status = 'active'
+                       AND id != ?""", (memory_id,)).fetchall():
+                theirs = sources(other)
+                spoken_for |= theirs & mine
+                if theirs and theirs <= mine:
+                    conn.execute("""UPDATE memories SET status = 'archived', superseded_by = ?,
+                                    valid_to = ? WHERE id = ? AND status = 'active'""",
+                                 (memory_id, now, other))
+                    _audit(conn, other, "supersede", actor, "a refreshed belief was approved",
+                           {"by": memory_id})
+            conn.executemany(
+                "UPDATE memories SET strength = max(?, strength * ?) WHERE id = ?",
+                [(STRENGTH_FLOOR, BELIEF_SOURCE_DAMP, s) for s in sorted(mine - spoken_for)])
         conn.commit()
     return True
 
@@ -466,9 +485,11 @@ def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH,
     memory is valid again, so its closure (superseded_by, invalidated_by,
     valid_to) is cleared; the audit row keeps the old values."""
     with _connect(db_path) as conn:
-        row = conn.execute("SELECT superseded_by, invalidated_by, valid_to FROM memories "
+        row = conn.execute("SELECT status, superseded_by, invalidated_by, valid_to FROM memories "
                            "WHERE id = ?", (memory_id,)).fetchone()
-        if row is None:
+        # Only an archived or done memory comes back: a proposed belief or rule
+        # becomes active through approval by the user, never through a restore.
+        if row is None or row["status"] not in ("archived", "done"):
             return False
         conn.execute("""UPDATE memories SET status = 'active', superseded_by = NULL,
                         invalidated_by = NULL, valid_to = NULL WHERE id = ?""", (memory_id,))

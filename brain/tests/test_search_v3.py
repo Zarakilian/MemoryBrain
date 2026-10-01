@@ -248,3 +248,11 @@ def test_chunk_vectors_compete_and_name_their_span(tmp_db):
     assert hit["id"] == entry.id and hit["chunk"] == {"start": 900, "end": 1800}
     (whole,) = vec_search_multi({"m": [0.0, 0.0, 1.0, 0.0]}, n_results=5, db_path=tmp_db)
     assert "chunk" not in whole
+
+
+@pytest.mark.asyncio
+async def test_history_and_as_of_never_return_a_proposal(brain):
+    proposal = await _add("Proposed belief: the export job is fragile.", "belief", status="proposed")
+    assert proposal not in await _ids("export job fragile", brain, include_history=True)
+    assert proposal not in await _ids("export job fragile", brain,
+                                      as_of=datetime.now(timezone.utc).isoformat())

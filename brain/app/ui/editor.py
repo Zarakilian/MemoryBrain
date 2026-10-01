@@ -258,6 +258,9 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
         raise HTTPException(422, f"type must be one of {ALL_TYPES}")
     if body.status is not None and body.status not in ("active", "archived"):
         raise HTTPException(422, "status must be active or archived")
+    if body.status == "active" and entry.status == "proposed":
+        raise HTTPException(422, "a proposed belief or rule is made active with its Approve or "
+                                 "Confirm button, not restored")
     if body.project is not None and get_project(body.project, db_path=DB_PATH) is None:
         raise HTTPException(422, f"Unknown project: {body.project}")
 
@@ -320,6 +323,9 @@ async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
     updated = get_memory(memory_id, db_path=DB_PATH)
     try:
         if content_changed:
+            from ..entities import index_entities
+            index_entities(memory_id, f"{updated.summary or ''}\n{updated.content}",
+                           db_path=DB_PATH)
             result = await index_memory_vectors(memory_id, updated.content, db_path=DB_PATH)
             if not result["embedded"]:
                 # The old vectors describe the old text: drop them so search

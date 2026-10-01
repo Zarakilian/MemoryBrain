@@ -199,3 +199,22 @@ def test_the_rest_twin_leaves_budget_and_system_lane_to_the_policy():
     from app.main import project_brief_endpoint
     params = inspect.signature(project_brief_endpoint).parameters
     assert params["max_chars"].default is None and params["include_system"].default is None
+
+
+
+def test_the_timeline_looks_back_from_the_as_of_moment(tmp_db):
+    then = datetime.now(timezone.utc) - timedelta(days=100)
+    old = _mem(tmp_db, "The gateway uses port 8080.", timestamp=then)
+    view = get_timeline(project="acme", days=30, as_of=(then + timedelta(days=5)).isoformat(),
+                        db_path=tmp_db)
+    assert old in [e["id"] for e in view["events"]]
+
+
+def test_the_as_of_timeline_leaves_out_what_was_deleted(tmp_db):
+    from app.storage import archive_memory_audited
+    gone = _mem(tmp_db, "A wrong fact about the gateway.",
+                timestamp=datetime.now(timezone.utc) - timedelta(days=10))
+    archive_memory_audited(gone, actor="ui", reason="wrong", db_path=tmp_db)
+    view = get_timeline(project="acme", days=60, as_of=datetime.now(timezone.utc).isoformat(),
+                        db_path=tmp_db)
+    assert gone not in [e["id"] for e in view["events"]]

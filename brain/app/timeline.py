@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -31,15 +32,20 @@ def get_timeline(
              FROM memories
              WHERE type IN ('session','handover','decision','fact','belief',
                             'open_loop','note')
-               AND timestamp >= datetime('now', ?)"""
-    params: list[Any] = [f"-{days} days"]
+               AND timestamp >= ?"""
+    moment = None
     if as_of:
         from .search import _as_of_moment
         moment = _as_of_moment(as_of)
         if moment is None:
             raise ValueError("as_of must be an ISO date or datetime")
+    # the window looks back from the moment asked about, not from today
+    params: list[Any] = [((moment or datetime.now(timezone.utc)) - timedelta(days=days)).isoformat()]
+    if moment is not None:
         at = moment.isoformat()
+        # an archived row with no validity end was removed as wrong, not superseded
         sql += """ AND status IN ('active', 'archived', 'done') AND timestamp <= ?
+                   AND NOT (status = 'archived' AND valid_to IS NULL)
                    AND (valid_from IS NULL OR valid_from <= ?)
                    AND (valid_to IS NULL OR valid_to > ?)"""
         params += [at, at, at]

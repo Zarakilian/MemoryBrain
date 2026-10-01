@@ -248,7 +248,10 @@ async def search_with_status(
     chunks = {r["id"]: r.get("chunk") for r in sem_results}
     ids = list(dict.fromkeys([*kw_rank, *sem_rank]))
     rows = _rows(ids, path)
-    ids = [i for i in ids if i in rows and (moment is None or _valid_at(rows[i], moment))]
+    # A proposal (a belief or rule awaiting the user) is never a search result,
+    # history and as_of included.
+    ids = [i for i in ids if i in rows and rows[i]["status"] != "proposed"
+           and (moment is None or _valid_at(rows[i], moment))]
 
     try:
         from .retrieval import feedback_boosts

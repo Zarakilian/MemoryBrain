@@ -105,3 +105,26 @@ def top_entities(project: Optional[str], limit: int = 40,
     return [{"name": r["name"], "kind": r["kind"], "mentions": r["mentions"],
              "memories": r["memories"], "memory_ids": (r["ids"] or "").split(",")[:3]}
             for r in rows]
+
+
+BACKFILL_META = "entities_backfilled_v3"
+
+
+def backfill_entities(db_path: Optional[Path] = None) -> int:
+    """Index every memory stored before entities existed (any 2.x brain), once.
+    Returns how many memories were indexed; 0 when it has already run."""
+    path = db_path or _storage.DB_PATH
+    if _storage.get_meta(BACKFILL_META, db_path=path):
+        return 0
+    conn = connect(path)
+    try:
+        rows = conn.execute(
+            """SELECT id, summary, content FROM memories m
+               WHERE NOT EXISTS (SELECT 1 FROM entity_mentions e WHERE e.memory_id = m.id)"""
+        ).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        index_entities(row["id"], f"{row['summary'] or ''}\n{row['content'] or ''}", db_path=path)
+    _storage.set_meta(BACKFILL_META, datetime.now(timezone.utc).isoformat(), db_path=path)
+    return len(rows)

@@ -330,6 +330,13 @@ async def handle_delete_memory(memory_id: str, reason: str = "") -> str:
 
 async def handle_restore_memory(memory_id: str, reason: str = "") -> str:
     """Undo an archive or a supersession: the memory is active and current again."""
+    current = get_memory(memory_id, db_path=DB_PATH)
+    if current is None:
+        return json.dumps({"error": f"Memory {memory_id} not found"})
+    if current.status not in ("archived", "done"):
+        return json.dumps({"error": f"Only an archived or done memory can be restored; this one "
+                                    f"is {current.status}. A proposed belief or rule waits for "
+                                    "the user's approval."})
     if not restore_memory(memory_id, actor=_mcp_actor(), reason=reason, db_path=DB_PATH):
         return json.dumps({"error": f"Memory {memory_id} not found"})
     return json.dumps({"restored": True, "id": memory_id})

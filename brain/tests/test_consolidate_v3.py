@@ -270,3 +270,101 @@ def test_migration_010_converts_old_open_loop_notes(tmp_path):
     with sqlite3.connect(db) as conn:
         row = conn.execute("SELECT type, tags FROM memories WHERE id = 'l1'").fetchone()
     assert row == ("open_loop", '["open_loop"]')
+
+
+# ------------------------------------------------------------- review follow-ups
+
+def test_citations_survive_dots_inside_a_sentence():
+    tags = {"aaaa1111", "bbbb2222"}
+    text = ("The job reads export.py nightly [m:aaaa1111]. Version 2.5 ships on "
+            "wiki.example.com [m:bbbb2222]. Unsourced claim. Claim one. [m:aaaa1111]")
+    assert cons.cited_sentences(text, tags) == [
+        "The job reads export.py nightly [m:aaaa1111].",
+        "Version 2.5 ships on wiki.example.com [m:bbbb2222].",
+        "Claim one. [m:aaaa1111]"]
+
+
+async def _loop_then(db, later_text, **later):
+    _mem(db, "Session one.\nTODO: rotate the backup encryption key\n", type_="session", age_days=3)
+    await cons.consolidate(project="acme", mode="light", db_path=db)
+    _mem(db, later_text, type_="session", age_days=1, **later)
+    await cons.consolidate(project="acme", mode="light", db_path=db)
+    (loop,) = _loops(db)
+    return loop
+
+
+@pytest.mark.asyncio
+async def test_not_done_does_not_close_a_loop(tmp_db, model):
+    loop = await _loop_then(tmp_db, "Session two. The backup encryption key rotation is not done yet.")
+    assert loop["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_an_archived_session_does_not_close_a_loop(tmp_db, model):
+    loop = await _loop_then(tmp_db, "Session two. We rotated the backup encryption key, fixed.",
+                            status="archived")
+    assert loop["status"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_one_word_loop_is_not_closed_by_any_done_sentence(tmp_db, model):
+    _mem(tmp_db, "Session one.\nTODO: deploy\n", type_="session", age_days=3)
+    await cons.consolidate(project="acme", mode="light", db_path=tmp_db)
+    _mem(tmp_db, "Session two. Deploy of the billing app is done.", type_="session", age_days=1)
+    await cons.consolidate(project="acme", mode="light", db_path=tmp_db)
+    (loop,) = _loops(tmp_db)
+    assert loop["status"] == "active"
+
+
+def _belief_over(db, sources, text="Belief [m:x]."):
+    belief = _mem(db, text, type_="belief", status="proposed")
+    _write_edges([{"src": belief, "dst": s, "kind": "derived_from", "weight": 1.0,
+                   "directed": 1, "meta": {}} for s in sources], db)
+    return belief
+
+
+def test_approving_a_refreshed_belief_retires_the_older_one_and_damps_once(tmp_db):
+    from app.storage import set_belief_status
+    src = [_mem(tmp_db, f"Source fact {i} about the export job.", type_="fact") for i in range(3)]
+    old = _belief_over(tmp_db, src[:2], "Old belief [m:x].")
+    assert set_belief_status(old, approve=True, actor="user", db_path=tmp_db)
+    after_old = _strengths(tmp_db)
+    new = _belief_over(tmp_db, src, "Refreshed belief [m:y].")
+    assert set_belief_status(new, approve=True, actor="user", db_path=tmp_db)
+    after_new = _strengths(tmp_db)
+    retired = get_memory(old, db_path=tmp_db)
+    assert retired.status == "archived" and retired.superseded_by == new
+    assert after_new[src[0]] == pytest.approx(after_old[src[0]])  # damped once, not twice
+    assert after_new[src[2]] < after_old[src[2]]                  # the new source sinks a little
+
+
+def test_a_rejected_cluster_is_not_proposed_again(tmp_db):
+    from app.storage import set_belief_status
+    src = [_mem(tmp_db, f"Source fact {i} about billing.", type_="fact") for i in range(3)]
+    belief = _belief_over(tmp_db, src)
+    assert set_belief_status(belief, approve=False, actor="user", db_path=tmp_db)
+    conn = connect(tmp_db)
+    try:
+        assert cons._already_believed(conn, src)
+    finally:
+        conn.close()
+
+
+def test_restore_never_activates_a_proposal(tmp_db):
+    from app.storage import restore_memory
+    belief = _mem(tmp_db, "Belief [m:x].", type_="belief", status="proposed")
+    assert restore_memory(belief, actor="mcp", db_path=tmp_db) is False
+    assert get_memory(belief, db_path=tmp_db).status == "proposed"
+
+
+def test_atlas_cannot_restore_a_proposal_either(tmp_db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    monkeypatch.setattr("app.ui.editor.DB_PATH", tmp_db)
+    belief = _mem(tmp_db, "Belief [m:x].", type_="belief", status="proposed")
+    r = TestClient(app, headers={"X-Brain-Client": "atlas"}).patch(
+        f"/api/ui/edit/memories/{belief}", json={"status": "active", "summary": "changed"})
+    assert r.status_code == 422 and "approve" in r.json()["detail"].lower()
+    stored = get_memory(belief, db_path=tmp_db)
+    assert stored.status == "proposed" and stored.summary != "changed"

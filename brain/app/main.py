@@ -121,6 +121,16 @@ async def lifespan(app: FastAPI):
             logger.info("auto-consolidate scheduler task created")
     except Exception:
         logger.exception("failed to start auto-consolidate scheduler")
+    # v3: entities for memories written before they existed (once, off the loop)
+    async def _entity_backfill():
+        try:
+            from .entities import backfill_entities
+            n = await asyncio.to_thread(backfill_entities, DB_PATH)
+            if n:
+                logger.info("entity backfill: %d memories indexed", n)
+        except Exception:
+            logger.exception("entity backfill failed; it runs again at the next start")
+    backfill_task = asyncio.create_task(_entity_backfill(), name="entity-backfill")
     # v3: throttled re-embed of vectors from older models (2.x vectors have model '')
     stop_reembed = asyncio.Event()
     reembed_task = None
@@ -134,7 +144,7 @@ async def lifespan(app: FastAPI):
         yield
     stop_sched.set()
     stop_reembed.set()
-    for task in (sched_task, reembed_task):
+    for task in (sched_task, reembed_task, backfill_task):
         if task is None:
             continue
         try:

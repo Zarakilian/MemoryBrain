@@ -112,6 +112,9 @@ LOOP_TAG = "open_loop"
 LOOP_LOOKBACK_DAYS = 30
 MAX_LOOPS_PER_RUN = 12
 LOOP_CLOSE_SHARE = 0.6
+LOOP_MIN_MATCH = 2  # a one-word loop is never closed by a stray "done"
+# "not done yet", "isn't fixed", "still open": a done-word that says the opposite
+_NEGATION_RE = re.compile(r"\b(?:not|never|no longer|yet)\b|n't\b|\bstill\b", re.IGNORECASE)
 _DONE_WORDS = frozenset({"done", "fixed", "closed", "resolved", "completed", "merged", "shipped"})
 _LOOP_MARKER_WORDS = frozenset({"open", "loop", "todo", "fixme", "next", "session", "still",
                                 "need", "needs", "question", "unresolved", "follow", "up"})
@@ -122,7 +125,10 @@ RUN_LOCK = asyncio.Lock()
 META_RUNNING = "consolidation_running_since"
 RUN_STALE_S = 2 * 3600
 _CITE_RE = re.compile(r"\[m:([^\]\s]{1,16})\]")
-_CITED_SENTENCE_RE = re.compile(r"[^.!?\n]+[.!?]*(?:[ \t]*\[m:[^\]\s]{1,16}\])*[.!?]?")
+# A sentence ends at . ! or ? followed by whitespace or the line end (with any
+# citations right after it), so export.py, 2.5 and wiki.example.com stay whole.
+_CITED_SENTENCE_RE = re.compile(
+    r".+?(?:[.!?]+(?:[ \t]*\[m:[^\]\s]{1,16}\])*(?=\s|$)|$)", re.MULTILINE)
 
 
 def _now() -> str:
@@ -228,11 +234,16 @@ def _retire_bloated_beliefs(conn, project: str, db_path: Path) -> int:
 
 def _already_believed(conn, cluster: list[str]) -> bool:
     """True if an active or proposed belief already derives from (most of)
-    this cluster — re-synthesising it would just churn tokens."""
+    this cluster, or the user rejected one that did: re-synthesising it would
+    just churn tokens, or refill the review queue with what was turned down."""
     rows = conn.execute(
         f"""SELECT l.src_id, COUNT(*) AS n FROM memory_links l
             JOIN memories b ON b.id = l.src_id
-            WHERE l.kind = 'derived_from' AND b.status IN ('active', 'proposed')
+            WHERE l.kind = 'derived_from'
+              AND (b.status IN ('active', 'proposed')
+                   OR (b.status = 'archived' AND EXISTS (
+                       SELECT 1 FROM memory_audit a
+                       WHERE a.memory_id = b.id AND a.action = 'reject')))
               AND l.dst_id IN ({','.join('?' * len(cluster))})
             GROUP BY l.src_id""",
         cluster,
@@ -397,8 +408,9 @@ def _words(text: str) -> set[str]:
 
 
 def _close_loops(conn, project: str) -> int:
-    """Close each active loop that a later session reports done: one sentence
-    holding a done-word and at least 60% of the loop's own words."""
+    """Close each active loop that a later active session reports done: one
+    sentence holding a done-word, no negation, and at least 60% of the loop's
+    own words (never fewer than two)."""
     loops = conn.execute(
         """SELECT id, content, timestamp FROM memories
            WHERE project = ? AND type = 'open_loop' AND status = 'active'""",
@@ -411,13 +423,17 @@ def _close_loops(conn, project: str) -> int:
         later = conn.execute(
             """SELECT id, content, timestamp FROM memories
                WHERE project = ? AND type IN ('session', 'handover') AND timestamp > ?
+                 AND status = 'active'
                ORDER BY timestamp ASC""",
             (project, loop["timestamp"])).fetchall()
         for session in later:
             done = False
             for sentence in re.split(r"(?<=[.!?])\s+|\n+", session["content"] or ""):
+                if _NEGATION_RE.search(sentence):
+                    continue
                 words = _words(sentence) | set(re.findall(r"[a-z]+", sentence.lower()))
-                if words & _DONE_WORDS and len(wanted & words) >= LOOP_CLOSE_SHARE * len(wanted):
+                need = max(LOOP_MIN_MATCH, LOOP_CLOSE_SHARE * len(wanted))
+                if words & _DONE_WORDS and len(wanted & words) >= need:
                     done = True
                     break
             if done:

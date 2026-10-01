@@ -65,3 +65,16 @@ async def test_ingest_indexes_entities_after_the_write(tmp_db, fake_provider, mo
                              project="acme"))
     names = {e["name"] for e in get_entities(project="acme", db_path=tmp_db)["entities"]}
     assert {"CHG-1177", "db01.internal"} <= names
+
+
+
+def test_entities_are_backfilled_once_for_an_upgraded_brain(tmp_db):
+    from app.entities import backfill_entities, top_entities
+    from app.models import MemoryEntry
+    from app.storage import add_memory
+    add_memory(MemoryEntry(content="The deploy to wiki.example.com failed, see INC-4821.", type="note",
+                           project="acme"), db_path=tmp_db)  # stored by 2.x: no entity index
+    assert backfill_entities(db_path=tmp_db) == 1
+    names = {e["name"].lower() for e in top_entities("acme", db_path=tmp_db)}
+    assert "wiki.example.com" in names and "inc-4821" in names
+    assert backfill_entities(db_path=tmp_db) == 0  # once only

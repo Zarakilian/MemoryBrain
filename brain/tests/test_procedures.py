@@ -88,3 +88,14 @@ def test_the_ui_confirms_and_rejects_rules(tmp_db, monkeypatch):
     assert client.post(f"/api/ui/edit/procedures/{keep}/confirm").status_code == 200
     assert client.post(f"/api/ui/edit/procedures/{drop}/reject").status_code == 200
     assert [p["id"] for p in active_procedures("acme", db_path=tmp_db)] == [keep]
+
+
+
+def test_a_rule_is_redacted_before_it_is_stored(tmp_db):
+    from app.storage import get_memory
+    token = "ghp_" + "a" * 36
+    rule = record_correction(f"Push the mirror with token {token} only", project="acme",
+                             evidence=f"he said use {token}", db_path=tmp_db)
+    stored = get_memory(rule["id"], db_path=tmp_db)
+    assert token not in stored.summary and token not in stored.content
+    assert "[REDACTED:github-token]" in stored.summary
