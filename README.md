@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Your local multi-AI memory bank</strong><br/>
-  Persistent, project-scoped context for Claude, Grok, Codex, Gemini — and anything that speaks MCP or REST.
+  Persistent, project-scoped context for Claude, Grok, Codex, Gemini, and anything that speaks MCP or REST.
 </p>
 
 <p align="center">
@@ -40,6 +40,10 @@ It is **not** a full Obsidian replacement. It is the brain your AIs share across
 | Pin what must never sink | Working-set pins excluded from decay |
 | Know which files a memory came from | Workspace index + `file_ref` edges (`brain scan`) |
 | See which files a memory came from, in the map | Files as crystals in the Nebula, a Files lens, a file page |
+| Learn how you want things done | Your corrections become rules, once you confirm them |
+| Know who wrote what, and how far to trust it | Writer and trust on every memory; briefs labelled as data |
+| Find the middle of a long handover | Chunked vectors, fused keyword and vector ranking, `as_of` history |
+| Never lose a write | Store first, WAL, atomic migrations with backups, archive instead of delete |
 
 ## Quick start
 
@@ -49,12 +53,16 @@ It is **not** a full Obsidian replacement. It is the brain your AIs share across
 ```bash
 git clone https://github.com/Zarakilian/MemoryBrain.git ~/memorybrain
 cd ~/memorybrain
-# master = MemoryBrain 2.x (there is no separate v2 branch to checkout)
-git checkout master
 cp .env.example .env
 # One command: Docker, models, MCP, hooks, skills
 python3 cli/brain.py setup --auto-detect
 ```
+
+**Already running MemoryBrain?** Upgrade in about 15 minutes with
+[docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md), or paste
+[Prompt 3](docs/AI_INSTALL_PROMPTS.md#prompt-3-upgrade-an-existing-install-to-3x)
+into an AI assistant and let it drive. `python3 cli/brain.py upgrade` backs up,
+rebuilds and checks the memory count in one step.
 
 **Requirements:** Docker Desktop (or Compose v2), Git, ~4–8 GB free disk; Python 3.11+ recommended for `brain setup`.
 
@@ -64,9 +72,9 @@ Open **http://localhost:7741/ui** · MCP SSE **http://localhost:7741/sse** · Gr
 |-----|-----|
 | [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | First-time install & verify |
 | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | Architecture & portable setup |
-| [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) | Let an AI drive install/migrate |
+| [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) | Let an AI drive an install or an upgrade |
 | [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md) | Claude / Grok / Codex / Gemini / REST |
-| [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) | Move a 2.x brain to 3.0 |
+| [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) | Upgrade an existing install to the newest 3.x |
 | [CHANGELOG.md](CHANGELOG.md) | Every change, breaking ones first |
 
 ## Architecture (short)
@@ -120,25 +128,48 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
 8. After heavy weeks: `brain_admin(action="consolidate")`, then `brain_admin(action="list_conflicts")` and resolve
 9. When a search result was *actually used*: `brain_admin(action="record_retrieval", args={…, "chosen_id": …})`. Reading it with `get_memory` soon after the search counts too.
 
-## What's new
+## What's new in MemoryBrain 3
 
-### v3.1.0 — the brain you can see
-- **The Brain layout:** the Constellation opens on a glass brain, two hemispheres and their folds, with each project as a lobe.
-- **A camera that frames:** every shape settles into view from its best side and centres where you can see it.
-- **Living synapses:** curved filaments fire from the star you touch, far stars twinkle, layouts morph.
-- **The familiar:** a comet, a swarm of wisps, stardust and click bursts; the spider runs on eight legs and swings on real silk; everything dozes when your hand is still.
-- UI only, nothing to migrate. See [CHANGELOG.md](CHANGELOG.md).
+Version 3 rebuilt how the brain stores, finds, trusts and learns, and 3.1
+lets you watch it do so. Releases: **3.1.0** (the Atlas) and **3.0.0** (the
+engine). [CHANGELOG.md](CHANGELOG.md) has every detail, breaking changes
+first. Upgrading takes about 15 minutes with
+[docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
 
-### v3.0.0 — a brain you can trust
-- **Nothing is lost:** every write is stored first, in one transaction; WAL, atomic migrations with automatic backups; deletes archive with an audit row.
-- **Search finds it:** questions work, long memories are chunked, fused keyword and vector ranking, `as_of` for "what was true then".
-- **Provenance:** every memory records its writer and trust; the brief is labelled as data, not instructions; beliefs wait for your approval.
-- **It learns your rules, with your OK:** `record_correction` proposes a rule, you confirm it, and it leads every brief.
-- **Lighter for agents:** 15 core tools plus `brain_admin`; explicit `refs` on `add_memory`.
-- **Safer by default:** secrets redacted on write, loopback-only Host names, a write guard without a key, no GET side effects.
-- **Breaking:** the core tool profile, the write-protection header rule, `delete_memory` archives, proposed beliefs. See [CHANGELOG.md](CHANGELOG.md) and upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
+### It learns, but only with your OK
+- **Your corrections become rules.** When you correct how an agent works, it calls `record_correction` and the rule is stored as *proposed*. You confirm it in Atlas or with `brain procedures`; no tool can. Confirmed rules lead every brief under "How you want things done", for every assistant.
+- **The sleep cycle proposes, you approve.** Consolidation distils related memories into beliefs that cite their sources sentence by sentence, and drops any sentence it cannot cite. A belief waits as *proposed* until you approve it in Atlas or with `brain beliefs`.
+- **Search learns from what you use.** Reading a result with `get_memory` soon after a search counts as feedback and lifts it for later queries that share a term. `brain_admin(action="record_retrieval")` does the same on purpose.
+- **Loose ends tie themselves.** An open loop closes when a later memory reports it done. Contradictions are flagged for review; with `MEMORYBRAIN_JUDGE=on` the model must confirm each one first.
+- **It knows the things in your notes.** Hosts, tickets, ids, paths, products and environment variables are pulled out of every memory into entity cards.
+- **You can measure it.** `brain eval` scores search on your own labelled questions (recall@k and MRR).
 
-### v2.4.0 — Synapse: the agents talk to each other
+### It keeps what you give it
+- Every write is stored first, in one transaction, before anything that can fail. If the summariser or the embedder fails, the memory is kept and embedded later.
+- SQLite runs in WAL mode. Each migration runs in one transaction, after a copy of the database. Deletes archive with an audit row and can be restored.
+- The same content in the same project is stored once. Only near-identical facts and decisions supersede on their own; a superseded fact keeps its history, and `as_of` shows what was true on a date.
+
+### It finds what you ask for
+- Questions work as questions. Long memories are split into chunks with their own vectors, so the middle of a long handover is findable.
+- Keyword and vector results are fused, then adjusted by age, strength and feedback, and each comes with an excerpt around the match. When the embedder is down, search still answers from keywords and says so.
+
+### It tells you who said what
+- Every memory records its writer and its trust: `user`, `agent`, `derived` or `imported`.
+- The project brief opens by saying it is data, not instructions. It shows trust and writer on every item, puts your own items first, and fits a 6,000-character budget.
+
+### It is lighter and safer for agents
+- Agents see 15 core MCP tools by default (33 before). `brain_admin` runs 24 less common actions with the same arguments, and `refs` on `add_memory` names the files, urls and tasks a memory is about.
+- Secrets are redacted on every write. The server answers loopback names only, a write without an API key needs a JSON body or a client header, and a GET never changes anything.
+- `brain upgrade` backs up, rebuilds and checks the memory count. CI scans every push for machine data and runs the full test suite.
+
+### You can watch it think (3.1)
+- The Constellation opens on a glass brain: two hemispheres with their folds, each project a lobe, synapses that fire from the star you touch.
+- Every layout settles into view from its best side and centres where you can see it.
+- The cursor familiar has a comet, a swarm of wisps and click bursts, and a spider that runs on eight legs and hangs on real silk. Everything dozes when your hand is still, and stays still under reduced motion.
+
+### Earlier releases
+
+#### v2.4.0 — Synapse: the agents talk to each other
 - **Agent Exchange** — threads (task/review/question/handoff/discussion) +
   addressed messages between Claude/Grok/Codex/Gemini; pull-based inbox with
   read cursors. 7 new MCP tools, REST twins under `/exchange/*`.
@@ -146,12 +177,12 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
   donuts, and the Synapse view: agents as neurons, messages as firings.
 - Protocol: `skills/agent-exchange/SKILL.md` · design: `docs/AGENT_EXCHANGE.md`.
 
-### v2.3.1 — multi-AI transport clarity + hook hardening
+#### v2.3.1 — multi-AI transport clarity + hook hardening
 - Session-ingest readiness accepts modern `vector_store` (legacy `chromadb` still works)
 - Connecting-assistants docs: streamable HTTP `/mcp` (Grok), SSE (Claude), stdio (Codex)
 - CODEX/GROK guides aligned with recommended transports from `/status`
 
-### v2.3.0 — ops, feedback, bridges
+#### v2.3.0 — ops, feedback, bridges
 - **Nightly light auto-sleep** (`MEMORYBRAIN_AUTO_CONSOLIDATE=true`) — repair, conflicts, loops, decay; optional full LLM beliefs
 - **`record_retrieval`** + ranking feedback from chosen results
 - **Project brief policy** — Atlas ⚙ policy + MCP get/set
@@ -159,13 +190,13 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
 - **Timeline & entity cards** — MCP + REST + `/api/ui/*`
 - Professional **logo** for README and Atlas brand
 
-### v2.2.0 — multi-AI context bank
+#### v2.2.0 — multi-AI context bank
 Token-budgeted `get_project_brief`, pins, conflict MCP tools, write policy (`decision` / `open_loop`). See [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md).
 
-### v2.1.0 — the brain that sleeps
+#### v2.1.0 — the brain that sleeps
 Beliefs, `conflicts_with`, strength/decay, Atlas ☾ sleep. Provenance via `derived_from`.
 
-### v2.0.0 — one database + Nebula
+#### v2.0.0 — one database + Nebula
 sqlite-vec in `brain.db`, automatic graph, local Atlas UI (Stream / Constellation / Chronicle).
 
 ## Project detection
@@ -229,7 +260,7 @@ See [`.env.example`](.env.example). Highlights:
 | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | Architecture & portable setup |
 | [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md) | Wire any AI |
 | [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md) | Briefs, pins, conflicts |
-| [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) | Upgrade 2.x to 3.0 |
+| [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) | Upgrade an existing install to the newest 3.x |
 | [CHANGELOG.md](CHANGELOG.md) | What changed, release by release |
 | [MIGRATION.md](MIGRATION.md) | Older upgrades & backups |
 | [AGENTS.md](AGENTS.md) | Rules for every AI working in this repo |

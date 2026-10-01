@@ -1,31 +1,41 @@
-# Upgrade MemoryBrain to 3.0
+# Upgrade MemoryBrain to 3.x
 
-**If your clone was made before 2026-09-30, rename that folder first and clone the repo again. The old history must never be pushed.**
-
-**Purpose:** move an existing 2.x brain to 3.0 without losing a memory.
-**Audience:** anyone running MemoryBrain in Docker, comfortable with a terminal.
-**Done when:** `/readiness` says `"ready": true`, the memory count matches the count before the upgrade, and `reembed_pending` is falling towards 0.
-**Last verified:** 2026-10-01
-**Time:** about 10 minutes, then a background re-embed (about 1 minute per 25 memories) you do not have to wait for.
-**You need:** the folder of your live install, Docker running, Python 3 on the host.
+**Purpose:** move a running MemoryBrain (2.5 or any 3.x) to the newest 3.x release without losing a memory.
+**Audience:** you at a terminal, or an AI assistant. For an AI, paste [Prompt 3](AI_INSTALL_PROMPTS.md#prompt-3-upgrade-an-existing-install-to-3x): it holds these steps plus the rules an AI must keep.
+**Done when:** `/status` reports the new version, `/readiness` says `"ready": true`, and the count printed after the upgrade equals the count before it.
+**Last verified:** 2026-10-01, on a real 3.0.0 to 3.1.0 upgrade.
+**Time:** 10 to 15 minutes. From 2.x, a background re-embed follows (about a minute per 25 memories). Search keeps working while it runs.
+**You need:** Docker running, Git, Python 3 on the host, and the folder of your live install.
 **Out of scope:** first installs ([GETTING_STARTED.md](GETTING_STARTED.md)), upgrades from 0.5.x ([MIGRATION.md](../MIGRATION.md) first).
 
-The examples use `~/memorybrain` for the install folder and `~/memorybrain-backups` for backups. Use your own folder names.
+One command does the work: `python3 cli/brain.py upgrade`. It refuses every unsafe state, backs the data volume up before it touches anything, and counts your memories before and after. Most of the time below is reading its output.
 
-## Why the folder name matters
+The examples use `~/memorybrain` for the install folder and `~/memorybrain-backups` for backups. Use your own names. On Windows, run the commands in PowerShell, use `python` where this says `python3`, and `curl.exe` where it says `curl`.
 
-Docker Compose names the data volume after the folder: a folder called `memorybrain` owns the volume `memorybrain_brain_data`. A new clone with a different folder name starts an empty brain next to your real one. So the new clone takes the **old folder's name**, and the old folder gets a new one.
+## 0. Find your live install (changes nothing)
 
-## 1. Rename the old clone and clone again
-
-Only if your clone predates 2026-09-30. Check from inside it:
+Docker Compose names the data volume after the install folder: a folder called `memorybrain` owns the volume `memorybrain_brain_data`. Ask Docker which folder that is:
 
 ```bash
+docker compose ls --all
+```
+
+**Expect:** a row named after your install (usually `memorybrain`) whose `CONFIG FILES` path ends in `docker-compose.yml` inside the live folder. Run every step below from that folder.
+**If wrong:** no row means Compose has never run here, so look for the volume with `docker volume ls` (it is `<folder>_brain_data`). Two MemoryBrain rows mean two brains: stop and work out which one holds your memories.
+
+Then check which history the folder has:
+
+```bash
+cd ~/memorybrain
 git log --max-parents=0 --format=%s
 ```
 
-**Expect:** `MemoryBrain 2.5.0: application only, clean start`. If you see that, skip to step 2.
-**If wrong:** anything else is the old history. Rename and re-clone:
+**Expect:** `MemoryBrain 2.5.0: application only, clean start`. Skip to step 2.
+**If wrong:** anything else is the history the clean start replaced. Do step 1.
+
+## 1. Old history only: rename the folder and clone again
+
+The new clone takes the **old folder's name**, so it finds the same volume. A clone under any other name would start an empty brain next to your real one.
 
 ```bash
 cd ~
@@ -36,18 +46,24 @@ cp memorybrain-old/.env memorybrain/.env
 
 PowerShell: `Rename-Item memorybrain memorybrain-old`, the same `git clone`, then `Copy-Item memorybrain-old\.env memorybrain\.env`.
 
-Renaming the folder does not stop the running brain or touch its volume. **Never push from `memorybrain-old`.** Keep it only as a rollback path, then delete it once 3.0 has run for a while.
+**Expect:** the clone completes and the new folder has a `.env`.
+**If wrong:** a refused rename means something has a file open in that folder. Close terminals and editors that sit in it, then try again.
+
+Renaming does not stop the running brain or touch its volume. **Never push from `memorybrain-old`.** Keep it only as a rollback path, and delete it once the new version has run for a while.
 
 ## 2. Upgrade with one command
 
-From the new clone:
+From the live folder (skip `git pull` if you just cloned):
 
 ```bash
 cd ~/memorybrain
+git pull
 python3 cli/brain.py upgrade
 ```
 
-It refuses to start if the clone is old, if `.env` is missing, or if this folder has no brain volume. Then it counts memories, stops the brain, backs the volume up to `~/memorybrain-backups`, rebuilds, starts, waits for readiness, counts again, and reinstalls hooks and skills. A hook it replaces keeps a `.bak-<date>` copy beside it. A skill you edited is never replaced: the new version is saved beside it as `SKILL.md.new`, for you to merge by hand. Merge it soon: a kept skill may call a tool that the core profile hides (for example `get_project_files`), which most clients cannot call until it goes through `brain_admin`.
+It refuses to start if the clone is old, if `.env` is missing, if `.env` names a cloud key without `MEMORYBRAIN_PROVIDER`, or if this folder has no brain volume. Then it counts memories, stops the brain, backs the volume up to `~/memorybrain-backups`, rebuilds, starts, waits for readiness, counts again, and reinstalls hooks and skills. A hook it replaces keeps a `.bak-<date>` copy beside it. A skill you edited is never replaced: the new version is saved beside it as `SKILL.md.new`, for you to merge by hand.
+
+**Use `upgrade`, never `update`, on a live brain.** `brain update` pulls and rebuilds without the backup and without the count check.
 
 **Expect:** lines like `✅ 1234 memories in memorybrain_brain_data`, `✅ Backup: …tar.gz`, `✅ 1234 memories after the upgrade (before: 1234)`, `reembed_pending: …`, `✅ Upgrade complete.`
 **If wrong:** it stops at the first problem and says which. Nothing after the failing step ran. The table at the end covers each message.
@@ -74,24 +90,41 @@ docker compose up -d
 ## 3. Verify
 
 ```bash
+curl -s localhost:7741/status
 curl -s localhost:7741/readiness
-docker compose exec brain python -c "import sqlite3; print(sqlite3.connect('/app/data/brain.db').execute('SELECT COUNT(*) FROM memories').fetchone()[0])"
 ```
 
-**Expect:** `"ready": true` with every check `ok`, and the same count as before. `reembed_pending` falls by about 25 a minute: old vectors are rebuilt with 3.0's prompts and chunks in the background, and search keeps working while it runs.
-**If wrong:** a lower count means stop and restore (see Rollback). `"ready": false` is usually an Ollama model that is not pulled yet.
+**Expect:** `/status` shows the version in this folder's `VERSION` file. `/readiness` shows `"ready": true` with every check `ok`. From 2.x, `reembed_pending` falls by about 25 a minute while old vectors are rebuilt; search keeps working meanwhile.
+**If wrong:** `"ready": false` is usually an Ollama model that is not pulled yet (see the table). A count that fell means stop and restore (see Rollback).
 
-Then open `http://localhost:7741/ui/doctor`. **Expect:** every line PASS.
+Then open `http://localhost:7741/ui/doctor`. **Expect:** every line PASS. A plain reload of an open Atlas tab picks up the new UI, because every asset link carries the new build stamp.
 
-## 4. Check each assistant
+## 4. A separate development clone
+
+Only if you also keep a clone for development, apart from the live install:
+
+1. Rename it and clone again, as in step 1. Any folder name works, because a dev clone owns no volume.
+2. In the new clone, turn on the hygiene hooks, so every commit and push is checked for machine data:
+
+   ```bash
+   git config core.hooksPath .githooks
+   ```
+
+3. Copy the old clone's `.local/` folder into the new one. It holds your machine notes and private hygiene patterns, and git ignores it.
+
+**Expect:** `git log --max-parents=0 --format=%s` in the new clone shows the clean-start line. **Never push from the old clone.**
+
+## 5. Check each assistant
 
 | Assistant | What to do |
 |---|---|
-| Claude Code | Start a new session. The hooks were reinstalled; the session start now shows this project's brief only. Agents see 15 core tools, `brain_admin` among them, which runs the rest. |
+| Claude Code | Start a new session. The hooks were reinstalled; the session start shows this project's brief only. Agents see 15 core tools, `brain_admin` among them, which runs the rest. |
 | Grok | Streamable HTTP carries no client name, so pass `source="grok"`, or send an `X-Brain-Agent: grok` header if your config can. Copy `skills/log-everything/SKILL_GROK.md` over your Grok copy only if you never edited it. |
 | Codex | Restart Codex so stdio MCP reloads. Point `~/.codex/AGENTS.md` at `brain_admin` for the less common tools. |
 | Gemini | Restart it. The stdio entry is unchanged. |
 | Any prompt that calls an old tool by name | It still works. To list every tool again, set `MEMORYBRAIN_TOOLS=full` in `.env`, then `docker compose up -d brain`. |
+
+Merge any `SKILL.md.new` soon: a kept skill may call a tool the core profile hides (for example `get_project_files`), which most clients can only reach through `brain_admin`.
 
 ## If it fails
 
@@ -99,15 +132,17 @@ Then open `http://localhost:7741/ui/doctor`. **Expect:** every line PASS.
 |---|---|---|
 | `This clone predates the 2026-09-30 clean start` | `git log --max-parents=0` in this folder | Do step 1 |
 | `No .env in …` | Is this the new clone? | Copy `.env` from the old folder |
-| `No volume memorybrain_brain_data …` | `docker volume ls` | Run from the folder whose name owns the volume, or set `COMPOSE_PROJECT_NAME` |
-| `The backup did not reach …` | Is Docker running on this machine, and can it see the backup folder? | Fix the path, `docker compose start brain`, run again |
+| `Your .env sets … but not MEMORYBRAIN_PROVIDER` | Which provider your brain really uses | Add `MEMORYBRAIN_PROVIDER=gemini`, `openai` or `ollama` to `.env`, run again |
+| `No volume memorybrain_brain_data …` | `docker compose ls --all`, `docker volume ls` | Run from the folder whose name owns the volume, or set `COMPOSE_PROJECT_NAME` |
+| `The backup did not reach …` | Is Docker running, and can it see the backup folder? | Fix the path, `docker compose start brain`, run again |
 | `Failed while building the new image` | `docker compose build brain` output | Fix it, then `docker compose up -d brain` starts the old image again |
 | `Memory count fell from …` | Nothing else. Stop here | Rollback, below |
 | `running but not ready` | `curl -s localhost:7741/readiness` | Usually `docker compose exec ollama ollama pull embeddinggemma` |
+| The Constellation shows 2D only | Is WebGL on in this browser? | After a graphics reset, Chrome can block 3D until the browser restarts. Restart it |
 
 ## Rollback
 
-From the new folder, stop the brain, then put the backup back. The first command removes the 3.0 database files so a newer WAL file cannot be replayed onto the older copy:
+From the new folder, stop the brain, then put the backup back. The first command removes the new database files so a newer WAL file cannot be replayed onto the older copy:
 
 ```bash
 docker compose stop brain
@@ -119,12 +154,13 @@ docker compose -p memorybrain up -d --build
 
 **This replaces the database with the backup.** Memories written after the backup are lost. `-p memorybrain` makes the old folder use the same volume despite its new name.
 
-Then put the 2.x hooks and skills back: in `~/.claude/hooks` and in each folder under `~/.claude/skills`, copy the newest `*.bak-<date>` file over the file it was made from. The v3 versions call `brain_admin` and `record_correction`, which 2.x does not have.
+Coming back from 3.x to 2.x, also put the 2.x hooks and skills back: in `~/.claude/hooks` and in each folder under `~/.claude/skills`, copy the newest `*.bak-<date>` file over the file it was made from. The v3 versions call `brain_admin` and `record_correction`, which 2.x does not have. Between two 3.x releases, the hooks and skills need nothing.
 
-A faster source than the tar, if the brain itself is fine: the migration runner copied the database to `/app/data/backups/brain-pre-009_v3-<time>.db` inside the volume just before upgrading it.
+A faster source than the tar, if the brain itself is fine: before each migration the runner copies the database to `/app/data/backups/` inside the volume.
 
 ## What I have not verified
 
 - The Grok and Codex config keys for custom headers. Check your client's own MCP docs before adding `X-Brain-Agent`.
 - Timings come from one machine. A large brain takes longer to back up and to re-embed.
-- The rollback was written from the backup format `brain upgrade` produces, not rehearsed on a real 3.0 brain.
+- The rollback was written from the backup format `brain upgrade` produces, not rehearsed on a real brain.
+- `docker compose ls --all` output was read on Docker with the Compose v2 plugin. An older standalone `docker-compose` may not have `ls`.

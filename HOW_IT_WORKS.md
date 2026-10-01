@@ -1,9 +1,9 @@
-# How MemoryBrain 3.0 works
+# How MemoryBrain 3 works
 
 **Purpose:** explain where a memory goes from the moment an agent writes it to the moment it shows up in a brief, and what happens when a part is down.
 **Audience:** engineers running or changing MemoryBrain. You know Docker, SQLite and HTTP.
 **Done when:** you can say which component handles each step below, and what each failure in the degraded-mode table costs you.
-**Last verified:** 2026-10-01 (version 3.0.0)
+**Last verified:** 2026-10-01 (version 3.1.0; 3.1 changed only the Atlas UI)
 
 Setup lives in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), upgrades in [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md), wiring each assistant in [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md). Every setting is in [.env.example](.env.example).
 

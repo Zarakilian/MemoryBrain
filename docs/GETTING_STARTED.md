@@ -180,7 +180,7 @@ folder called `memorybrain`); `docker volume ls` shows yours.
 
 ## Upgrading
 
-- **From 2.x to 3.0:** follow [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md). If your clone was
+- **From 2.x or an older 3.x:** follow [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md). If your clone was
   made before 2026-09-30, rename it and clone again first. Then
   `python3 cli/brain.py upgrade` backs up, rebuilds and checks the memory count.
 - **From 0.5.x:** back up (see above), then follow [MIGRATION.md](../MIGRATION.md),
@@ -212,7 +212,7 @@ Doctor UI: http://localhost:7741/ui/doctor
 | [HOW_IT_WORKS.md](../HOW_IT_WORKS.md) | Architecture and portable setup detail |
 | [CONNECTING_ASSISTANTS.md](CONNECTING_ASSISTANTS.md) | Wire Claude / Grok / Codex / Gemini / REST |
 | [CONTEXT_BANK_V2.2.md](CONTEXT_BANK_V2.2.md) | Briefs, pins, conflicts, write policy |
-| [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md) | Move a 2.x brain to 3.0 |
+| [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md) | Upgrade an existing install to the newest 3.x |
 | [MIGRATION.md](../MIGRATION.md) | Older upgrades and data safety |
 | [AI_INSTALL_PROMPTS.md](AI_INSTALL_PROMPTS.md) | Let an AI drive install/migrate |
 
@@ -222,5 +222,5 @@ Doctor UI: http://localhost:7741/ui/doctor
 
 - **`master`** — only active line. MemoryBrain 3.x lives here.  
 - Feature work → short-lived branches → merge to `master` → delete branch.  
-- Release tags: `v3.0.0`, `v2.5.0`, `v2.4.0`, etc.  
+- Release tags: `v3.1.0`, `v3.0.0`, `v2.5.0`, etc.  
 - Historical branches (`feature/memorybrain-2.0`, etc.) are removed once fully merged.
