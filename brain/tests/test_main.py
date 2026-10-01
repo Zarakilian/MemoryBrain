@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 from unittest.mock import patch, AsyncMock, MagicMock
-from app.main import app
+from app.main import app, read_version
 
 client = TestClient(app)
 
@@ -20,7 +20,7 @@ def test_status_endpoint_returns_structure(tmp_db, monkeypatch):
             data = resp.json()
             assert "project_count" in data
             assert "version" in data
-            assert data["version"] == "2.5.0"
+            assert data["version"] == read_version()  # test_release_v3 ties it to VERSION
             assert "mcp" in data
             assert data["mcp"]["tool_count"] == 35
             assert data["mcp"]["profile"] in ("core", "full") and len(data["mcp"]["core_tools"]) == 15

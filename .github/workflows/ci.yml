@@ -1,0 +1,30 @@
+# Every push and pull request: the repo-hygiene scan, then the full test suite
+# inside the same image the brain runs in, with no network and as the
+# unprivileged brain user. The private hygiene patterns never leave the
+# author's machines, so CI applies the generic rules only.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Repo hygiene (generic rules)
+        run: python3 cli/check_repo_hygiene.py
+
+      - name: Build the image
+        run: docker build -q -f brain/Dockerfile -t memorybrain-ci .
+
+      - name: Tests (no network, brain user)
+        run: >
+          docker run --rm --network none --user brain --entrypoint python
+          memorybrain-ci -m pytest -q -p no:cacheprovider

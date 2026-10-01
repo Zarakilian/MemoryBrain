@@ -243,8 +243,11 @@ def install_hooks(repo: Path, hooks_dir: Path, now: datetime = None) -> list:
     return changed
 
 
-def install_skills(repo: Path, skills_dir: Path) -> list:
-    """Copy each skills/<name>/SKILL.md that differs. Returns the skill names."""
+def install_skills(repo: Path, skills_dir: Path, now: datetime = None) -> list:
+    """Copy each skills/<name>/SKILL.md that differs. A skill that is replaced
+    (perhaps one you edited) keeps a .bak-<YYYYMMDD-HHMMSS> copy beside it.
+    Returns the skill names."""
+    stamp = (now or datetime.now()).strftime("%Y%m%d-%H%M%S")
     changed = []
     src_root = repo / "skills"
     if not src_root.exists():
@@ -257,6 +260,8 @@ def install_skills(repo: Path, skills_dir: Path) -> list:
         if _file_hash(dst_file) == _file_hash(skill_file):
             continue
         dst_file.parent.mkdir(parents=True, exist_ok=True)
+        if dst_file.exists():
+            shutil.copy2(dst_file, dst_file.with_name(f"{dst_file.name}.bak-{stamp}"))
         shutil.copy2(skill_file, dst_file)
         changed.append(skill_dir.name)
     return changed

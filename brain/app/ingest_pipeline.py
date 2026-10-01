@@ -155,10 +155,19 @@ async def _embed(entry: MemoryEntry, chunks: list, warnings: list[str]):
 def _store(entry: MemoryEntry, model: str, parent, chunks: list, chunk_vectors: list,
            superseded: list[str], warnings: list[str]) -> None:
     """One transaction: the row, its vectors and any supersession closures.
-    If it fails nothing is written and the error propagates."""
+    If it fails nothing is written and the error propagates. A vector store
+    that will not load does not stop the write: the row is stored without
+    vectors, flagged embedded=0, and the re-embed job adds them later."""
     on_sqlite_vec = get_backend() == "sqlite_vec"
     closed_at = entry.valid_from or entry.timestamp.isoformat()
-    conn = connect(DB_PATH, vec=True)
+    try:
+        conn = connect(DB_PATH, vec=True)
+    except Exception as exc:
+        logger.warning("vector store unavailable for %s (%s); storing without vectors",
+                       entry.id, type(exc).__name__)
+        warnings.append(f"vector store unavailable: {type(exc).__name__}")
+        parent, entry.embedded = None, False
+        conn = connect(DB_PATH)
     try:
         with conn:
             insert_memory(conn, entry)

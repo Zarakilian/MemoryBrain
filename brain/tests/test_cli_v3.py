@@ -224,3 +224,18 @@ def test_upgrade_still_counts_when_readiness_never_comes(tmp_path, capsys):
     assert _upgrade(tmp_path, fake, ready=False) == 1
     out = capsys.readouterr().out
     assert "120 memories after the upgrade" in out and "not ready" in out
+
+
+def test_skills_install_keeps_a_backup_of_a_skill_it_replaces(tmp_path):
+    from datetime import datetime
+    repo = tmp_path / "repo"
+    (repo / "skills" / "handover").mkdir(parents=True)
+    (repo / "skills" / "handover" / "SKILL.md").write_text("# stock v3\n", encoding="utf-8")
+    skills = tmp_path / "skills"
+    (skills / "handover").mkdir(parents=True)
+    (skills / "handover" / "SKILL.md").write_text("# my own version\n", encoding="utf-8")
+    changed = cli.install_skills(repo, skills, now=datetime(2026, 9, 30, 12, 0, 0))
+    assert changed == ["handover"]
+    assert (skills / "handover" / "SKILL.md").read_text(encoding="utf-8") == "# stock v3\n"
+    backup = skills / "handover" / "SKILL.md.bak-20260930-120000"
+    assert backup.read_text(encoding="utf-8") == "# my own version\n"

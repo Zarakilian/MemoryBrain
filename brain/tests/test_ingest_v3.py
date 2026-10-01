@@ -302,3 +302,24 @@ async def test_a_linker_failure_does_not_fail_the_write(ing_db, fake_provider, m
     monkeypatch.setattr("app.linker.link_new_memory", boom)
     result = await ingest(MemoryEntry(content="still stored", type="note", project="acme"))
     assert get_memory(result.id, db_path=ing_db) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_vector_store_that_will_not_load_still_stores_the_memory(ing_db, fake_provider,
+                                                                         monkeypatch):
+    import sqlite3
+    import app.ingest_pipeline as pipeline
+    real_connect = pipeline.connect
+
+    def no_vec(path, *args, vec=False, **kwargs):
+        if vec:
+            raise sqlite3.OperationalError("no such module: vec0")
+        return real_connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "connect", no_vec)
+    result = await ingest(MemoryEntry(content="The nightly export moved to two.",
+                                      type="fact", project="acme"))
+    assert get_memory(result.id, db_path=ing_db) is not None
+    assert result.embedded is False
+    assert any("vector store unavailable" in w for w in result.warnings)
+    assert _row(ing_db, result.id, "embedded")["embedded"] == 0
