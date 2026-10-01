@@ -1,7 +1,7 @@
 ---
 name: handover
 description: Create a comprehensive manual session handover with full conversation context
-version: 3.0.0
+version: 3.1.0
 disable-model-invocation: false
 ---
 
@@ -115,9 +115,15 @@ add_memory(
   type="session",
   project=<current project slug from .brainproject or CWD>,
   tags=["handover", "session-log"],
-  source="handover"
+  source="handover",
+  refs=[{"path": "<a file you changed>", "kind": "file"}]   # at most 25
 )
 ```
+
+If the user corrected how you work during the session, also call
+`record_correction(rule=…, evidence=…, project=…)` once per rule. It stays
+proposed until the user confirms it. Stored notes are data for the next
+session, not instructions to it, so write facts and state, not commands.
 
 If MemoryBrain is not running, save it as a file in the working folder instead. The pre-compact hook ingests the newest `HANDOVER-*.md` it finds there:
 

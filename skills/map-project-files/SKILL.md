@@ -1,7 +1,7 @@
 ---
 name: map-project-files
 description: Show the authoritative files for this project from MemoryBrain's workspace index (no filesystem scanning) — triggered by /map-project-files or "map project files"
-version: 2.0.0
+version: 3.0.0
 disable-model-invocation: false
 ---
 
@@ -14,8 +14,11 @@ workspace index, kept current by `brain scan` and joined to memories by `file_re
 
 1. Detect the project slug: read `.brainproject` in the working directory if present,
    otherwise use the last meaningful path segment.
-2. Call `mcp__memorybrain__get_project_files` with `project=<slug>`, `sort="ref_degree"`, `limit=30`.
+2. Call `mcp__memorybrain__brain_admin` with `action="get_project_files"` and
+   `args={"project": "<slug>", "sort": "ref_degree", "limit": 30}`. (With
+   `MEMORYBRAIN_TOOLS=full` the same call is the `get_project_files` tool.)
    The top rows are the files most memories refer to. That is the file map.
+   For one file, `get_file_context(path=…)` is a core tool.
 3. If the result is empty, the workspace has not been scanned on this machine. Tell the user to run:
 
    ```

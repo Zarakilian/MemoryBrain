@@ -1,7 +1,7 @@
 ---
 name: log-everything
 description: Log current session to MemoryBrain — saves a session summary as handover memory and prompts for next-session notes
-version: 1.0.0
+version: 2.0.0
 disable-model-invocation: false
 ---
 
@@ -31,6 +31,22 @@ Call the `add_memory` MCP tool with:
 - `project`: the project slug from Step 1
 - `tags`: `["session-log"]`
 - `source`: `"log-everything"`
+- `refs`: the files you changed, as `[{"path": "src/app.py", "kind": "file"}, …]` (at most 25)
+
+The brain redacts known secret shapes, but never put secrets in the summary.
+
+## Step 3b — Record corrections
+
+If the user corrected how you work during this session (a preference, a rule,
+a convention) and you have not recorded it yet, call `record_correction` once
+per rule:
+
+- `rule`: the rule as one short instruction, e.g. "Always open a pull request, never push to master"
+- `evidence`: a short quote of what the user said
+- `project`: the project slug, or leave it out when the rule applies everywhere
+
+The rule stays proposed until the user confirms it (Atlas, or `brain procedures`).
+Never record a rule the user did not state.
 
 ## Step 4 — Ask for next-session notes
 

@@ -1,7 +1,7 @@
 # Connecting Any AI Assistant to MemoryBrain
 
 > First install? See [GETTING_STARTED.md](GETTING_STARTED.md).  
-> Default branch: **`master`** = MemoryBrain 2.x.
+> Default branch: **`master`** = MemoryBrain 3.x.
 
 MemoryBrain speaks **MCP** (Model Context Protocol) over two transports plus
 a plain **REST API**. Anything that can use one of these three can use the
@@ -20,26 +20,37 @@ snippet lands in.
 
 Do not point Grok at `/sse` — Grok POSTs initialize to the URL and classic SSE returns 405.
 
-Both MCP doors expose the same **33 tools** (v2.5). The main ones:
+Every MCP door exposes the same tools. Version 3 lists **15 core tools** by
+default, so an agent loads far less schema at session start:
 
-Core: `search_memory`, `get_memory`, `add_memory`, `delete_memory`,
-`get_recent_context`, `list_projects`, `get_startup_summary`,
-`get_related_memories`, `get_memory_graph`, `consolidate_memory`.
+| Group | Tools |
+|---|---|
+| Read and write | `search_memory`, `get_memory`, `add_memory` |
+| Session start | `get_project_brief`, `get_startup_summary`, `get_recent_context` |
+| Projects and files | `pin_memory`, `set_project_info`, `get_file_context` |
+| Other agents | `get_agent_inbox`, `post_task`, `reply_to_thread`, `get_thread` |
+| Learning and the rest | `record_correction`, `brain_admin` |
 
-Context bank: `get_project_brief`, `list_conflicts`, `resolve_conflict`,
-`dismiss_conflict`, `pin_memory`, `unpin_memory`, `list_pins`.
+`brain_admin(action, args)` runs everything else with the same arguments as
+the full tool: `delete_memory` (archives), `restore_memory`, `get_related`,
+`get_graph`, `get_timeline`, `get_entities`, `record_retrieval`,
+`list_conflicts`, `resolve_conflict`, `dismiss_conflict`, `list_pins`,
+`unpin_memory`, `consolidate`, `rebuild_graph`, `rebuild_file_links`,
+`reembed`, `get_policy`, `set_policy`, `list_threads`, `update_task_status`,
+`get_agent_stats`, `get_workspace_map`, `get_project_files`, `list_projects`.
 
-Ops: `record_retrieval`, `get_timeline`, `get_entities`,
-`get_project_policy`, `set_project_policy`.
+Set `MEMORYBRAIN_TOOLS=full` in the live `.env` (then restart the brain) to
+list all 35 tools again. A tool that is not listed still answers when called
+by name, so older prompts keep working, but most clients only let the model
+call listed tools, so use `brain_admin` in core mode.
 
-Synapse (v2.4 Agent Exchange): `post_task`, `get_agent_inbox`,
-`reply_to_thread`, `update_task_status`, `list_threads`, `get_thread`,
-`get_agent_stats`. See [AGENT_EXCHANGE.md](AGENT_EXCHANGE.md) and
-[CROSS_AI_ASSIST.md](CROSS_AI_ASSIST.md).
+The brain records who wrote each memory: the MCP client's own name when the
+transport carries it (SSE and stdio do), else an `X-Brain-Agent` request
+header, else the `source` argument. A client on streamable HTTP that can send
+headers should send `X-Brain-Agent: <its name>`.
 
-Workspace (v2.5): `set_project_info`, `get_workspace_map`, `get_project_files`, `get_file_context`.
-
-See [CONTEXT_BANK_V2.2.md](CONTEXT_BANK_V2.2.md) and [GETTING_STARTED.md](GETTING_STARTED.md).
+See [AGENT_EXCHANGE.md](AGENT_EXCHANGE.md), [CROSS_AI_ASSIST.md](CROSS_AI_ASSIST.md)
+and [GETTING_STARTED.md](GETTING_STARTED.md).
 
 If your container has a different name, find it with `docker ps`
 (look for the image built from this repo).
@@ -124,8 +135,9 @@ that is the only part that varies.
 ## REST — for assistants (or scripts) without MCP
 
 ```bash
-# search (hybrid; falls back to keyword when the embedding provider is down)
-curl -s "localhost:7741/api/ui/search?q=deploy+checklist&limit=5"
+# search (hybrid; falls back to keyword when the embedding provider is down;
+# read-only: a REST search records nothing)
+curl -s "localhost:7741/search?q=deploy+checklist&limit=5"
 
 # recent activity and projects
 curl -s localhost:7741/api/ui/stats
@@ -142,9 +154,12 @@ read and write the brain with plain HTTP calls.
 
 ## Notes
 
-- **Auth:** reads under `/api/ui/*` are open on loopback; writes
-  (`/ingest/*`, `/api/ui/edit/*`, admin) require the `X-Brain-Key` header
-  whenever `BRAIN_API_KEY` is set in `.env`.
+- **Auth:** the brain answers only loopback Host names (add more with
+  `MEMORYBRAIN_ALLOWED_HOSTS`). Reads under `/api/ui/*` are open on loopback.
+  Writes (`/ingest/*`, `/api/ui/edit/*`, admin) require the `X-Brain-Key`
+  header whenever `BRAIN_API_KEY` is set in `.env`. Without a key, a write
+  needs `Content-Type: application/json` or an `X-Brain-Client` header, so a
+  web page cannot write to the brain behind your back.
 - **Installing with an AI's help:** the strict, model-agnostic prompts in
   [AI_INSTALL_PROMPTS.md](AI_INSTALL_PROMPTS.md) drive a full install or
   migration with any assistant.

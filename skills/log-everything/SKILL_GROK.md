@@ -45,7 +45,7 @@ Be specific: SHAs, env var **names** (not values), URLs of public pages, test ev
 
 ## Step 2: MemoryBrain (always try)
 
-Prefer MCP tools if connected (`add_memory` or the ingest equivalents). Grok MCP is configured with `X-Brain-Key` when `BRAIN_API_KEY` is set on the live service.
+Prefer MCP tools if connected (`add_memory` or the ingest equivalents). Grok MCP is configured with `X-Brain-Key` when `BRAIN_API_KEY` is set on the live service. Pass `refs=[{"path": "<file>", "kind": "file"}, …]` (at most 25) for the files you changed. If your MCP config can send headers, add `X-Brain-Agent: grok` so the brain records Grok as the writer.
 
 If the MCP handshake failed, use HTTP. **Auth:** if the live install's `.env` has a non-empty `BRAIN_API_KEY`, send header `X-Brain-Key: <value>` on every request (do not print the key). Where the live install lives on this machine is in the machine's `.local/` notes.
 
@@ -77,6 +77,8 @@ X-Brain-Key: <from live .env if set>
 ```
 
 If MemoryBrain is offline (`/status` or `/readiness` fails even with the key), record that in the confirm step and continue with files.
+
+**Corrections.** If the user corrected how you work this session and you have not recorded it yet, call `record_correction(rule=…, evidence=…, project=…)` once per rule (leave `project` out when it applies everywhere). It stays proposed until the user confirms it. Never record a rule the user did not state.
 
 Timeouts of 30 to 120 s on ingest can happen (embedding). Retry once; do not block forever.
 

@@ -1,6 +1,6 @@
 # Synapse — the Agent Exchange (v2.4)
 
-**Status:** implemented in this branch
+**Status:** implemented. Version 3 changes are marked below.
 **Problem:** Grok, Codex, Claude (and Gemini) all share one MemoryBrain, but they cannot *address each other*. Today the human is the message bus — copy-pasting Grok's diff into Codex for review, pasting Codex's verdict back to Grok. Synapse makes MemoryBrain itself the bus.
 
 ## The idea in one paragraph
@@ -39,7 +39,7 @@ Design choices:
 - **Agent names are normalized** (`claude-code` → `claude`, `ChatGPT`/`codex-cli` → `codex`, …) so analytics and addressing stay coherent no matter how each client identifies itself.
 - **Refs, not blobs.** Messages carry pointers (memory ids, commit hashes, file paths), not code dumps. The reviewed artifact lives where it already lives.
 
-## MCP tools (7 new → 29 total)
+## MCP tools (7 new in v2.4)
 
 | Tool | Purpose |
 |------|---------|
@@ -51,7 +51,9 @@ Design choices:
 | `get_thread` | Full transcript of one thread. |
 | `get_agent_stats` | Analytics: per-agent memory + message counts, per-project shares, interaction edges. |
 
-REST twins live under `/exchange/*` (API-key protected like other writes) for scripts, plus read-only `/api/ui/agents/*` for the Atlas UI.
+REST twins live under `/exchange/*` (API-key protected like other writes) for scripts, plus read-only `/api/ui/agents/*` for the Atlas UI. The REST inbox does not mark messages read unless you pass `mark_read=true`.
+
+**Version 3:** the core tool list keeps `post_task`, `get_agent_inbox`, `reply_to_thread` and `get_thread`. `update_task_status`, `list_threads` and `get_agent_stats` run through `brain_admin`, for example `brain_admin(action="update_task_status", args={"thread_id": "…", "status": "done"})`. A thread keeps the `from_agent` you pass; a blank one is filled from your MCP client's name. Titles are capped at 200 characters, bodies at 20,000, and refs at 50.
 
 ## Session protocol addition (all agents)
 
@@ -74,7 +76,7 @@ Read-only, like all Atlas surfaces. Three zones:
 2. **Per-project share** — donut charts per project of agent contribution (memories + messages), so you can see e.g. Grok owns 70% of project A while Codex dominates project B.
 3. **Synapse view** — the fun one: agents as glowing neuron nodes, projects as constellations; interaction edges (who talks to whom) pulse with animated "firings" whose frequency is proportional to recent message volume. Pure canvas, no new vendor deps, honors the existing Nebula aesthetic.
 
-Memory attribution uses normalized `memories.source`; message attribution is exact (`from_agent`). Sources that match no known agent land in "other".
+Memory attribution uses normalized `memories.source`; message attribution is exact (`from_agent`). Sources that match no known agent land in "other". Version 3 also stores `memories.writer` on every memory: the MCP client's name, else an `X-Brain-Agent` header, else the source.
 
 ## Non-goals (deliberately)
 
