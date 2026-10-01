@@ -22,7 +22,7 @@ jobs:
         run: python3 cli/check_repo_hygiene.py
 
       - name: Build the image
-        run: docker build -q -f brain/Dockerfile -t memorybrain-ci .
+        run: docker build --progress=plain -f brain/Dockerfile -t memorybrain-ci .
 
       - name: Tests (no network, brain user)
         run: >
