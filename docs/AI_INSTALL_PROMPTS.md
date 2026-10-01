@@ -221,13 +221,15 @@ STEPS
    me what to start.
 2. Find the live install and its version (this changes nothing):
      docker compose ls --all
-     curl -s localhost:7741/status
    EXPECT: a row named after the install (usually memorybrain) whose CONFIG
    FILES path ends in docker-compose.yml inside the live folder. Call that
    folder LIVE and tell me its path and project name; if I told you a
-   folder, they must match. Note "version" from /status as VERSION_BEFORE
-   (or "not running"). If there are two MemoryBrain rows, STOP and ask me
-   which one holds my memories.
+   folder, they must match. If there are two MemoryBrain rows, STOP and ask
+   me which one holds my memories. Then, in LIVE:
+     docker compose exec -T brain cat VERSION
+   Note what it prints as VERSION_BEFORE ("unknown" if it prints an error:
+   an old image may not carry the file). Do not use /status for this: it
+   needs the API key, and the key stays in .env.
 3. Check the history of LIVE:
      cd <LIVE>
      git log --max-parents=0 --format=%s
@@ -256,14 +258,18 @@ STEPS
    message says .env sets a cloud key without MEMORYBRAIN_PROVIDER, ask me
    which provider my brain uses; only after I answer, add
    MEMORYBRAIN_PROVIDER=<my answer> to .env and run the upgrade again.
-6. Verify:
-     curl -s localhost:7741/status
+6. Verify, in LIVE:
+     docker compose exec -T brain cat VERSION
+     cat VERSION                      (PowerShell: Get-Content VERSION)
      curl -s localhost:7741/readiness
-   EXPECT: /status "version" equals the VERSION file in LIVE, and
-   /readiness has "ready": true with every check "ok". reembed_pending may
-   be above 0 and falling: old vectors re-embed in the background and
+   EXPECT: the first two print the same version, and /readiness has
+   "ready": true with every check "ok" (it needs no key). reembed_pending
+   may be above 0 and falling: old vectors re-embed in the background and
    search works meanwhile. Then ask me to open
    http://localhost:7741/ui/doctor and confirm every line reads PASS.
+   If you are an assistant connected to this brain over MCP, your tools
+   dropped while it restarted: that is expected, and a new session
+   reconnects.
 7. Only if I keep a separate development clone (ask me). In its parent
    folder: rename it to <dev>-old, git clone the repo into <dev>, then in
    <dev> run

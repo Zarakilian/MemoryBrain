@@ -2,7 +2,7 @@
 
 **Purpose:** move a running MemoryBrain (2.5 or any 3.x) to the newest 3.x release without losing a memory.
 **Audience:** you at a terminal, or an AI assistant. For an AI, paste [Prompt 3](AI_INSTALL_PROMPTS.md#prompt-3-upgrade-an-existing-install-to-3x): it holds these steps plus the rules an AI must keep.
-**Done when:** `/status` reports the new version, `/readiness` says `"ready": true`, and the count printed after the upgrade equals the count before it.
+**Done when:** the running brain reports the new version, `/readiness` says `"ready": true`, and the count printed after the upgrade equals the count before it.
 **Last verified:** 2026-10-01, on a real 3.0.0 to 3.1.0 upgrade.
 **Time:** 10 to 15 minutes. From 2.x, a background re-embed follows (about a minute per 25 memories). Search keeps working while it runs.
 **You need:** Docker running, Git, Python 3 on the host, and the folder of your live install.
@@ -90,11 +90,12 @@ docker compose up -d
 ## 3. Verify
 
 ```bash
-curl -s localhost:7741/status
+docker compose exec -T brain cat VERSION
+cat VERSION
 curl -s localhost:7741/readiness
 ```
 
-**Expect:** `/status` shows the version in this folder's `VERSION` file. `/readiness` shows `"ready": true` with every check `ok`. From 2.x, `reembed_pending` falls by about 25 a minute while old vectors are rebuilt; search keeps working meanwhile.
+**Expect:** the first two lines print the same version: the running brain is this folder's release. `/readiness` shows `"ready": true` with every check `ok`. From 2.x, `reembed_pending` falls by about 25 a minute while old vectors are rebuilt; search keeps working meanwhile. (`/status` shows the version too, but answers 401 without `-H "X-Brain-Key: …"` when `BRAIN_API_KEY` is set. `/readiness` never needs the key.)
 **If wrong:** `"ready": false` is usually an Ollama model that is not pulled yet (see the table). A count that fell means stop and restore (see Rollback).
 
 Then open `http://localhost:7741/ui/doctor`. **Expect:** every line PASS. A plain reload of an open Atlas tab picks up the new UI, because every asset link carries the new build stamp.
@@ -163,4 +164,4 @@ A faster source than the tar, if the brain itself is fine: before each migration
 - The Grok and Codex config keys for custom headers. Check your client's own MCP docs before adding `X-Brain-Agent`.
 - Timings come from one machine. A large brain takes longer to back up and to re-embed.
 - The rollback was written from the backup format `brain upgrade` produces, not rehearsed on a real brain.
-- `docker compose ls --all` output was read on Docker with the Compose v2 plugin. An older standalone `docker-compose` may not have `ls`.
+- `docker compose ls --all` was run on Docker with the Compose v2 plugin on Windows, where `CONFIG FILES` shows a Windows path. An older standalone `docker-compose` may not have `ls`.
