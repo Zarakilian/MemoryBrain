@@ -26,8 +26,10 @@
   function savedLayout() {
     try {
       var v = localStorage.getItem(LAYOUT_STORE);
-      return (window.NebulaLayouts && window.NebulaLayouts.MODES.indexOf(v) >= 0) ? v : "organic";
-    } catch (e) { return "organic"; }
+      var L = window.NebulaLayouts;
+      if (L && L.MODES.indexOf(v) >= 0) return v;
+      return (L && L.DEFAULT) || "organic";      // first visit: the brain
+    } catch (e) { return (window.NebulaLayouts && window.NebulaLayouts.DEFAULT) || "organic"; }
   }
   function layoutLabel() {
     var m = savedLayout();
@@ -259,7 +261,15 @@
           else { n.vx += (-t - n.x) * k; n.vy += (c.y * 0.9 - n.y) * 0.02 * alpha; }
         });
       });
-    } else if (m === "web" || m === "orb") {
+    } else if (m === "web" || m === "orb" || m === "brain") {
+      /* flat, the brain is its two hemispheres: lobes left and right */
+      if (m === "brain") {
+        var lobes = L.brainLobes(nodes, planeR * 1.4);
+        Object.keys(lobes).forEach(function (p) {
+          var lb = lobes[p].side === 0 ? lobes[p].left : lobes[p];
+          centres[p] = { x: lb.x, y: lb.z * 0.7 };
+        });
+      }
       graph2d.d3Force("web", function (alpha) {
         var k = 0.2 * alpha;
         nodes.forEach(function (n) {
@@ -350,8 +360,10 @@
   /* the world holds the pointer only when the lens is on AND we are 3D */
   function syncFocus() {
     var neb = nebula();
-    if (neb) neb.setFocus(document.body.dataset.lens === "constellation"
-                          && mode === "3d");
+    if (!neb) return;
+    /* the stars centre in the lens canvas, not behind the rail */
+    if (neb.setFrameElement) neb.setFrameElement(document.getElementById("constellation"));
+    neb.setFocus(document.body.dataset.lens === "constellation" && mode === "3d");
   }
 
   function params() {

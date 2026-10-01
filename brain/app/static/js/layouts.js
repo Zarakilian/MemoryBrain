@@ -6,9 +6,238 @@
 
 (function () {
   var L = window.NebulaLayouts = {};
-  L.MODES = ["organic", "orb", "flow_down", "flow_right", "web", "tree"];
-  L.LABELS = { organic: "Organic", orb: "Orb", flow_down: "Flow down",
+  L.MODES = ["brain", "organic", "orb", "flow_down", "flow_right", "web", "tree"];
+  L.LABELS = { brain: "Brain", organic: "Organic", orb: "Orb", flow_down: "Flow down",
                flow_right: "Flow right", web: "Web", tree: "Tree" };
+  L.DEFAULT = "brain";
+
+  /* ---------------------------------------------------------- the Brain
+     Two hemispheres side by side (x), longer front to back (z, front is +z)
+     than they are tall (y). Each is an ellipsoid whose inner half is
+     squashed into a flat medial wall, so the walls almost touch across a
+     narrow longitudinal fissure. Sizes are fractions of one radius R, so
+     the 3D world can scale the brain by node count. */
+  L.BRAIN = { rx: 0.46, ry: 0.5, rz: 0.8, gap: 0.03, medial: 0.3 };
+
+  /* where a hemisphere's centre sits on x (side -1 left, +1 right), at R = 1 */
+  L.hemiCentre = function (side) {
+    var B = L.BRAIN;
+    return side * (B.gap + B.medial * B.rx);
+  };
+
+  /* a project's lobe: a point just under the cortex. Sides are balanced by
+     node count (biggest projects first, each to the lighter hemisphere); a
+     project holding over a third of the nodes spans both hemispheres
+     (side 0, with a left and a right lobe). Within a side, lobes spread
+     over the lateral surface on a Fibonacci spiral. Deterministic. */
+  L.brainLobes = function (nodes, R) {
+    var B = L.BRAIN, count = {}, total = 0;
+    nodes.forEach(function (n) {
+      var p = n.project || "";
+      count[p] = (count[p] || 0) + 1;
+      total++;
+    });
+    var list = Object.keys(count).sort(function (a, b) {
+      return count[b] - count[a] || (a < b ? -1 : 1);
+    });
+    var load = [0, 0], members = [[], []], out = {};
+    list.forEach(function (p) {
+      if (list.length > 1 && count[p] > total * 0.35) {
+        out[p] = { side: 0 };
+        load[0] += count[p] / 2; load[1] += count[p] / 2;
+        members[0].push(p); members[1].push(p);
+        return;
+      }
+      var s = load[0] <= load[1] ? 0 : 1;
+      load[s] += count[p];
+      members[s].push(p);
+      out[p] = { side: s ? 1 : -1 };
+    });
+    var GA = Math.PI * (3 - Math.sqrt(5));
+    [0, 1].forEach(function (s) {
+      var side = s ? 1 : -1, m = Math.max(1, members[s].length);
+      members[s].forEach(function (p, j) {
+        var y = m === 1 ? 0.15 : 0.8 - 1.6 * (j + 0.5) / m;
+        var r = Math.sqrt(Math.max(0, 1 - y * y)), a = GA * j * 1.7 + (s ? 0.9 : 0);
+        var x = 0.35 + 0.65 * Math.abs(Math.cos(a)) * r, z = Math.sin(a) * r;
+        var len = Math.sqrt(x * x + y * y + z * z) || 1;
+        var pt = { x: L.hemiCentre(side) * R + side * B.rx * R * (x / len) * 0.8,
+                   y: B.ry * R * (y / len) * 0.8, z: B.rz * R * (z / len) * 0.8 };
+        if (out[p].side === 0) out[p][s ? "right" : "left"] = pt;
+        else { out[p].x = pt.x; out[p].y = pt.y; out[p].z = pt.z; }
+      });
+    });
+    return out;
+  };
+
+  /* ------------------------------------------- the brain's folded skin
+     Seeded Perlin noise, so the folds are identical on every load. The
+     sulci (grooves) follow the noise's zero lines, which meander like the
+     real ones; the gyri between them stay broad and round. */
+  var PERM = (function () {
+    var p = [], i, seed = 7919;
+    for (i = 0; i < 256; i++) p[i] = i;
+    for (i = 255; i > 0; i--) {
+      seed = (seed * 16807) % 2147483647;
+      var j = seed % (i + 1), t = p[i]; p[i] = p[j]; p[j] = t;
+    }
+    var out = new Uint8Array(512);
+    for (i = 0; i < 512; i++) out[i] = p[i & 255];
+    return out;
+  })();
+  function fade(t) { return t * t * t * (t * (t * 6 - 15) + 10); }
+  function mix(t, a, b) { return a + t * (b - a); }
+  function grad(h, x, y, z) {
+    h &= 15;
+    var u = h < 8 ? x : y, v = h < 4 ? y : (h === 12 || h === 14 ? x : z);
+    return ((h & 1) ? -u : u) + ((h & 2) ? -v : v);
+  }
+  function noise3(x, y, z) {
+    var fx = Math.floor(x), fy = Math.floor(y), fz = Math.floor(z);
+    var X = fx & 255, Y = fy & 255, Z = fz & 255;
+    x -= fx; y -= fy; z -= fz;
+    var u = fade(x), v = fade(y), w = fade(z), P = PERM;
+    var A = P[X] + Y, AA = P[A] + Z, AB = P[A + 1] + Z;
+    var B = P[X + 1] + Y, BA = P[B] + Z, BB = P[B + 1] + Z;
+    return mix(w,
+      mix(v, mix(u, grad(P[AA], x, y, z), grad(P[BA], x - 1, y, z)),
+             mix(u, grad(P[AB], x, y - 1, z), grad(P[BB], x - 1, y - 1, z))),
+      mix(v, mix(u, grad(P[AA + 1], x, y, z - 1), grad(P[BA + 1], x - 1, y, z - 1)),
+             mix(u, grad(P[AB + 1], x, y - 1, z - 1), grad(P[BB + 1], x - 1, y - 1, z - 1))));
+  }
+  L.noise3 = noise3;
+
+  function groove(n, w) { return Math.exp(-(n * n) / (w * w)); }
+
+  /* the visible fold, from the raw fields a skin point carries: two
+     octaves of sulci plus the Sylvian fissure (gated to the outer face).
+     The shader in nebula.js draws exactly this per pixel, so the lines
+     stay thin and crisp whatever the mesh density. 0 crown .. 1 floor. */
+  L.FOLD = { w1: 0.05, w2: 0.045, k2: 0.4, ws: 0.03, ks: 1.2 };
+  L.foldOf = function (n1, n2, sy, gate) {
+    var F = L.FOLD;
+    return Math.min(1, groove(n1, F.w1) + F.k2 * groove(n2, F.w2)
+                       + F.ks * groove(sy, F.ws) * gate);
+  };
+  var NO_GROOVE = 9;                         // a field value no groove reaches
+
+  /* one point of a hemisphere's skin, from a direction (x, y, z) on the
+     unit sphere. Writes [x, y, z, n1, n2, sy, gate] into out at R = 1:
+     the position, then the raw fields the fold lines are drawn from. The
+     geometry itself only dents gently (wide grooves), for relief. */
+  function hemiPoint(x, y, z, side, out) {
+    var B = L.BRAIN;
+    if (x * side < 0) x *= B.medial;        // the medial wall faces the fissure
+    if (y < 0) y *= 0.78;                   // the base is flatter than the crown
+    /* the temporal lobe hangs a little low at the front of the side */
+    var lat = Math.max(0, x * side);
+    var tl = Math.exp(-((z - 0.22) * (z - 0.22)) / 0.1) * Math.max(0, -y) * lat;
+    y -= 0.22 * tl;
+    var cx = L.hemiCentre(side);
+    var px = cx + B.rx * x, py = B.ry * y, pz = B.rz * z;
+    var n1 = noise3(px * 5.2 + 3.1, py * 5.2, pz * 5.2);
+    var n2 = noise3(px * 10.4 - 7.7, py * 10.4 + 2.3, pz * 10.4);
+    /* the lateral (Sylvian) fissure: front-low, rising toward the back */
+    var sy = y - (-0.2 + (0.42 - z) * 0.38);
+    var gate = (z > -0.45 && z < 0.5) ? Math.min(1, lat * 2.2) : 0;
+    var depth = 0.032 * groove(n1, 0.15) + 0.012 * groove(n2, 0.15)
+              + 0.05 * groove(sy, 0.08) * gate;
+    out[0] = cx + (px - cx) * (1 - depth);
+    out[1] = py * (1 - depth);
+    out[2] = pz * (1 - depth);
+    out[3] = n1; out[4] = n2; out[5] = sy; out[6] = gate;
+  }
+
+  /* the cerebellum: tucked under the back of both hemispheres, its many
+     fine folds (folia) running across it like the pages of a closed book */
+  function cerebPoint(x, y, z, out) {
+    var B = L.BRAIN, cy = -0.6 * B.ry, cz = -0.6 * B.rz;
+    var fol = Math.sin(Math.atan2(y, z) * 13 + 0.6 * x) * 0.12;
+    var d = 1 - 0.03 * groove(fol, 0.1);
+    if (Math.abs(x) < 0.12) d *= 0.97;     // the vermis: a shallow midline notch
+    out[0] = 0.58 * x * d;
+    out[1] = cy + 0.2 * y * d;
+    out[2] = cz + 0.25 * z * d;
+    out[3] = fol; out[4] = NO_GROOVE; out[5] = NO_GROOVE; out[6] = 0;
+  }
+
+  /* the brainstem: a short tapered column below the middle, bent a little
+     forward. z is the column's axis (top +1, bottom -1). */
+  function stemPoint(x, y, z, out) {
+    var B = L.BRAIN, t = (1 - z) / 2, rr = 0.075 - 0.02 * t;
+    out[0] = x * rr;
+    out[1] = -0.2 * B.ry - t * 0.72 * B.ry;
+    out[2] = -0.2 * B.rz + 0.04 * Math.sin(t * Math.PI) + y * rr - t * 0.1 * B.rz;
+    out[3] = NO_GROOVE; out[4] = NO_GROOVE; out[5] = NO_GROOVE; out[6] = 0;
+  }
+
+  /* a closed sphere-like grid with shared seams and single poles on z, so
+     computed normals are smooth everywhere: W columns, H bands */
+  function pushSphere(acc, W, H, fn) {
+    var base = acc.n, tmp = [0, 0, 0, 0, 0, 0, 0], i, j;
+    function vert(x, y, z) {
+      fn(x, y, z, tmp);
+      acc.pos.push(tmp[0], tmp[1], tmp[2]);
+      acc.fold.push(tmp[3], tmp[4], tmp[5], tmp[6]);
+      acc.n++;
+    }
+    vert(0, 0, 1);
+    for (j = 1; j < H; j++) {
+      var th = Math.PI * j / H, r = Math.sin(th), zc = Math.cos(th);
+      for (i = 0; i < W; i++) {
+        var ph = 2 * Math.PI * i / W;
+        vert(r * Math.cos(ph), r * Math.sin(ph), zc);
+      }
+    }
+    vert(0, 0, -1);
+    var south = acc.n - 1;
+    for (i = 0; i < W; i++) acc.index.push(base, base + 1 + i, base + 1 + (i + 1) % W);
+    for (j = 0; j < H - 2; j++) {
+      for (i = 0; i < W; i++) {
+        var a = base + 1 + j * W + i, b = base + 1 + j * W + (i + 1) % W;
+        acc.index.push(a, a + W, b, b, a + W, b + W);
+      }
+    }
+    var last = base + 1 + (H - 2) * W;
+    for (i = 0; i < W; i++) acc.index.push(south, last + (i + 1) % W, last + i);
+  }
+
+  /* the whole skin as one mesh at R = 1: two hemispheres, the cerebellum
+     and the brainstem. Returns flat arrays (fold holds 4 raw fields per
+     vertex, see foldOf); the 3D world adds normals. */
+  L.brainSurface = function (detail) {
+    detail = detail || 1;
+    var acc = { pos: [], fold: [], index: [], n: 0 };
+    var W = Math.round(176 * detail), H = Math.round(120 * detail);
+    pushSphere(acc, W, H, function (x, y, z, o) { hemiPoint(x, y, z, -1, o); });
+    pushSphere(acc, W, H, function (x, y, z, o) { hemiPoint(x, y, z, 1, o); });
+    pushSphere(acc, Math.round(110 * detail), Math.round(72 * detail), cerebPoint);
+    pushSphere(acc, 28, 16, stemPoint);
+    return { pos: new Float32Array(acc.pos), fold: new Float32Array(acc.fold),
+             index: new Uint32Array(acc.index) };
+  };
+
+  /* sparks on the same skin at R = 1 (seeded): mostly on the crowns of the
+     gyri, a few on the cerebellum and the stem. shade 0..1 is brightness. */
+  L.cortexPoints = function (count) {
+    var pos = new Float32Array(count * 3), shade = new Float32Array(count);
+    var seed = 20260930, tmp = [0, 0, 0, 0, 0, 0, 0];
+    function rand() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    for (var i = 0; i < count; i++) {
+      var u = rand() * 2 - 1, th = rand() * Math.PI * 2, s = Math.sqrt(1 - u * u);
+      var x = s * Math.cos(th), y = u, z = s * Math.sin(th), pick = rand(), sh;
+      if (pick < 0.09) { cerebPoint(x, y, z, tmp); sh = 0.55; }
+      else if (pick < 0.11) { stemPoint(x, y, z, tmp); sh = 0.4; }
+      else {
+        var side = i % 2 ? 1 : -1;
+        hemiPoint(x, y, z, side, tmp);
+        sh = 0.45 + 0.55 * Math.max(0, x * side);
+      }
+      pos[i * 3] = tmp[0]; pos[i * 3 + 1] = tmp[1]; pos[i * 3 + 2] = tmp[2];
+      shade[i] = sh * (1 - 0.7 * L.foldOf(tmp[3], tmp[4], tmp[5], tmp[6]));
+    }
+    return { pos: pos, shade: shade };
+  };
 
   function isMemory(n) { return !n.kind || n.kind === "memory"; }
   L.isMemory = isMemory;

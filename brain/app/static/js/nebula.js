@@ -7,6 +7,13 @@
    domain-warped swirling cores, hot hearts — joined by synaptic
    filaments under a 3D force layout (d3-force-3d).
 
+   v3.1: far stars twinkle on the GPU behind the fog; filaments are curved
+   synapses that carry pulses of energy, and the synapses of a touched
+   star fire (pulses race away from it, light ripples out); the Brain
+   layout puts the memories inside a folded, softly lit cortex; layout
+   changes morph instead of jumping; a slow machine drops its pixel ratio
+   before it drops a frame.
+
    Design rules honoured here (this repo's scar tissue):
    - ONE three instance (vendored r170 module) owns the ENTIRE scene. (rule 5)
    - Node legibility beats mood: cores are opaque, full-brightness, and
@@ -94,6 +101,14 @@ if (renderer) {
   camera.position.set(0, 60, 520);
 
   var controls = new OrbitControls(camera, renderer.domElement);
+  /* framing: when a new dataset or shape has settled, the camera glides
+     back to hold the whole of it, unless the hand already took the camera */
+  var framing = { pending: true, refine: false, userMoved: false, keepDir: false };
+  controls.addEventListener("start", function () {
+    framing.userMoved = true;
+    framing.pending = false;
+    framing.refine = false;
+  });
   controls.enableDamping = true;          // real weight and inertia
   controls.dampingFactor = 0.07;
   controls.minDistance = 60;
@@ -120,16 +135,21 @@ if (renderer) {
     return tex;
   }
 
-  /* soft point-sprite material with per-point size */
-  function pointsMaterial(alpha) {
+  /* soft point-sprite material with per-point size; breathe = the halo
+     swells and settles slowly per point (needs an aSeed attribute) */
+  function pointsMaterial(alpha, breathe) {
     return new THREE.ShaderMaterial({
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-      uniforms: { uAlpha: { value: alpha } },
+      uniforms: { uAlpha: { value: alpha }, uTime: { value: 0 } },
       vertexShader:
-        "attribute float psize; varying vec3 vC;" +
+        "attribute float psize; varying vec3 vC; uniform float uTime;" +
+        (breathe ? "attribute float aSeed;" : "") +
         "void main(){ vC = color;" +
         " vec4 mv = modelViewMatrix * vec4(position,1.0);" +
-        " gl_PointSize = min(psize * (320.0 / -mv.z), 72.0);" +
+        (breathe
+          ? " float br = 1.0 + 0.11 * sin(uTime * (0.9 + aSeed) + aSeed * 31.0);"
+          : " float br = 1.0;") +
+        " gl_PointSize = min(psize * br * (320.0 / -mv.z), 80.0);" +
         " gl_Position = projectionMatrix * mv; }",
       fragmentShader:
         "uniform float uAlpha; varying vec3 vC;" +
@@ -252,6 +272,68 @@ if (renderer) {
   aurora.renderOrder = -10;
   ambient.add(aurora);
 
+  /* DEEP SPACE: far stars all around, twinkling on the GPU alone (the CPU
+     never touches them after build). Small and faint by design: the fog
+     is the sky, the stars give it depth, a memory always outshines them.
+     The field rides with the camera, so it is turned, never reached. */
+  var starsMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 }, uPR: { value: renderer.getPixelRatio() } },
+    vertexShader: [
+      "attribute float aSize; attribute float aPhase; attribute float aRate;",
+      "uniform float uTime; uniform float uPR;",
+      "varying vec3 vC; varying float vTw;",
+      "void main(){",
+      "  vC = color;",
+      "  vTw = 0.6 + 0.4 * sin(uTime * aRate + aPhase);",
+      "  gl_PointSize = aSize * uPR * (0.8 + 0.35 * vTw);",
+      "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    ].join("\n"),
+    fragmentShader: [
+      "varying vec3 vC; varying float vTw;",
+      "void main(){",
+      "  vec2 c = gl_PointCoord - 0.5;",
+      "  float core = smoothstep(0.5, 0.0, length(c));",
+      "  float spike = max(0.0, 1.0 - abs(c.x) * 14.0) * max(0.0, 1.0 - abs(c.y) * 2.2)",
+      "              + max(0.0, 1.0 - abs(c.y) * 14.0) * max(0.0, 1.0 - abs(c.x) * 2.2);",
+      "  float a = (pow(core, 2.4) + spike * 0.2) * vTw;",
+      "  gl_FragColor = vec4(vC * a, a); }",
+    ].join("\n"),
+    vertexColors: true,
+  });
+  var stars = (function () {
+    var n = 2600, c = new THREE.Color();
+    var pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    var size = new Float32Array(n), phase = new Float32Array(n), rate = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+      var u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2;
+      var sn = Math.sqrt(1 - u * u), r = 3600 + Math.random() * 2600;
+      pos[i * 3] = r * sn * Math.cos(th);
+      pos[i * 3 + 1] = r * u;
+      pos[i * 3 + 2] = r * sn * Math.sin(th);
+      var temp = Math.random();
+      c.setStyle(temp < 0.12 ? "#ffd9a8" : temp < 0.3 ? "#a9c6ff" : "#e8eeff",
+                 THREE.SRGBColorSpace);
+      var hero = Math.random() < 0.025;
+      var bright = hero ? 1.0 : 0.3 + Math.random() * 0.45;
+      col[i * 3] = c.r * bright; col[i * 3 + 1] = c.g * bright; col[i * 3 + 2] = c.b * bright;
+      size[i] = hero ? 5 + Math.random() * 3 : 1.1 + Math.pow(Math.random(), 3) * 2.4;
+      phase[i] = Math.random() * Math.PI * 2;
+      rate[i] = 0.4 + Math.random() * 1.8;
+    }
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(size, 1));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(phase, 1));
+    geo.setAttribute("aRate", new THREE.BufferAttribute(rate, 1));
+    var pts = new THREE.Points(geo, starsMat);
+    pts.frustumCulled = false;
+    pts.renderOrder = -9;
+    return pts;
+  })();
+  ambient.add(stars);
+
   /* ============================ the cursor field: physics you can stir
      Not stars, not specks: soft fog-wisps — large, blurred, barely-there
      breaths of the nebula drifting through the space, with real dynamics.
@@ -353,7 +435,17 @@ if (renderer) {
      burns at the centre (importance), and a fresnel rim in the project
      colour holds the silhouette. Selection turns the whole star to warm
      starlight via instanceColor. Opaque, full brightness — rule 2. */
-  var layoutMode = "organic";       // v2.5: which layout shape is in force
+  /* which layout shape is in force. It starts as the saved choice (the
+     same key constellation.js writes), so a first load settles once, in
+     the right shape, instead of settling organic and then again. */
+  var layoutMode = (function () {
+    var L = window.NebulaLayouts;
+    try {
+      var v = localStorage.getItem("nebula-layout");
+      if (L && L.MODES.indexOf(v) >= 0) return v;
+    } catch (e) {}
+    return (L && L.DEFAULT) || "organic";
+  })();
   var graph = {
     group: new THREE.Group(),
     nodes: [], links: [], byId: {},
@@ -452,10 +544,237 @@ if (renderer) {
     ].join("\n"),
   });
 
-  var lineMat = new THREE.LineBasicMaterial({
-    vertexColors: true, transparent: true, opacity: 1,
-    blending: THREE.AdditiveBlending, depthWrite: false,
+  /* SYNAPSES: each link is a gentle curve (a dendrite, not a rod), its
+     colour running from one star to the other, carrying a pulse of energy.
+     At rest the flow is a faint, slow murmur; the links of a hovered or
+     chosen star fire, brighter and faster, racing away from it. All on the
+     GPU: aT is the distance along the link, aPhase staggers the pulses,
+     aLit lights a link and its sign says which way the pulse runs. */
+  var SEG = 10;
+  var FLAT_MODES = ["flow_down", "flow_right", "web", "tree"];
+  var synapseMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 }, uFlow: { value: reduced ? 0 : 1 } },
+    vertexShader: [
+      "attribute float aT; attribute float aPhase; attribute float aLit;",
+      "varying vec3 vC; varying float vT; varying float vPhase; varying float vLit;",
+      "void main(){",
+      "  vC = color; vT = aT; vPhase = aPhase; vLit = aLit;",
+      "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+    ].join("\n"),
+    fragmentShader: [
+      "uniform float uTime; uniform float uFlow;",
+      "varying vec3 vC; varying float vT; varying float vPhase; varying float vLit;",
+      "void main(){",
+      "  float lit = abs(vLit);",
+      "  float t = vLit < 0.0 ? 1.0 - vT : vT;",
+      "  float x = fract(t - uTime * (0.07 + 0.5 * lit) + vPhase);",
+      "  float pulse = exp(-pow((x - 0.5) * (14.0 - 4.0 * lit), 2.0));",
+      "  float k = 1.0 + pulse * (0.9 + 2.6 * lit) * uFlow;",
+      "  gl_FragColor = vec4(vC * k, 1.0); }",
+    ].join("\n"),
+    vertexColors: true,
   });
+
+  /* RIPPLES: a ring of light spreads from a star when it is touched (hover:
+     a soft breath; select: a full wave). Sprites face the camera by
+     themselves; only a handful live at once. */
+  var rippleTex = (function () {
+    var size = 256, cv = document.createElement("canvas");
+    cv.width = cv.height = size;
+    var g = cv.getContext("2d");
+    var grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, "rgba(255,255,255,0)");
+    grad.addColorStop(0.62, "rgba(255,255,255,0)");
+    grad.addColorStop(0.8, "rgba(255,255,255,0.9)");
+    grad.addColorStop(0.88, "rgba(255,255,255,0.3)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    var tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    return tex;
+  })();
+  var ripples = [];
+  function spawnRipple(n, strength, dur) {
+    if (reduced || !n) return;
+    while (ripples.length >= 6) {
+      var old = ripples.shift();
+      graph.group.remove(old.s);
+      old.s.material.dispose();
+    }
+    var col = n.kind === "file" ? ICE.clone() : n.kind === "folder" ? SLATE.clone()
+            : nodeColor(n, new THREE.Color());
+    var mat = new THREE.SpriteMaterial({
+      map: rippleTex, color: col.lerp(STAR, 0.35), transparent: true, opacity: strength,
+      blending: THREE.AdditiveBlending, depthWrite: false });
+    var sp = new THREE.Sprite(mat);
+    sp.position.set(n.x || 0, n.y || 0, n.z || 0);
+    sp.renderOrder = 3;
+    graph.group.add(sp);
+    var r = n._r || 4;
+    ripples.push({ s: sp, t0: performance.now(), dur: dur, a: strength,
+                   r0: r * 2, r1: r * (strength >= 1 ? 16 : 7) });
+    N.requestRender();
+  }
+  function stepRipples(now) {
+    for (var i = ripples.length - 1; i >= 0; i--) {
+      var rp = ripples[i], t = (now - rp.t0) / rp.dur;
+      if (t >= 1) {
+        graph.group.remove(rp.s);
+        rp.s.material.dispose();
+        ripples.splice(i, 1);
+        continue;
+      }
+      var e = 1 - Math.pow(1 - t, 3);
+      rp.s.scale.setScalar(rp.r0 + (rp.r1 - rp.r0) * e);
+      rp.s.material.opacity = rp.a * (1 - t) * (1 - t);
+    }
+  }
+  function clearRipples() {
+    ripples.forEach(function (rp) { graph.group.remove(rp.s); rp.s.material.dispose(); });
+    ripples = [];
+  }
+
+  /* THE CORTEX: in the Brain layout the memories live inside a brain, so
+     the brain is drawn: faint points on folded hemispheres, a cerebellum
+     and a brainstem (layouts.js cortexPoints, unit size, scaled here).
+     Thought washes over it in slow bands of light. It fades in and out
+     with the layout; the round shell gives way to it. */
+  var CORTEX = { alpha: 0, target: 0 };
+  var cortexGroup = null, cortex = null, glass = null, glassMat = null;
+  var cortexSample = null, brainScale = 300;
+
+  /* pixels per world unit at distance 1: a point that should be k world
+     units wide is k * this / depth pixels. Tracks resize and pixel ratio. */
+  function pxPerUnit() {
+    var h = renderer.getDrawingBufferSize(new THREE.Vector2()).y || 1;
+    return h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+  }
+
+  /* the same slow waves of thought run over the glass and the sparks */
+  var BRAIN_WAVES = [
+    "float brainWave(vec3 p, float t, out float w1){",
+    "  w1 = exp(-pow(sin(p.z * 4.2 + p.y * 2.2 - t * 0.32) * 1.7, 2.0));",
+    "  float w2 = exp(-pow(sin(p.x * 5.0 - p.y * 3.6 + t * 0.23 + 1.7) * 1.9, 2.0));",
+    "  return max(w1, w2 * 0.75); }",
+  ].join("\n");
+
+  var cortexMat = new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uTime: { value: 0 }, uAlpha: { value: 0 },
+                uPR: { value: renderer.getPixelRatio() },
+                uScale: { value: brainScale }, uPxPerUnit: { value: pxPerUnit() } },
+    vertexShader: [
+      "attribute float aShade; attribute float aSeed;",
+      "uniform float uTime; uniform float uPR; uniform float uScale; uniform float uPxPerUnit;",
+      "varying float vA; varying vec3 vC;",
+      BRAIN_WAVES,
+      "void main(){",
+      "  vec3 p = position;",
+      "  float w1; float wave = brainWave(p, uTime, w1);",
+      "  float tw = 0.7 + 0.3 * sin(uTime * (0.6 + aSeed) + aSeed * 40.0);",
+      "  vA = aShade * tw * (0.35 + 0.65 * wave);",
+      "  vC = mix(vec3(0.5, 0.62, 1.0), vec3(0.8, 0.6, 1.0), aSeed)",
+      "     + vec3(0.45, 0.36, 0.16) * w1;",
+      "  vec4 mv = modelViewMatrix * vec4(p, 1.0);",
+      /* a world size (a fraction of the brain), so framing never shrinks
+         the sparks to nothing; at least ~1.3 px so they always show */
+      "  gl_PointSize = max(1.3 * uPR, (0.0042 + 0.0058 * aShade) * uScale * uPxPerUnit / -mv.z);",
+      "  gl_Position = projectionMatrix * mv; }",
+    ].join("\n"),
+    fragmentShader: [
+      "uniform float uAlpha; varying float vA; varying vec3 vC;",
+      "void main(){",
+      "  float a = smoothstep(0.5, 0.05, length(gl_PointCoord - 0.5)) * vA * uAlpha;",
+      "  gl_FragColor = vec4(vC * a, a); }",
+    ].join("\n"),
+  });
+
+  /* the glass skin: lit at its limb (fresnel) and along its folds, which
+     are drawn per pixel from the raw noise fields (layouts.js foldOf), so
+     they stay thin lines at any distance and never shimmer */
+  function makeGlassMat(F) {
+    function f(v) { return Number(v).toFixed(4); }
+    return new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uAlpha: { value: 0 } },
+      vertexShader: [
+        "attribute vec4 aFold;",
+        "varying vec3 vN; varying vec3 vW; varying vec3 vL; varying vec4 vF;",
+        "void main(){",
+        "  vL = position; vF = aFold;",
+        "  vN = normalize(mat3(modelMatrix) * normal);",
+        "  vec4 wp = modelMatrix * vec4(position, 1.0);",
+        "  vW = wp.xyz;",
+        "  gl_Position = projectionMatrix * viewMatrix * wp; }",
+      ].join("\n"),
+      fragmentShader: [
+        "uniform float uTime; uniform float uAlpha;",
+        "varying vec3 vN; varying vec3 vW; varying vec3 vL; varying vec4 vF;",
+        BRAIN_WAVES,
+        "float gv(float n, float w){",
+        "  float we = max(w, fwidth(n) * 1.25);",
+        "  return exp(-(n * n) / (we * we)) * (w / we); }",
+        "void main(){",
+        "  vec3 v = normalize(cameraPosition - vW);",
+        "  float limb = pow(1.0 - abs(dot(normalize(vN), v)), 2.4);",
+        "  float fold = min(1.0, gv(vF.x, " + f(F.w1) + ") + " + f(F.k2) + " * gv(vF.y, " + f(F.w2) + ")",
+        "             + " + f(F.ks) + " * gv(vF.z, " + f(F.ws) + ") * vF.w);",
+        "  float w1; float wave = brainWave(vL, uTime, w1);",
+        "  vec3 col = mix(vec3(0.34, 0.47, 0.96), vec3(0.68, 0.5, 1.0),",
+        "                 clamp(vL.y * 1.2 + 0.45, 0.0, 1.0));",
+        "  col = mix(col, vec3(1.0, 0.8, 0.52), w1 * 0.4);",
+        "  float a = limb * 0.7 + fold * (0.14 + 0.45 * limb) + wave * (0.04 + 0.22 * limb);",
+        "  a *= uAlpha;",
+        "  gl_FragColor = vec4(col * a, a); }",
+      ].join("\n"),
+    });
+  }
+
+  function ensureCortex() {
+    var L = window.NebulaLayouts;
+    if (cortexGroup || !L || !L.cortexPoints || !L.brainSurface) return;
+    cortexGroup = new THREE.Group();
+    cortexGroup.visible = false;
+    /* the glass skin: one mesh, both hemispheres, cerebellum and stem */
+    var sk = L.brainSurface(1);
+    var sg = new THREE.BufferGeometry();
+    sg.setAttribute("position", new THREE.BufferAttribute(sk.pos, 3));
+    sg.setAttribute("aFold", new THREE.BufferAttribute(sk.fold, 4));
+    sg.setIndex(new THREE.BufferAttribute(sk.index, 1));
+    sg.computeVertexNormals();
+    glassMat = makeGlassMat(L.FOLD);
+    glass = new THREE.Mesh(sg, glassMat);
+    glass.frustumCulled = false;
+    glass.renderOrder = 1;
+    cortexGroup.add(glass);
+    /* a thin sample of the skin, so framing can hold the whole brain */
+    cortexSample = [];
+    for (var k = 0; k < sk.pos.length; k += 3 * 97) {
+      cortexSample.push(sk.pos[k], sk.pos[k + 1], sk.pos[k + 2]);
+    }
+    /* sparks on the crowns of the folds */
+    var data = L.cortexPoints(3200);
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(data.pos, 3));
+    geo.setAttribute("aShade", new THREE.BufferAttribute(data.shade, 1));
+    var seeds = new Float32Array(data.shade.length);
+    for (var i = 0; i < seeds.length; i++) seeds[i] = (i * 0.61803) % 1;
+    geo.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    cortex = new THREE.Points(geo, cortexMat);
+    cortex.frustumCulled = false;
+    cortex.renderOrder = 1;
+    cortexGroup.add(cortex);
+    scene.add(cortexGroup);
+  }
+
+  /* a stable 0..1 number for a string: the same link always bends the same way */
+  function hash01(str) {
+    var h = 2166136261;
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
 
   function radiusOf(n) {
     if (n.kind === "file") return Math.min(1.6 + 1.1 * Math.sqrt(n.degree || 0), 4.2);
@@ -543,7 +862,7 @@ if (renderer) {
       if (!o) return;
       graph.group.remove(o);
       if (o.geometry) o.geometry.dispose();
-      if (o.material && o.material !== nodeMat && o.material !== lineMat
+      if (o.material && o.material !== nodeMat && o.material !== synapseMat
           && o.material !== crystalMat) {
         o.material.dispose();
       }
@@ -596,10 +915,16 @@ if (renderer) {
         // resolve to node objects up front: every consumer (buffers, pulses,
         // paint) can rely on .source.x whether or not the sim ever runs
         return { source: ids[e.src], target: ids[e.dst],
-                 w: e.w || 0, kinds: e.kinds };
+                 w: e.w || 0, kinds: e.kinds,
+                 _phase: hash01(e.src + "|" + e.dst),
+                 _twist: hash01(e.dst + "|" + e.src) * Math.PI * 2 };
       });
+    graph.nodes.forEach(function (n) { n._side = hash01(n.id) < 0.5 ? -1 : 1; });
 
     graph.hoverId = null; graph.hoverLink = -1; graph.linkFocus = -1;
+    if (!framing.userMoved) framing.pending = true;
+    clearRipples();
+    tween = null;
     disposeGraph();
     if (!graph.nodes.length) { fitSpace(); N.requestRender(); return; }
 
@@ -652,7 +977,8 @@ if (renderer) {
       ggeo.setAttribute("position", new THREE.BufferAttribute(gpos, 3));
       ggeo.setAttribute("color", new THREE.BufferAttribute(gcol, 3));
       ggeo.setAttribute("psize", new THREE.BufferAttribute(gsize, 1));
-      graph.glow = new THREE.Points(ggeo, pointsMaterial(0.3));
+      ggeo.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+      graph.glow = new THREE.Points(ggeo, pointsMaterial(0.3, true));
       graph.glow.frustumCulled = false;
       graph.group.add(graph.glow);
     }
@@ -661,13 +987,26 @@ if (renderer) {
     graph.files = buildCrystals(graph.fileNodes, crystalGeo, ICE, 1.0);
     graph.folders = buildCrystals(graph.folderNodes, planetGeo, SLATE, 0.75);
 
-    /* filaments */
-    var lpos = new Float32Array(graph.links.length * 6);
-    var lcol = new Float32Array(graph.links.length * 6);
+    /* synapses: SEG short segments per link, so each one can curve */
+    var nv = graph.links.length * SEG * 2;
     var lgeo = new THREE.BufferGeometry();
-    lgeo.setAttribute("position", new THREE.BufferAttribute(lpos, 3));
-    lgeo.setAttribute("color", new THREE.BufferAttribute(lcol, 3));
-    graph.lines = new THREE.LineSegments(lgeo, lineMat);
+    lgeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
+    lgeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
+    var aT = new Float32Array(nv), aPh = new Float32Array(nv);
+    graph.links.forEach(function (l, i) {
+      for (var sg = 0; sg < SEG; sg++) {
+        var v = (i * SEG + sg) * 2;
+        aT[v] = sg / SEG;
+        aT[v + 1] = (sg + 1) / SEG;
+        aPh[v] = aPh[v + 1] = l._phase;
+      }
+    });
+    lgeo.setAttribute("aT", new THREE.BufferAttribute(aT, 1));
+    lgeo.setAttribute("aPhase", new THREE.BufferAttribute(aPh, 1));
+    var litAttr = new THREE.BufferAttribute(new Float32Array(nv), 1);
+    litAttr.setUsage(THREE.DynamicDrawUsage);
+    lgeo.setAttribute("aLit", litAttr);
+    graph.lines = new THREE.LineSegments(lgeo, synapseMat);
     graph.lines.frustumCulled = false;
     graph.group.add(graph.lines);
 
@@ -768,18 +1107,29 @@ if (renderer) {
     /* tree is the one mode with no physics: every position is fixed from
        the radial tidy tree and there is no simulation at all. Every reader
        of graph.sim (animateBody, dragMove) already guards on it. */
+    CORTEX.target = mode === "brain" ? 1 : 0;
+    if (reduced) CORTEX.alpha = CORTEX.target;
     if (mode === "tree") {
       var tp = L.treePositions(graph.nodes, graph.links,
         Math.max(48, 26 + 900 / Math.max(graph.nodes.length, 1) * 0.6));
+      /* no physics, but no jump either: every star glides to its place */
+      var tw = { t0: performance.now(), dur: 1100, list: [] };
       graph.nodes.forEach(function (n) {
         var p = tp[n.id];
         if (!p) return;
-        n.x = n.fx = p.x; n.y = n.fy = p.y; n.z = n.fz = p.z;
+        tw.list.push({ n: n, x0: n.x || 0, y0: n.y || 0, z0: n.z || 0,
+                       x1: p.x, y1: p.y, z1: p.z });
+        n.fx = p.x; n.fy = p.y; n.fz = p.z;
         n.vx = n.vy = n.vz = 0;
       });
       graph.sim = null;
+      if (reduced) {
+        tw.list.forEach(function (e) { e.n.x = e.x1; e.n.y = e.y1; e.n.z = e.z1; });
+        fitSpace(true);
+      } else {
+        tween = tw;
+      }
       updateBuffers();
-      fitSpace(true);
       return;
     }
 
@@ -826,6 +1176,75 @@ if (renderer) {
       }
     }
 
+    /* the Brain: each project's lobe sits under the cortex of a hemisphere
+       (layouts.js brainLobes). Memories settle at a depth by rank, heads
+       near the surface; files and folders just outside it. */
+    var brainR = Math.max(150, 25 * Math.sqrt(graph.nodes.length));
+    var lobes = (mode === "brain" && L.brainLobes) ? L.brainLobes(graph.nodes, brainR) : {};
+    if (mode === "brain") {
+      /* a project spread over both hemispheres splits by family (a head
+         and everything under it), each family to the lighter side, so
+         related memories stay together and few synapses cross the fissure.
+         A family too big for one side (over 15% of its project) splits
+         evenly first; the smaller ones then even the sides out. */
+      var fam = {}, famList = [], famLoad = {}, projN = {};
+      graph.nodes.forEach(function (n) {
+        var lb = lobes[n.project || ""];
+        if (!lb || lb.side !== 0) return;
+        var pj = n.project || "";
+        projN[pj] = (projN[pj] || 0) + 1;
+        var key = pj + "|" + (n._head ? n._head.id : n.id);
+        if (!fam[key]) { fam[key] = []; famList.push(key); }
+        fam[key].push(n);
+      });
+      famList.sort(function (a, b) {
+        return fam[b].length - fam[a].length || (a < b ? -1 : 1);
+      });
+      famList.forEach(function (key) {
+        var pj = key.slice(0, key.indexOf("|"));
+        var ld = famLoad[pj] || (famLoad[pj] = [0, 0]);
+        if (fam[key].length > 0.15 * projN[pj]) {
+          fam[key].forEach(function (n) {
+            var sh = hash01(n.id) < 0.5 ? 0 : 1;
+            ld[sh]++;
+            n._side = sh ? 1 : -1;
+          });
+          return;
+        }
+        var sd = ld[0] <= ld[1] ? 0 : 1;
+        ld[sd] += fam[key].length;
+        fam[key].forEach(function (n) { n._side = sd ? 1 : -1; });
+      });
+      ensureCortex();
+      brainScale = brainR;
+      if (cortexGroup) cortexGroup.scale.setScalar(brainR);
+      cortexMat.uniforms.uScale.value = brainR;
+    }
+    function brainForce(alpha) {
+      var B = L.BRAIN, k = 0.16 * alpha;
+      for (var i = 0; i < graph.nodes.length; i++) {
+        var n = graph.nodes[i], lobe = lobes[n.project || ""], side, goal = null;
+        if (lobe && lobe.side === 0) { side = n._side; goal = side < 0 ? lobe.left : lobe.right; }
+        else if (lobe) { side = lobe.side; goal = lobe; }
+        else side = n.x < 0 ? -1 : 1;
+        var cx = L.hemiCentre(side) * brainR;
+        var sq = (n.x - cx) * side < 0 ? B.medial : 1;    // the flat inner half
+        var lx = (n.x - cx) / (B.rx * brainR * sq), ly = n.y / (B.ry * brainR),
+            lz = n.z / (B.rz * brainR);
+        var d = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1e-3;
+        var want = n.kind === "folder" ? 1.06 : n.kind === "file" ? 1.0
+                 : n._head === n ? 0.94 : 0.9 - 0.07 * Math.min(n._level || 1, 3);
+        /* the skin is a wall: leaving it costs four times what drifting
+           inward does, so a crowded lobe deepens instead of spilling out */
+        var f = (want / d - 1) * k * (d > want ? 4 : 1);
+        n.vx += (n.x - cx) * f; n.vy += n.y * f; n.vz += n.z * f;
+        if (goal) {
+          var kl = (n._head === n ? 0.2 : 0.11) * alpha;
+          n.vx += (goal.x - n.x) * kl; n.vy += (goal.y - n.y) * kl; n.vz += (goal.z - n.z) * kl;
+        }
+      }
+    }
+
     var link = window.d3.forceLink(graph.links)
         .id(function (d) { return d.id; })
         .distance(function (l) {
@@ -837,7 +1256,15 @@ if (renderer) {
         });
     /* forceLink().strength(null) is not valid: only the shaped modes get a
        fixed link strength, organic keeps d3's own degree-based default. */
-    if (mode !== "organic") link.strength(0.12);
+    /* in the Brain, synapses are weak springs and the lobes hold the
+       shape; a file still sits beside the memories that name it */
+    if (mode === "brain") {
+      link.strength(function (l) {
+        if (l.kinds && l.kinds.indexOf("in_folder") >= 0) return 0.2;
+        if (l.kinds && l.kinds.indexOf("file_ref") >= 0) return 0.12;
+        return 0.04;
+      });
+    } else if (mode !== "organic") link.strength(0.12);
     var sim = window.d3.forceSimulation(graph.nodes, 3)
       .force("link", link);
     if (mode === "organic") {
@@ -862,10 +1289,14 @@ if (renderer) {
     } else if (mode === "web") {
       sim.force("charge", window.d3.forceManyBody().strength(-40))
          .force("web", webForce);
+    } else if (mode === "brain") {
+      sim.force("charge", window.d3.forceManyBody().strength(-55))
+         .force("brain", brainForce);
     }
     /* center goes on LAST so organic keeps the exact force order it had
-       before the layout picker existed */
-    sim.force("center", window.d3.forceCenter(0, 0, 0));
+       before the layout picker existed. The Brain centres itself: a busy
+       hemisphere must not drag the other across the fissure. */
+    if (mode !== "brain") sim.force("center", window.d3.forceCenter(0, 0, 0));
     graph.sim = sim.stop();
     if (reduced) {                     // settle synchronously, render a still
       for (var i = 0; i < 220; i++) graph.sim.tick();
@@ -951,26 +1382,66 @@ if (renderer) {
 
     if (graph.lines) {
       var lp = graph.lines.geometry.attributes.position.array;
+      var flat = FLAT_MODES.indexOf(layoutMode) >= 0;
       graph.links.forEach(function (l, i) {
         var a = l.source, b = l.target;
-        lp[i * 6] = a.x; lp[i * 6 + 1] = a.y; lp[i * 6 + 2] = a.z;
-        lp[i * 6 + 3] = b.x; lp[i * 6 + 4] = b.y; lp[i * 6 + 5] = b.z;
+        var dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
+        var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+        dx /= len; dy /= len; dz /= len;
+        /* the bend: perpendicular to the link, turned by the link's own
+           twist (flat layouts keep it in their plane), a tenth of its
+           length at most, never a loop */
+        var px, py, pz, bend = Math.min(len * 0.12, 36);
+        if (flat) {
+          px = -dy; py = dx; pz = 0;
+          if (l._twist > Math.PI) { px = -px; py = -py; }
+        } else {
+          var ux, uy, uz;
+          if (Math.abs(dy) < 0.9) { ux = -dz; uy = 0; uz = dx; }      // dir x (0,1,0)
+          else { ux = 0; uy = dz; uz = -dy; }                          // dir x (1,0,0)
+          var ul = Math.sqrt(ux * ux + uy * uy + uz * uz) || 1;
+          ux /= ul; uy /= ul; uz /= ul;
+          var wx = dy * uz - dz * uy, wy = dz * ux - dx * uz, wz = dx * uy - dy * ux;
+          var cs = Math.cos(l._twist), sn = Math.sin(l._twist);
+          px = ux * cs + wx * sn; py = uy * cs + wy * sn; pz = uz * cs + wz * sn;
+        }
+        var mx = (a.x + b.x) / 2 + px * bend, my = (a.y + b.y) / 2 + py * bend,
+            mz = (a.z + b.z) / 2 + pz * bend;
+        l._cx = mx; l._cy = my; l._cz = mz;     // the pulses ride the same curve
+        var qx = a.x, qy = a.y, qz = a.z, o = i * SEG * 6;
+        for (var sg = 1; sg <= SEG; sg++) {
+          var t = sg / SEG, u1 = 1 - t;
+          var cx = u1 * u1 * a.x + 2 * u1 * t * mx + t * t * b.x;
+          var cy = u1 * u1 * a.y + 2 * u1 * t * my + t * t * b.y;
+          var cz = u1 * u1 * a.z + 2 * u1 * t * mz + t * t * b.z;
+          lp[o] = qx; lp[o + 1] = qy; lp[o + 2] = qz;
+          lp[o + 3] = cx; lp[o + 4] = cy; lp[o + 5] = cz;
+          o += 6;
+          qx = cx; qy = cy; qz = cz;
+        }
       });
       graph.lines.geometry.attributes.position.needsUpdate = true;
       graph.lines.geometry.computeBoundingSphere();
     }
   }
 
+  var _ca = new THREE.Color(), _cb = new THREE.Color();
+  function linkEndColor(n, out) {
+    if (n.kind === "file") return out.copy(FILELINK);
+    if (n.kind === "folder") return out.copy(FOLDLINK);
+    return nodeColor(n, out).lerp(FILAMENT, 0.45);
+  }
   function paintLinks() {
     if (!graph.lines) return;
     var lc = graph.lines.geometry.attributes.color.array;
+    var la = graph.lines.geometry.attributes.aLit.array;
+    var hov = graph.hoverId, sel = graph.selected;
+    var firing = !!(hov || sel || graph.linkFocus >= 0);
     graph.links.forEach(function (l, i) {
-      var sid = typeof l.source === "object" ? l.source.id : l.source;
-      var tid = typeof l.target === "object" ? l.target.id : l.target;
-      var onSel = graph.selected && (sid === graph.selected || tid === graph.selected);
-      var lit = i === graph.linkFocus ? 1.0
-              : i === graph.hoverLink ? 0.8
-              : 0;
+      var sid = l.source.id, tid = l.target.id;
+      var onSel = sel && (sid === sel || tid === sel);
+      var onHov = hov && (sid === hov || tid === hov);
+      var lit = i === graph.linkFocus ? 1.0 : i === graph.hoverLink ? 0.8 : 0;
       var provenance = l.kinds && l.kinds.indexOf("derived_from") >= 0;
       var isFile = l.kinds && l.kinds.indexOf("file_ref") >= 0;
       var isFold = l.kinds && l.kinds.indexOf("in_folder") >= 0;
@@ -978,16 +1449,30 @@ if (renderer) {
                : isFile ? 0.16 + (l.w || 0) * 0.5
                : (provenance ? 0.24 : 0.10) + (l.w || 0) * 0.5;
       // additive blending: intensity IS opacity
-      var k = Math.max(lit, (onSel ? (isFold ? 0.5 : 0.95) : base) * graph.dim);
-      var col = isFile ? FILELINK : isFold ? FOLDLINK
-              : (onSel || lit || provenance) ? STAR : FILAMENT;
-      for (var v = 0; v < 2; v++) {
-        lc[i * 6 + v * 3] = col.r * k;
-        lc[i * 6 + v * 3 + 1] = col.g * k;
-        lc[i * 6 + v * 3 + 2] = col.b * k;
+      var k = Math.max(lit, (onSel ? (isFold ? 0.5 : 0.95) : onHov ? 0.85 : base) * graph.dim);
+      /* while one star fires, the rest of the brain quietens */
+      if (firing && !onSel && !onHov && !lit) k *= 0.45;
+      /* in the Brain, idle synapses stay faint so the folds and the stars
+         read; a touched star brings its own back at full strength */
+      if (layoutMode === "brain" && !onSel && !onHov && !lit) k *= 0.5;
+      var centre = onHov ? hov : onSel ? sel : null;
+      var dir = centre && tid === centre ? -1 : 1;     // pulses race away from it
+      var fire = lit || (onHov ? 1 : onSel ? 0.75 : 0);
+      linkEndColor(l.source, _ca);
+      linkEndColor(l.target, _cb);
+      if (onSel || onHov || lit || provenance) { _ca.lerp(STAR, 0.5); _cb.lerp(STAR, 0.5); }
+      for (var sg = 0; sg < SEG; sg++) {
+        for (var v = 0; v < 2; v++) {
+          var t = (sg + v) / SEG, o = (i * SEG + sg) * 2 + v;
+          lc[o * 3] = (_ca.r + (_cb.r - _ca.r) * t) * k;
+          lc[o * 3 + 1] = (_ca.g + (_cb.g - _ca.g) * t) * k;
+          lc[o * 3 + 2] = (_ca.b + (_cb.b - _ca.b) * t) * k;
+          la[o] = fire * dir;
+        }
       }
     });
     graph.lines.geometry.attributes.color.needsUpdate = true;
+    graph.lines.geometry.attributes.aLit.needsUpdate = true;
   }
 
   function paintNodes() {
@@ -1018,7 +1503,9 @@ if (renderer) {
   N.select = function (id) {
     graph.selected = id;
     if (id) graph.linkFocus = -1;      // a chosen star outranks a chosen link
-    paintNodes(); paintLinks(); N.requestRender();
+    paintNodes(); paintLinks();
+    if (id && graph.byId[id]) spawnRipple(graph.byId[id], 1, 1100);
+    N.requestRender();
   };
   N.deselect = function () { graph.linkFocus = -1; N.select(null); };
   N.getNode = function (id) { return graph.byId[id] || null; };
@@ -1027,6 +1514,7 @@ if (renderer) {
   var focus = false;
   N.setFocus = function (on) {
     focus = !!on;
+    frame.dirty = true;                 // the frame is the lens canvas only in focus
     controls.enabled = focus && !orb.veil;
     controls.autoRotate = !focus && !reduced && ambienceOn();
     controls.autoRotateSpeed = 0.25;               // one lap ≈ 4 minutes
@@ -1053,13 +1541,150 @@ if (renderer) {
      layout as before; the others add a shaping force or, for tree, fix
      every position and stop the physics. The caller stores the choice,
      the world only obeys it. */
+  /* ------------------------------------------------- framing the world
+     The frame is the part of the window the stars should fill: in the
+     Constellation lens, the lens canvas (right of the rail, under the
+     controls); as a backdrop, the whole window. The projection centre
+     glides there (a camera view offset), and the camera stands exactly as
+     far back as every star (and the drawn brain) needs. */
+  var frame = { el: null, w: 1, h: 1, sx: 0, sy: 0, tx: 0, ty: 0, dirty: true };
+  var BRAIN_VIEW = new THREE.Vector3(-0.62, 0.42, 0.66).normalize();
+  function applyFrame() {
+    var W = window.innerWidth, H = window.innerHeight;
+    if (!W || !H) return;
+    if (Math.abs(frame.sx) < 0.5 && Math.abs(frame.sy) < 0.5) camera.clearViewOffset();
+    else camera.setViewOffset(W, H, -frame.sx, -frame.sy, W, H);
+  }
+  function measureFrame() {
+    frame.dirty = false;
+    var W = window.innerWidth, H = window.innerHeight, r = null;
+    if (focus && frame.el) {
+      var b = frame.el.getBoundingClientRect();
+      if (b.width > 120 && b.height > 120) r = b;
+    }
+    frame.w = r ? r.width : W;
+    frame.h = r ? r.height : H;
+    frame.tx = r ? r.left + r.width / 2 - W / 2 : 0;
+    frame.ty = r ? r.top + r.height / 2 - H / 2 : 0;
+    if (reduced) { frame.sx = frame.tx; frame.sy = frame.ty; applyFrame(); }
+  }
+  function stepFrame(dt) {
+    if (frame.dirty) measureFrame();
+    var dx = frame.tx - frame.sx, dy = frame.ty - frame.sy;
+    if (Math.abs(dx) < 0.3 && Math.abs(dy) < 0.3) return;
+    var k = Math.min(1, dt * 5);
+    frame.sx = Math.abs(dx) < 0.6 ? frame.tx : frame.sx + dx * k;
+    frame.sy = Math.abs(dy) < 0.6 ? frame.ty : frame.sy + dy * k;
+    applyFrame();
+  }
+  N.setFrameElement = function (el) {
+    frame.el = el || null;
+    frame.dirty = true;
+    N.requestRender();
+  };
+
+  var _fw = new THREE.Vector3(), _rt = new THREE.Vector3(),
+      _up = new THREE.Vector3(), _pp = new THREE.Vector3();
+  function fitDistance(dir, margin) {
+    var W = window.innerWidth, H = window.innerHeight;
+    if (!W || !H) return Math.max(300, SPACE.target * 1.95);
+    _fw.copy(dir).normalize().negate();             // the camera looks along -dir
+    _rt.crossVectors(_fw, camera.up);
+    if (_rt.lengthSq() < 1e-8) _rt.set(1, 0, 0);
+    _rt.normalize();
+    _up.crossVectors(_rt, _fw);
+    var t = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * margin;
+    var tv = t * Math.min(1, frame.h / H), th = t * camera.aspect * Math.min(1, frame.w / W);
+    function need(x, y, z, r) {
+      _pp.set(x, y, z);
+      return Math.max((Math.abs(_pp.dot(_rt)) + r) / th,
+                      (Math.abs(_pp.dot(_up)) + r) / tv) - _pp.dot(_fw);
+    }
+    /* the bulk decides, not a few far-flung planets: fit the 96th
+       percentile star, never closer than 80% of what the farthest needs */
+    var needs = graph.nodes.map(function (n) {
+      return need(n.x || 0, n.y || 0, n.z || 0, (n._r || 4) * 1.6);
+    }).sort(function (a, b) { return a - b; });
+    var best = needs.length
+      ? Math.max(needs[Math.floor((needs.length - 1) * 0.96)], needs[needs.length - 1] * 0.8)
+      : 0;
+    if (CORTEX.target > 0 && cortexSample) {          // the whole brain, always
+      for (var i = 0; i < cortexSample.length; i += 3) {
+        best = Math.max(best, need(cortexSample[i] * brainScale, cortexSample[i + 1] * brainScale,
+                                   cortexSample[i + 2] * brainScale, 0));
+      }
+    }
+    return Math.max(160, best);
+  }
+
+  /* once a new dataset or shape has settled, glide back to hold all of
+     it, unless the hand has taken the camera. The Brain is first seen in
+     three-quarter view (front, left, above), the way a brain is drawn. */
+  function maybeFrame() {
+    if (flight || orb.veil || tween || !graph.nodes.length) return;
+    if (!window.innerWidth || !window.innerHeight) return;    // unseen: frame when seen
+    var dir, d;
+    if (framing.pending) {
+      if (graph.sim && graph.sim.alpha() >= 0.12) return;
+      framing.pending = false;
+      framing.refine = !!graph.sim;
+      fitSpace();
+      /* a new shape is first seen from its own best side: the Brain in
+         three-quarter view, a flat shape face on; otherwise keep the view */
+      if (!framing.keepDir && layoutMode === "brain") dir = BRAIN_VIEW.clone();
+      else if (!framing.keepDir && FLAT_MODES.indexOf(layoutMode) >= 0) {
+        dir = new THREE.Vector3(0, 0.12, 1).normalize();
+      } else {
+        dir = camera.position.clone().sub(controls.target);
+        if (dir.lengthSq() < 1) dir.set(0, 0.12, 1);
+        dir.normalize();
+      }
+      framing.keepDir = true;
+      flyCamera(dir.clone().multiplyScalar(fitDistance(dir, 0.9)),
+                new THREE.Vector3(0, 0, 0), 1600);
+      return;
+    }
+    /* the first glide happens while the shape is still settling; once
+       the physics rests, one gentle correction if the fit is off by much */
+    if (framing.refine && !framing.userMoved
+        && (!graph.sim || graph.sim.alpha() <= graph.sim.alphaMin() * 1.01)) {
+      framing.refine = false;
+      dir = camera.position.clone().sub(controls.target);
+      var cur = dir.length();
+      if (cur < 1) return;
+      dir.normalize();
+      d = fitDistance(dir, 0.9);
+      if (Math.abs(d - cur) / cur > 0.12) {
+        flyCamera(dir.multiplyScalar(d), new THREE.Vector3(0, 0, 0), 1200);
+      }
+    }
+  }
+
+  /* fly to a named view of the whole, fitted: front, back, left, right,
+     top, or three (the Brain's own three-quarter view) */
+  var VIEWS = { front: [0, 0.1, 1], back: [0, 0.1, -1], left: [-1, 0.08, 0.02],
+                right: [1, 0.08, 0.02], top: [0.02, 1, 0.06], three: null };
+  N.view = function (name) {
+    var v = VIEWS[name];
+    var dir = v ? new THREE.Vector3(v[0], v[1], v[2]).normalize() : BRAIN_VIEW.clone();
+    framing.pending = false;
+    framing.userMoved = true;            // a chosen view is the hand's choice
+    flyCamera(dir.clone().multiplyScalar(fitDistance(dir, 0.9)),
+              new THREE.Vector3(0, 0, 0), 1200);
+  };
+
   N.getLayout = function () { return layoutMode; };
   N.setLayout = function (mode) {
     var L = window.NebulaLayouts;
     if (!L || L.MODES.indexOf(mode) < 0) mode = "organic";
     layoutMode = mode;
+    tween = null;
+    framing.userMoved = false;          // a new shape is worth seeing whole
+    framing.pending = true;
+    framing.keepDir = false;            // ... from its own best side
     graph.nodes.forEach(function (n) { n.fx = n.fy = n.fz = null; });
-    if (graph.nodes.length) { startSim(); N.requestRender(); }
+    if (graph.nodes.length) { startSim(); paintLinks(); updateBuffers(); N.requestRender(); }
+    else { CORTEX.target = mode === "brain" ? 1 : 0; }
   };
 
   /* ------------------------------------------------------------ pointer */
@@ -1075,12 +1700,15 @@ if (renderer) {
   }
   function hideTip() {
     if (tip) tip.style.display = "none";
+    var repaint = false;
     if (graph.hoverId) {
       setHoverInstance(graph.hoverId, null);
       graph.hoverId = null;
       updateBuffers();
+      repaint = true;
     }
-    if (graph.hoverLink >= 0) { graph.hoverLink = -1; paintLinks(); }
+    if (graph.hoverLink >= 0) { graph.hoverLink = -1; repaint = true; }
+    if (repaint) paintLinks();
     renderer.domElement.style.cursor = "";
   }
   function esc(s) {
@@ -1115,7 +1743,7 @@ if (renderer) {
     raycaster.params.Line.threshold = 3.2;
     var hit = raycaster.intersectObject(graph.lines, false)[0];
     if (!hit || hit.index == null) return -1;
-    return Math.floor(hit.index / 2);          // two vertices per segment
+    return Math.floor(hit.index / (2 * SEG));  // SEG segments, two vertices each
   }
 
   /* the hovered node surges: one float per instance on ITS mesh */
@@ -1166,17 +1794,19 @@ if (renderer) {
     var li = n ? -1 : pickLink();          // stars outrank filaments
     var id = n ? n.id : null;
     var changed = false;
+    var relink = false;
     if (id !== graph.hoverId) {
       setHoverInstance(graph.hoverId, id);
       graph.hoverId = id;
       updateBuffers();
-      changed = true;
+      if (n) spawnRipple(n, 0.55, 640);      // touched: its synapses fire
+      relink = changed = true;
     }
     if (li !== graph.hoverLink) {
       graph.hoverLink = li;
-      paintLinks();
-      changed = true;
+      relink = changed = true;
     }
+    if (relink) paintLinks();
     if (changed) {
       N.requestRender();
       renderer.domElement.style.cursor = (n || li >= 0) ? "pointer" : "";
@@ -1534,6 +2164,8 @@ if (renderer) {
     stillPending = true;
     requestAnimationFrame(function () {
       stillPending = false;
+      if (frame.dirty) measureFrame();
+      maybeFrame();
       if (flight) stepFlight(performance.now());
       controls.update();
       renderer.render(scene, camera);
@@ -1547,6 +2179,52 @@ if (renderer) {
     camera.position.lerpVectors(f.p0, f.p1, e);
     controls.target.lerpVectors(f.t0, f.t1, e);
     if (t >= 1) { flight = null; if (f.done) f.done(); }
+  }
+
+  /* a layout without physics (tree) glides there instead of jumping */
+  var tween = null;
+  function stepTween(now) {
+    var t = Math.min(1, (now - tween.t0) / tween.dur);
+    var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;   // easeInOutCubic
+    tween.list.forEach(function (it) {
+      it.n.x = it.x0 + (it.x1 - it.x0) * e;
+      it.n.y = it.y0 + (it.y1 - it.y0) * e;
+      it.n.z = it.z0 + (it.z1 - it.z0) * e;
+    });
+    updateBuffers();
+    if (t >= 1) { tween = null; fitSpace(); }
+  }
+
+  /* a slow machine loses pixels before it loses frames: two slow windows
+     in a row drop the pixel ratio to 1, then thin the fog wisps. Never
+     back up again in this page's life, so it cannot oscillate. */
+  var perf = { frames: 0, acc: 0, slow: 0, done: false };
+  function resizeUniforms() {
+    var pr = renderer.getPixelRatio();
+    auroraMat.uniforms.uRes.value.set(window.innerWidth * pr, window.innerHeight * pr);
+    starsMat.uniforms.uPR.value = pr;
+    cortexMat.uniforms.uPR.value = pr;
+    cortexMat.uniforms.uPxPerUnit.value = pxPerUnit();
+  }
+  function watchPerf(dt) {
+    if (perf.done) return;
+    perf.frames++; perf.acc += dt;
+    if (perf.frames < 120) return;
+    var fps = perf.frames / Math.max(perf.acc, 1e-3);
+    perf.frames = 0; perf.acc = 0;
+    if (fps > 44) { perf.slow = 0; return; }
+    if (++perf.slow < 2) return;
+    perf.slow = 0;
+    if (renderer.getPixelRatio() > 1) {
+      renderer.setPixelRatio(1);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      resizeUniforms();
+      N.quality = "pixel ratio 1";
+    } else {
+      if (MOTES.n > 320) { MOTES.n = 320; buildMotes(); }
+      N.quality = "pixel ratio 1, fewer wisps";
+      perf.done = true;
+    }
   }
 
   var lastNow = 0, fitCounter = 0, animErrors = 0;
@@ -1571,8 +2249,13 @@ if (renderer) {
     var dt = Math.min((now - lastNow) / 1000 || 0.016, 0.05);
     lastNow = now;
     clockTime = now * 0.001;
+    watchPerf(dt);
 
     if (flight) stepFlight(now);
+    if (tween) stepTween(now);
+    stepFrame(dt);
+    maybeFrame();
+    if (ripples.length) stepRipples(now);
 
     /* physics: settle the constellation */
     if (graph.sim && graph.sim.alpha() > graph.sim.alphaMin()) {
@@ -1589,7 +2272,23 @@ if (renderer) {
 
     /* time flows through the shaders (slow: the plasma register) */
     nodeMat.uniforms.uTime.value = clockTime;
+    synapseMat.uniforms.uTime.value = clockTime;
+    if (graph.glow) graph.glow.material.uniforms.uTime.value = clockTime;
     shellMat.uniforms.uTime.value = ambient.visible ? clockTime : 0;
+    stars.position.copy(camera.position);      // the far field rides along
+    if (ambient.visible) starsMat.uniforms.uTime.value = clockTime;
+
+    /* the cortex fades in with the Brain; the round shell gives way to it */
+    CORTEX.alpha += (CORTEX.target - CORTEX.alpha) * Math.min(1, dt * 2.2);
+    if (cortexGroup) {
+      cortexGroup.visible = CORTEX.alpha > 0.01 && graph.group.visible;
+      var ca = CORTEX.alpha * (focus ? 1 : 0.55);
+      cortexMat.uniforms.uAlpha.value = ca;
+      cortexMat.uniforms.uTime.value = clockTime;
+      glassMat.uniforms.uAlpha.value = ca * 0.9;
+      glassMat.uniforms.uTime.value = clockTime;
+    }
+    shellMat.uniforms.uAlpha.value = (focus ? 0.55 : 0.3) * (1 - CORTEX.alpha);
 
     /* the glass leans with the hand: two custom props, GPU transforms only */
     pointer.px += (pointer.nx - pointer.px) * 0.04;
@@ -1610,28 +2309,34 @@ if (renderer) {
 
     /* selection pulses along the chosen star's filaments — and along a
        clicked filament itself (feedback) */
-    if (graph.pulses && graph.links.length
-        && (graph.selected || graph.linkFocus >= 0)) {
+    var centre = graph.hoverId || graph.selected;
+    if (graph.pulses && graph.links.length && (centre || graph.linkFocus >= 0)) {
       var pp = graph.pulses.geometry.attributes.position.array;
       var pc = graph.pulses.geometry.attributes.color.array;
       var ps = graph.pulses.geometry.attributes.psize.array;
       var k = 0;
-      var tt = now * 0.00035;
+      var tt = now * (graph.hoverId ? 0.0008 : 0.00035);   // a touched star fires faster
       for (var i = 0; i < graph.links.length && k < 62; i++) {
         var l = graph.links[i];
-        var sid = typeof l.source === "object" ? l.source.id : l.source;
-        var tid = typeof l.target === "object" ? l.target.id : l.target;
-        if (i !== graph.linkFocus
-            && sid !== graph.selected && tid !== graph.selected) continue;
+        var sid = l.source.id, tid = l.target.id;
+        var mine = sid === graph.hoverId || tid === graph.hoverId
+                || sid === graph.selected || tid === graph.selected;
+        if (i !== graph.linkFocus && !mine) continue;
+        /* from the firing star outward, along the synapse's own curve */
+        var from = centre && tid === centre ? l.target : l.source;
+        var to = from === l.source ? l.target : l.source;
+        var cxp = l._cx != null ? l._cx : (from.x + to.x) / 2,
+            cyp = l._cy != null ? l._cy : (from.y + to.y) / 2,
+            czp = l._cz != null ? l._cz : (from.z + to.z) / 2;
         for (var j = 0; j < 2; j++, k++) {
-          var f2 = (tt + i * 0.37 + j * 0.5) % 1;
-          pp[k * 3] = l.source.x + (l.target.x - l.source.x) * f2;
-          pp[k * 3 + 1] = l.source.y + (l.target.y - l.source.y) * f2;
-          pp[k * 3 + 2] = l.source.z + (l.target.z - l.source.z) * f2;
+          var f2 = (tt + i * 0.37 + j * 0.5) % 1, g1 = 1 - f2;
+          pp[k * 3] = g1 * g1 * from.x + 2 * g1 * f2 * cxp + f2 * f2 * to.x;
+          pp[k * 3 + 1] = g1 * g1 * from.y + 2 * g1 * f2 * cyp + f2 * f2 * to.y;
+          pp[k * 3 + 2] = g1 * g1 * from.z + 2 * g1 * f2 * czp + f2 * f2 * to.z;
           var pcol = (l.kinds && l.kinds.indexOf("file_ref") >= 0) ? FILELINK
                    : (l.kinds && l.kinds.indexOf("in_folder") >= 0) ? FOLDLINK : STAR;
           pc[k * 3] = pcol.r; pc[k * 3 + 1] = pcol.g; pc[k * 3 + 2] = pcol.b;
-          ps[k] = 3.4;
+          ps[k] = graph.hoverId ? 4.2 : 3.4;
         }
       }
       graph.pulses.geometry.setDrawRange(0, k);
@@ -1650,6 +2355,24 @@ if (renderer) {
   if (!reduced) requestAnimationFrame(animate);
   else still();
 
+  /* in the Brain: how many stars sit in each hemisphere, and how many
+     have strayed outside the skin (should be near zero) */
+  function brainStats() {
+    var L = window.NebulaLayouts, B = L && L.BRAIN;
+    if (!B || layoutMode !== "brain") return null;
+    var out = { left: 0, right: 0, outside: 0 };
+    graph.nodes.forEach(function (n) {
+      var side = n.x < 0 ? -1 : 1;
+      if (side < 0) out.left++; else out.right++;
+      var cx = L.hemiCentre(side) * brainScale;
+      var sq = (n.x - cx) * side < 0 ? B.medial : 1;
+      var lx = (n.x - cx) / (B.rx * brainScale * sq), ly = n.y / (B.ry * brainScale),
+          lz = n.z / (B.rz * brainScale);
+      if (Math.sqrt(lx * lx + ly * ly + lz * lz) > 1.08) out.outside++;
+    });
+    return out;
+  }
+
   /* one honest answer for "why doesn't it work": paste Nebula.debug()
      into the console (or ask the doctor page) */
   N.debug = function () {
@@ -1664,18 +2387,57 @@ if (renderer) {
       orbOpen: !!orb.veil,
       animErrors: animErrors,
       lastError: N.lastError || null,
+      layout: layoutMode, cortex: CORTEX.alpha, quality: N.quality || "full",
+      glass: !!glass, brainScale: brainScale, brainStats: brainStats(),
+      frame: { w: frame.w, h: frame.h, sx: Math.round(frame.sx), sy: Math.round(frame.sy) },
+      ripples: ripples.length,
       samplePos: graph.nodes[0]
         ? { x: graph.nodes[0].x, y: graph.nodes[0].y, z: graph.nodes[0].z } : null,
     };
   };
 
+  /* how much one frame costs, measured honestly: runs the real frame
+     body and waits for the GPU after every frame (a 1-pixel read), so CPU
+     and GPU time are both in the number. It yields between frames: a long
+     unbroken burst of GPU work trips the driver watchdog and loses the
+     context. A hidden tab never animates, so this is the way to know
+     without watching. Returns a promise. */
+  N.profile = function (frames) {
+    frames = Math.max(1, Math.min(frames || 60, 240));
+    var gl = renderer.getContext(), px = new Uint8Array(4);
+    var now = 0, i = 0, total = 0, worst = 0;
+    return new Promise(function (resolve) {
+      function one() {
+        if (gl.isContextLost()) { resolve({ error: "webgl context lost" }); return; }
+        var t0 = performance.now();
+        now = t0;                          // the real clock: flights and tweens run true
+        animateBody(now);
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        var ms = performance.now() - t0;
+        total += ms; if (ms > worst) worst = ms;
+        if (++i < frames) { setTimeout(one, 0); return; }
+        lastNow = performance.now();      // the next real frame gets a sane step
+        resolve({ msPerFrame: Math.round(total / frames * 100) / 100,
+                  worstMs: Math.round(worst * 100) / 100, frames: frames,
+                  pixelRatio: renderer.getPixelRatio(),
+                  size: [window.innerWidth, window.innerHeight],
+                  nodes: graph.nodes.length, links: graph.links.length,
+                  simAlpha: graph.sim ? graph.sim.alpha() : null,
+                  calls: renderer.info.render.calls,
+                  triangles: renderer.info.render.triangles,
+                  points: renderer.info.render.points });
+      }
+      one();
+    });
+  };
+
   window.addEventListener("resize", function () {
     camera.aspect = window.innerWidth / window.innerHeight;
+    frame.dirty = true;
+    applyFrame();
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    var pr = renderer.getPixelRatio();
-    auroraMat.uniforms.uRes.value.set(window.innerWidth * pr,
-                                      window.innerHeight * pr);
+    resizeUniforms();
     N.requestRender();
   });
 
