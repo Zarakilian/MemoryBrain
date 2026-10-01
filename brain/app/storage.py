@@ -460,7 +460,8 @@ def archive_memory_audited(memory_id: str, actor: str, reason: str = "",
     return _set_status_audited(memory_id, "archived", "archive", actor, reason, db_path)
 
 
-def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH) -> bool:
+def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH,
+                   reason: str = "") -> bool:
     """Bring an archived memory back to active, with an audit row. A restored
     memory is valid again, so its closure (superseded_by, invalidated_by,
     valid_to) is cleared; the audit row keeps the old values."""
@@ -471,7 +472,7 @@ def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH) -> bool:
             return False
         conn.execute("""UPDATE memories SET status = 'active', superseded_by = NULL,
                         invalidated_by = NULL, valid_to = NULL WHERE id = ?""", (memory_id,))
-        _audit(conn, memory_id, "restore", actor, "",
+        _audit(conn, memory_id, "restore", actor, reason,
                {k: row[k] for k in ("superseded_by", "invalidated_by", "valid_to") if row[k]})
         conn.commit()
     return True

@@ -333,7 +333,7 @@ async def readiness():
 @app.get("/status")
 async def status():
     """Runtime matrix for multi-AI adapters (Grok/Claude/Codex/Gemini)."""
-    from .mcp.tools import TOOL_NAMES
+    from .mcp.tools import CORE_TOOLS, TOOL_NAMES, tool_profile
     from pathlib import Path as _P
     stamp = ""
     stamp_path = _P(__file__).parent / "BUILD_STAMP"
@@ -356,6 +356,8 @@ async def status():
             "stdio": "docker exec -i memorybrain-brain-1 python stdio_server.py",
             "tool_count": len(TOOL_NAMES),
             "tools": TOOL_NAMES,
+            "profile": tool_profile(),  # MEMORYBRAIN_TOOLS: core (default) or full
+            "core_tools": list(CORE_TOOLS),
             "recommended": {
                 "grok": {"transport": "streamable_http", "url": "http://localhost:7741/mcp"},
                 "claude": {"transport": "sse", "url": "http://localhost:7741/sse"},

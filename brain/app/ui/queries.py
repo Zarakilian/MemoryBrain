@@ -354,7 +354,8 @@ def workspace_dangling(conn, project: Optional[str] = None, limit: int = 50) -> 
     """Memory mentions of files that resolved to nothing, grouped by token."""
     sql = """SELECT fl.dst_id AS token, fl.meta, fl.src_id
              FROM file_links fl JOIN memories m ON m.id = fl.src_id
-             WHERE fl.dst_kind = 'dangling' AND fl.kind = 'file_ref' AND m.status = 'active'"""
+             WHERE fl.dst_kind = 'dangling' AND fl.kind = 'file_ref' AND m.status = 'active'
+               AND COALESCE(json_extract(fl.meta, '$.ref_kind'), 'file') = 'file'"""
     params: list = []
     if project:
         sql += " AND m.project = ?"

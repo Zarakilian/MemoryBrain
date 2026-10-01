@@ -22,10 +22,11 @@ def _seed(tmp_db, monkeypatch):
 def test_tool_registry_has_four_new_tools():
     for name in ("set_project_info", "get_workspace_map", "get_project_files", "get_file_context"):
         assert name in T.TOOL_NAMES and name in T._TOOL_ARGS
-    assert len(T.TOOL_NAMES) == 34  # v3 adds record_correction
+    assert len(T.TOOL_NAMES) == 35  # v3 adds record_correction and brain_admin
 
 
-async def test_list_tools_advertises_them():
+async def test_list_tools_advertises_them(monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_TOOLS", "full")  # v3 lists 15 core tools by default
     names = {t.name for t in await T.list_tools()}
     assert {"set_project_info", "get_workspace_map", "get_project_files", "get_file_context"} <= names
     assert len(names) == len(T.TOOL_NAMES)

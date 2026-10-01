@@ -135,12 +135,13 @@ async def test_mcp_graph_tool_shape(gdb, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_all_tools_registered():
+async def test_all_tools_registered(monkeypatch):
     from app.mcp.tools import TOOL_NAMES
+    monkeypatch.setenv("MEMORYBRAIN_TOOLS", "full")  # v3 lists 15 core tools by default
     tools = await list_tools()
     names = {t.name for t in tools}
     assert names == set(TOOL_NAMES)
-    assert len(names) == 34  # v3 adds record_correction
+    assert len(names) == 35  # v3 adds record_correction and brain_admin
     assert {
         "get_project_brief", "list_conflicts", "resolve_conflict",
         "dismiss_conflict", "pin_memory", "unpin_memory", "list_pins",

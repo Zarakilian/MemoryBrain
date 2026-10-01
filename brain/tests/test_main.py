@@ -22,7 +22,8 @@ def test_status_endpoint_returns_structure(tmp_db, monkeypatch):
             assert "version" in data
             assert data["version"] == "2.5.0"
             assert "mcp" in data
-            assert data["mcp"]["tool_count"] == 34
+            assert data["mcp"]["tool_count"] == 35
+            assert data["mcp"]["profile"] in ("core", "full") and len(data["mcp"]["core_tools"]) == 15
             assert "get_project_brief" in data["mcp"]["tools"]
             assert "record_retrieval" in data["mcp"]["tools"]
             assert "recommended" in data["mcp"]

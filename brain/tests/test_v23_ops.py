@@ -110,11 +110,12 @@ async def test_auto_consolidate_disabled_skips(tmp_db, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_mcp_tool_count_v23():
+async def test_mcp_tool_count_v23(monkeypatch):
     from app.mcp.tools import list_tools, TOOL_NAMES
+    monkeypatch.setenv("MEMORYBRAIN_TOOLS", "full")  # v3 lists 15 core tools by default
     tools = await list_tools()
     names = {t.name for t in tools}
-    assert len(names) == 34   # 22 (v2.3) + 7 Synapse (v2.4) + 4 workspace (v2.5) + record_correction (v3)
+    assert len(names) == 35   # 22 (v2.3) + 7 Synapse (v2.4) + 4 workspace (v2.5) + record_correction, brain_admin (v3)
     assert set(names) == set(TOOL_NAMES)
     assert "record_retrieval" in names
     assert "get_timeline" in names

@@ -482,8 +482,9 @@ def test_ui_recall_endpoint(api_client, cdb):
 
 
 @pytest.mark.asyncio
-async def test_mcp_consolidate_tool_listed_and_callable(cdb, mock_ollama):
+async def test_mcp_consolidate_tool_listed_and_callable(cdb, mock_ollama, monkeypatch):
     from app.mcp.tools import list_tools, call_tool
+    monkeypatch.setenv("MEMORYBRAIN_TOOLS", "full")  # v3 lists 15 core tools by default
     names = {t.name for t in await list_tools()}
     assert "consolidate_memory" in names
 

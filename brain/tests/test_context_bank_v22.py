@@ -198,8 +198,9 @@ async def test_project_brief_unknown_project(tmp_db):
 
 
 @pytest.mark.asyncio
-async def test_mcp_list_tools_count():
+async def test_mcp_list_tools_count(monkeypatch):
     from app.mcp.tools import list_tools, TOOL_NAMES
+    monkeypatch.setenv("MEMORYBRAIN_TOOLS", "full")  # v3 lists 15 core tools by default
     tools = await list_tools()
     names = [t.name for t in tools]
     assert len(names) == len(TOOL_NAMES)

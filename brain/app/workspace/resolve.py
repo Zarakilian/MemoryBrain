@@ -1,7 +1,9 @@
 """Resolve path tokens in memory text to indexed files; derive file_ref edges.
 
-Edges are cache. rebuild_file_links() recomputes every memory->file edge from
-content. A failure here must never fail an ingest (the linker wraps the call).
+Edges derived from prose are cache: rebuild_file_links() recomputes them from
+content. Explicit refs (add_memory refs=[...], meta.explicit) are what an agent
+named on purpose; no relink or rebuild removes or rewrites them. A failure here
+must never fail an ingest (the linker wraps the call).
 """
 from __future__ import annotations
 
@@ -169,17 +171,90 @@ def file_ref_edges(memory_id: str, project: str, text: str, db_path: Path) -> li
     return edges[:MAX_FILE_EDGES]
 
 
-def write_file_links(edges: list[dict], db_path: Path) -> None:
+_WRITE_LINK = """INSERT INTO file_links (src_kind, src_id, dst_kind, dst_id, kind, weight, meta, created_at)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT (src_kind, src_id, dst_kind, dst_id, kind) DO UPDATE
+                  SET weight = excluded.weight, meta = excluded.meta, created_at = excluded.created_at
+                  WHERE COALESCE(json_extract(file_links.meta, '$.explicit'), 0) = 0"""
+_WRITE_EXPLICIT = """INSERT OR REPLACE INTO file_links
+                     (src_kind, src_id, dst_kind, dst_id, kind, weight, meta, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)"""
+
+
+def write_file_links(edges: list[dict], db_path: Path, explicit: bool = False) -> None:
+    """Upsert edges. A derived edge never overwrites an explicit one to the same
+    target; an explicit edge overwrites whatever is there."""
     if not edges:
         return
     now = _now()
     with _st._connect(db_path) as conn:
         conn.executemany(
-            """INSERT OR REPLACE INTO file_links (src_kind, src_id, dst_kind, dst_id, kind, weight, meta, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            _WRITE_EXPLICIT if explicit else _WRITE_LINK,
             [(e["src_kind"], e["src_id"], e["dst_kind"], e["dst_id"], e["kind"], e["weight"],
               json.dumps(e.get("meta") or {}), now) for e in edges])
         conn.commit()
+
+
+# ── explicit refs (add_memory refs=[...]) ─────────────────────────────────
+
+REF_KINDS = ("file", "directory", "url", "task", "service")
+MAX_REFS = 25
+MAX_REF_CHARS = 500
+
+
+def clean_refs(refs) -> list[dict]:
+    """Validate add_memory refs: at most 25 objects {path, kind}. Raises ValueError."""
+    if refs is None:
+        return []
+    if not isinstance(refs, list):
+        raise ValueError("refs must be a list of {path, kind} objects")
+    if len(refs) > MAX_REFS:
+        raise ValueError(f"refs: at most {MAX_REFS} per memory, got {len(refs)}")
+    out = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            raise ValueError("refs: each ref must be an object with path and kind")
+        path = str(ref.get("path") or "").strip()
+        kind = str(ref.get("kind") or "").strip().lower()
+        if not path:
+            raise ValueError("refs: path must not be empty")
+        if len(path) > MAX_REF_CHARS:
+            raise ValueError(f"refs: a path is longer than {MAX_REF_CHARS} characters")
+        if kind not in REF_KINDS:
+            raise ValueError(f"refs: kind must be one of {', '.join(REF_KINDS)}")
+        out.append({"path": path, "kind": kind})
+    return out
+
+
+def explicit_ref_edges(memory_id: str, project: str, refs: list[dict], db_path: Path) -> list[dict]:
+    """A file ref resolves like a path in prose and is kept even when it dangles.
+    Directory, url, task and service refs are stored dangling, with their kind."""
+    roots = [r["abs_path"] for r in ws.list_roots(db_path)]
+    best: dict[str, dict] = {}
+    for ref in refs:
+        path, kind = ref["path"], ref["kind"]
+        meta = {"token": path, "explicit": True, "ref_kind": kind}
+        if kind == "file":
+            res = resolve_token(path, project, db_path)
+            dst_kind = "file" if res["file_id"] else "dangling"
+            dst_id = res["file_id"] or normalise_rel(path, roots)
+            weight = res["weight"]
+            meta.update(how=res["how"], candidates=res["candidates"])
+        else:
+            dst_kind, dst_id, weight = "dangling", path, 1.0
+        best[dst_kind + ":" + dst_id.lower()] = {
+            "src_kind": "memory", "src_id": memory_id, "dst_kind": dst_kind, "dst_id": dst_id,
+            "kind": "file_ref", "weight": weight, "meta": meta}
+    return list(best.values())
+
+
+def link_explicit_refs(memory_id: str, project: str, refs: list[dict], db_path: Path) -> dict:
+    """Store explicit refs as file links. Returns {"file": n, "dangling": n}."""
+    edges = explicit_ref_edges(memory_id, project, refs, db_path)
+    write_file_links(edges, db_path, explicit=True)
+    ws.update_ref_degrees({e["dst_id"] for e in edges if e["dst_kind"] == "file"}, db_path)
+    return {"file": sum(1 for e in edges if e["dst_kind"] == "file"),
+            "dangling": sum(1 for e in edges if e["dst_kind"] == "dangling")}
 
 
 def _infer_bindings(project: str, edges: list[dict], db_path: Path) -> None:
@@ -226,14 +301,18 @@ def link_memory_files(entry, db_path: Path) -> list[dict]:
 
 def rebuild_file_links(db_path: Path) -> dict:
     with _st._connect(db_path) as conn:
-        conn.execute("DELETE FROM file_links WHERE src_kind = 'memory' AND kind = 'file_ref'")
+        conn.execute("""DELETE FROM file_links WHERE src_kind = 'memory' AND kind = 'file_ref'
+                        AND COALESCE(json_extract(meta, '$.explicit'), 0) = 0""")
+        explicit = {r[0] for r in conn.execute(
+            """SELECT dst_id FROM file_links WHERE src_kind = 'memory' AND kind = 'file_ref'
+               AND dst_kind = 'file'""")}
         conn.execute("UPDATE workspace_files SET ref_degree = 0")
         conn.commit()
         rows = conn.execute(
             """SELECT id, project, summary, content FROM memories
                WHERE status = 'active' ORDER BY timestamp ASC""").fetchall()
     n_edges = n_dangling = 0
-    touched: set[str] = set()
+    touched: set[str] = set(explicit)  # explicit refs survive, so their files keep a degree
     for r in rows:
         edges = file_ref_edges(r["id"], r["project"], f"{r['summary'] or ''}\n{r['content'] or ''}", db_path)
         write_file_links(edges, db_path)

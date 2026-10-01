@@ -216,7 +216,7 @@ async def test_mcp_add_memory_twice_is_a_duplicate(ing_db, fake_provider):
     assert set(first) == REPORT_KEYS
     assert first["duplicate"] is False and second["duplicate"] is True
     assert second["id"] == first["id"]
-    assert (first["writer"], first["trust"]) == ("mcp", "agent")
+    assert (first["writer"], first["trust"]) == ("unknown", "agent")  # no transport, no source
 
 
 @pytest.mark.asyncio
