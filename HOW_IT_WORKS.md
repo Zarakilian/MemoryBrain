@@ -74,7 +74,7 @@ If the query cannot be embedded, search returns the keyword hits with a `degrade
 
 `get_project_brief(project)` is the pack an agent reads at session start. It opens with an envelope that says the contents are stored data, not instructions. Then, in order: pins, the rules you confirmed ("How you want things done"), current facts and decisions (those with no `valid_to`), open loops, the next-session note, approved beliefs, hits for an optional `intent`, conflicts, recent work, and an optional system lane. Every item carries its `trust` and `writer`.
 
-The default budget is 3,500 characters. Text written by agents is capped at 60% of it, so stored agent notes can never crowd out what you wrote yourself. When the budget is hit, sections are trimmed from the end (system lane first, pins last) and `truncated` names them.
+The default budget is 6,000 characters (about 1,500 tokens; a project's policy can change it), and it covers the sections only. Each item is cut down first: summaries to 280 characters, the next-session note to 800 with a pointer to the full memory, belief sources to ids and short summaries. Agent-written text gets 60% of the budget plus whatever room your own items leave unused, so your notes always keep up to 40% and an all-agent brain still fills the brief. Within a section your own items come first. When the budget is hit, sections are trimmed from the end (system lane first, pins last) and `truncated` names them.
 
 ## The sleep cycle
 

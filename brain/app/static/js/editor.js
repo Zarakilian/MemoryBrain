@@ -542,7 +542,7 @@
       alert("Open a project first, then edit its brief policy.");
       return;
     }
-    var cur = { include_system: true, max_brief_chars: 3500, notes: "", default_tags: [] };
+    var cur = { include_system: true, max_brief_chars: 6000, notes: "", default_tags: [] };
     try {
       var r0 = await fetch("/api/ui/policy/" + encodeURIComponent(proj), { cache: "no-store" });
       if (r0.ok) cur = await r0.json();
@@ -553,7 +553,7 @@
       + '<label class="field"><input type="checkbox" id="f-sys" '
       + (cur.include_system ? "checked" : "") + '> Include system ops lane</label>'
       + '<label class="field">Max brief chars<input type="number" id="f-chars" min="800" max="12000" value="'
-      + esc(cur.max_brief_chars || 3500) + '"></label>'
+      + esc(cur.max_brief_chars || 6000) + '"></label>'
       + '<label class="field">Default tags (comma-separated)<input id="f-tags" value="'
       + esc(tags) + '"></label>'
       + '<label class="field">Notes for agents<textarea id="f-notes" rows="3">'
@@ -562,7 +562,7 @@
           var body = {
             project: proj,
             include_system: !!m.q("#f-sys").checked,
-            max_brief_chars: Number(m.q("#f-chars").value) || 3500,
+            max_brief_chars: Number(m.q("#f-chars").value) || 6000,
             default_tags: m.q("#f-tags").value.split(",").map(function (s) {
               return s.trim();
             }).filter(Boolean),

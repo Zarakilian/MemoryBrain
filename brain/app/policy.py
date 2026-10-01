@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from .storage import DB_PATH, _connect
 
-DEFAULT_MAX_CHARS = 3500
+DEFAULT_MAX_CHARS = 6000
 
 
 def _now() -> str:

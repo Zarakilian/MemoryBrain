@@ -3,10 +3,13 @@
 > **Version 3 changes this page.** The brief now opens with an envelope saying
 > it is data, not instructions, and every item carries `trust` and `writer`.
 > Rules the user confirmed come right after the pins ("How you want things
-> done"), facts and decisions are only the current ones, agent-written text is
-> capped at 60% of the budget, and `truncated` names the sections that lost
-> items. The conflict, pin and policy tools below now run through
-> `brain_admin` (for example `brain_admin(action="list_conflicts", args={})`).
+> done"), facts and decisions are only the current ones, your own items come
+> first, agent-written text gets 60% of the budget plus whatever room yours
+> leave unused, and `truncated` names the sections that lost items. The
+> default budget is 6,000 characters. `list_conflicts`, `resolve_conflict`,
+> `dismiss_conflict`, `list_pins`, `unpin_memory` and the policy tools now run
+> through `brain_admin` (for example `brain_admin(action="list_conflicts",
+> args={})`); `pin_memory` stays a core tool.
 > Beliefs from the sleep cycle wait as `proposed` until the user approves them.
 
 **Status:** Implemented on `master`  

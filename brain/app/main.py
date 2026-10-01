@@ -3,7 +3,7 @@ import os
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -386,11 +386,12 @@ async def startup_summary():
 async def project_brief_endpoint(
     project: str,
     intent: str = "",
-    max_chars: int = 3500,
-    include_system: bool = True,
+    max_chars: Optional[int] = None,
+    include_system: Optional[bool] = None,
     days: int = 14,
 ):
-    """REST twin of get_project_brief for non-MCP clients."""
+    """REST twin of get_project_brief for non-MCP clients. Budget and system lane
+    default to the project's policy, as they do over MCP."""
     from .brief import build_project_brief
     if not project:
         raise HTTPException(422, "project is required")

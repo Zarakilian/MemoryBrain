@@ -923,7 +923,7 @@ def _all_tools() -> list[types.Tool]:
                     "project": {"type": "string"},
                     "intent": {"type": "string",
                                "description": "Optional focus query for hybrid search hits"},
-                    "max_chars": {"type": "integer", "default": 3500},
+                    "max_chars": {"type": "integer", "default": 6000},
                     "include_system": {"type": "boolean",
                                        "description": "Inject system project ops truths"},
                     "days": {"type": "integer", "default": 14},
@@ -1489,7 +1489,7 @@ async def _dispatch(name: str, arguments: dict) -> str:
         if name == "get_memory":
             clean["max_chars"] = _clamp_int(clean["max_chars"], 100, 100_000, 100_000)
         else:
-            clean["max_chars"] = _clamp_int(clean["max_chars"], 800, 12000, 3500)
+            clean["max_chars"] = _clamp_int(clean["max_chars"], 800, 12000, 6000)
     if "idle_days" in clean:
         clean["idle_days"] = _clamp_int(clean["idle_days"], 1, 365, 14)
     if "priority" in clean:

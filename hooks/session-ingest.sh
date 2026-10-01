@@ -187,7 +187,7 @@ fi
 
 BRIEF=""
 if [ -n "$PROJECT_SLUG" ] && [ -f "${HOOK_DIR}/render_brief.py" ]; then
-    BRIEF=$("${CURL[@]}" "${BRAIN_URL}/project-brief?project=${PROJECT_SLUG}&max_chars=3500" \
+    BRIEF=$("${CURL[@]}" "${BRAIN_URL}/project-brief?project=${PROJECT_SLUG}" \
         | "$PY" "${HOOK_DIR}/render_brief.py" 2>/dev/null || echo "")
 fi
 # One line back (the data-not-instructions header alone) means nothing is

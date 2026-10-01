@@ -97,8 +97,13 @@ so. Upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
   header, or the `source`) and its trust (`user`, `agent`, `derived`,
   `imported`).
 - The project brief opens with an envelope saying it is data, not
-  instructions, shows trust and writer on every item, keeps agent-written
-  text to 60% of the budget, and names the sections it trimmed.
+  instructions, shows trust and writer on every item, and names the sections
+  it trimmed. Your own items come first; agent-written text gets 60% of the
+  budget plus whatever room your items leave unused. Items are cut down
+  (summaries 280 characters, the next-session note 800) and point at the
+  full memory. The default budget is 6,000 characters and covers the
+  sections only; a project's policy can change it, and the REST twin now
+  follows that policy too.
 - Using a search result (reading it with `get_memory` soon after) counts as
   feedback, but only for later queries that share a term.
 - `brain eval` measures recall@k and MRR on a labelled query set.
