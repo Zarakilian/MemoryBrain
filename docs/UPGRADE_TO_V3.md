@@ -87,7 +87,7 @@ Then open `http://localhost:7741/ui/doctor`. **Expect:** every line PASS.
 
 | Assistant | What to do |
 |---|---|
-| Claude Code | Start a new session. The hooks were reinstalled; the session start now shows this project's brief only. Agents see 15 core tools plus `brain_admin`. |
+| Claude Code | Start a new session. The hooks were reinstalled; the session start now shows this project's brief only. Agents see 15 core tools, `brain_admin` among them, which runs the rest. |
 | Grok | Streamable HTTP carries no client name, so pass `source="grok"`, or send an `X-Brain-Agent: grok` header if your config can. Copy `skills/log-everything/SKILL_GROK.md` over your Grok copy only if you never edited it. |
 | Codex | Restart Codex so stdio MCP reloads. Point `~/.codex/AGENTS.md` at `brain_admin` for the less common tools. |
 | Gemini | Restart it. The stdio entry is unchanged. |

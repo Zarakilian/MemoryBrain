@@ -274,7 +274,7 @@ async def test_a_file_link_rebuild_keeps_explicit_refs(mcp_db):
     ([{"path": f"api-service/f{i}.py", "kind": "file"} for i in range(26)], "at most 25"),
     ([{"path": "api-service/a.py", "kind": "blob"}], "kind must be one of"),
     ([{"path": "", "kind": "file"}], "path must not be empty"),
-    (["api-service/a.py"], "each ref must be an object"),
+    (["api-service/a.py"], "expected object"),  # the schema check speaks first
 ])
 async def test_bad_refs_are_rejected_and_nothing_is_stored(mcp_db, refs, reason):
     reply = await _call("add_memory", {"content": "A note with refs.", "type": "note",
@@ -285,3 +285,135 @@ async def test_bad_refs_are_rejected_and_nothing_is_stored(mcp_db, refs, reason)
         assert conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0] == 0
     finally:
         conn.close()
+
+
+# ------------------------------------------------------------- review follow-ups
+
+async def test_admin_args_are_type_checked_like_the_full_tool(mcp_db):
+    reply = await _call("brain_admin", {"action": "set_policy",
+                                        "args": {"project": "acme", "include_system": "false"}})
+    assert "include_system" in reply["error"] and "boolean" in reply["error"]
+
+
+async def test_a_hidden_tool_called_by_name_is_type_checked(mcp_db, monkeypatch):
+    monkeypatch.delenv("MEMORYBRAIN_TOOLS", raising=False)
+    reply = await _call("set_project_policy", {"project": "acme", "include_system": "false"})
+    assert "boolean" in reply["error"]
+
+
+async def test_unknown_admin_args_are_named_not_dropped(mcp_db):
+    reply = await _call("brain_admin", {"action": "get_timeline", "args": {"proj": "acme"}})
+    assert "proj" in reply["error"] and "project" in reply["error"]
+
+
+def _sdk_request(name, args):
+    import mcp.types as types
+    return types.CallToolRequest(method="tools/call",
+                                 params=types.CallToolRequestParams(name=name, arguments=args))
+
+
+async def test_the_sdk_routes_a_hidden_tool_without_warning(mcp_db, monkeypatch, caplog):
+    import logging
+    import mcp.types as types
+    monkeypatch.delenv("MEMORYBRAIN_TOOLS", raising=False)
+    handler = T.server.request_handlers[types.CallToolRequest]
+    with caplog.at_level(logging.WARNING, logger="mcp.server.lowlevel.server"):
+        result = (await handler(_sdk_request("list_projects", {}))).root
+    assert not result.isError and not result.content[0].text.startswith("Unknown tool")
+    assert "not listed" not in caplog.text
+
+
+async def test_the_sdk_rejects_an_unknown_admin_action_with_the_valid_list(mcp_db, monkeypatch):
+    import mcp.types as types
+    monkeypatch.delenv("MEMORYBRAIN_TOOLS", raising=False)
+    handler = T.server.request_handlers[types.CallToolRequest]
+    result = (await handler(_sdk_request("brain_admin", {"action": "drop_everything"}))).root
+    assert result.isError and "list_conflicts" in result.content[0].text
+
+
+async def test_a_reply_with_a_blank_sender_is_filled_from_the_client(mcp_db):
+    thread = await _call("post_task", {"project": "acme", "title": "Review", "body": "Please.",
+                                       "from_agent": "grok"})
+    token = request_ctx.set(_ctx("Claude Code"))
+    try:
+        await _call("reply_to_thread", {"thread_id": thread["thread_id"], "body": "Done.",
+                                        "from_agent": ""})
+    finally:
+        request_ctx.reset(token)
+    conn = connect(mcp_db)
+    try:
+        senders = [r[0] for r in conn.execute(
+            "SELECT from_agent FROM agent_messages WHERE thread_id = ? ORDER BY created_at",
+            (thread["thread_id"],))]
+    finally:
+        conn.close()
+    assert senders == ["grok", "claude"]
+
+
+def _audit_rows(db, memory_id):
+    conn = connect(db)
+    try:
+        return [(r["action"], r["actor"]) for r in conn.execute(
+            "SELECT action, actor FROM memory_audit WHERE memory_id = ? ORDER BY at",
+            (memory_id,))]
+    finally:
+        conn.close()
+
+
+async def test_unpin_archive_and_restore_record_the_client(mcp_db):
+    stored = await _call("add_memory", {"content": "Invoices go out on the first.",
+                                        "type": "fact", "project": "acme"})
+    token = request_ctx.set(_ctx("Claude Code"))
+    try:
+        await _call("pin_memory", {"project": "acme", "memory_id": stored["id"]})
+        await _call("brain_admin", {"action": "unpin_memory",
+                                    "args": {"project": "acme", "memory_id": stored["id"]}})
+        await _call("brain_admin", {"action": "delete_memory", "args": {"memory_id": stored["id"]}})
+        await _call("brain_admin", {"action": "restore_memory", "args": {"memory_id": stored["id"]}})
+    finally:
+        request_ctx.reset(token)
+    rows = _audit_rows(mcp_db, stored["id"])
+    assert ("pin", "claude-code") in rows and ("unpin", "claude-code") in rows
+    assert ("archive", "mcp:claude-code") in rows and ("restore", "mcp:claude-code") in rows
+
+
+async def test_prose_and_an_explicit_ref_to_the_same_file_make_one_explicit_link(mcp_db):
+    file_id = _index_export_file(mcp_db)
+    reply = await _call("add_memory", {
+        "content": "Changed api-service/export.py to retry twice.", "type": "note",
+        "project": "acme", "refs": [{"path": "api-service/export.py", "kind": "file"}]})
+    conn = connect(mcp_db)
+    try:
+        rows = conn.execute("SELECT dst_id, meta FROM file_links WHERE src_id = ? AND dst_kind = 'file'",
+                            (reply["id"],)).fetchall()
+    finally:
+        conn.close()
+    assert [r["dst_id"] for r in rows] == [file_id]
+    assert json.loads(rows[0]["meta"])["explicit"] is True
+
+
+async def test_a_dangling_explicit_ref_resolves_once_the_file_is_indexed(mcp_db):
+    from app.workspace.resolve import rebuild_file_links
+    _index_export_file(mcp_db)
+    reply = await _call("add_memory", {"content": "Started the new job.", "type": "note",
+                                       "project": "acme",
+                                       "refs": [{"path": "api-service/later.py", "kind": "file"}]})
+    assert ("dangling", "api-service/later.py", "file") in _links(mcp_db, reply["id"])
+    ws.apply_manifest({"machine": "WORK-PC", "root_id": "git", "abs_path": "/work/repos",
+                       "full": False, "files": [{"rel_path": "api-service/later.py"}],
+                       "markers": []}, db_path=mcp_db)
+    later = ws.get_file(mcp_db, root_id="git", rel_path="api-service/later.py")["file_id"]
+    report = rebuild_file_links(db_path=mcp_db)
+    links = _links(mcp_db, reply["id"])
+    assert ("file", later, "file") in links
+    assert not any(kind == "dangling" for kind, _, _ in links)
+    assert report["explicit_resolved"] == 1
+    assert reply["id"] in [m["id"] for m in ws.file_context(later, mcp_db)["memories"]]
+
+
+async def test_urls_that_differ_only_in_case_stay_two_refs(mcp_db):
+    reply = await _call("add_memory", {
+        "content": "Two wiki pages.", "type": "note", "project": "acme",
+        "refs": [{"path": "https://wiki.example.com/Export", "kind": "url"},
+                 {"path": "https://wiki.example.com/export", "kind": "url"}]})
+    assert reply["refs"] == {"file": 0, "dangling": 2}

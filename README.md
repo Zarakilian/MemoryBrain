@@ -206,7 +206,7 @@ See [`.env.example`](.env.example). Highlights:
 |----------|---------|
 | `BRAIN_API_KEY` | Protects writes/admin (MCP loopback stays open) |
 | `MEMORYBRAIN_PROVIDER` | `ollama` (default), `gemini` or `openai`; nothing else picks the provider |
-| `MEMORYBRAIN_TOOLS` | `core` (15 tools plus `brain_admin`, default) or `full` |
+| `MEMORYBRAIN_TOOLS` | `core` (15 tools including `brain_admin`, default) or `full` |
 | `MEMORYBRAIN_ALLOWED_HOSTS` | Extra Host names besides loopback |
 | `MEMORYBRAIN_REEMBED_RATE` | Background re-embeds per minute (default 25) |
 | `MEMORYBRAIN_JUDGE` | `on` = the model confirms each flagged contradiction |

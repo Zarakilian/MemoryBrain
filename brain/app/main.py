@@ -616,13 +616,36 @@ async def exchange_status(thread_id: str, req: ThreadStatusRequest):
 async def exchange_inbox(agent: str, project: str = "",
                          include_broadcast: bool = True,
                          mark_read: bool = False, limit: int = 20):
-    """Read-only by default (a GET must not change state); pass
-    mark_read=true to advance the read cursor."""
+    """Read-only: a GET never changes state, so it cannot mark messages read
+    (a cross-site <img> could otherwise empty an agent's inbox). POST
+    /exchange/inbox reads and marks."""
     from .exchange import get_inbox
+    if mark_read:
+        raise HTTPException(422, "mark_read needs POST /exchange/inbox; a GET never changes state")
     try:
         return get_inbox(agent=agent, project=project or None,
                          include_broadcast=include_broadcast,
-                         mark_read=mark_read, limit=limit, db_path=DB_PATH)
+                         mark_read=False, limit=limit, db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+class InboxRead(_BaseModel):
+    agent: str
+    project: str = ""
+    include_broadcast: bool = True
+    mark_read: bool = True
+    limit: int = 20
+
+
+@app.post("/exchange/inbox")
+async def exchange_inbox_read(req: InboxRead):
+    """The inbox, marked read by default, as MCP get_agent_inbox does."""
+    from .exchange import get_inbox
+    try:
+        return get_inbox(agent=req.agent, project=req.project or None,
+                         include_broadcast=req.include_broadcast, mark_read=req.mark_read,
+                         limit=max(1, min(req.limit, 100)), db_path=DB_PATH)
     except ValueError as e:
         raise HTTPException(422, str(e))
 

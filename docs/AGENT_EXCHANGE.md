@@ -51,7 +51,7 @@ Design choices:
 | `get_thread` | Full transcript of one thread. |
 | `get_agent_stats` | Analytics: per-agent memory + message counts, per-project shares, interaction edges. |
 
-REST twins live under `/exchange/*` (API-key protected like other writes) for scripts, plus read-only `/api/ui/agents/*` for the Atlas UI. The REST inbox does not mark messages read unless you pass `mark_read=true`.
+REST twins live under `/exchange/*` (API-key protected like other writes) for scripts, plus read-only `/api/ui/agents/*` for the Atlas UI. `GET /exchange/inbox` never marks messages read; `POST /exchange/inbox` (JSON body with `agent`) reads and marks, as MCP `get_agent_inbox` does.
 
 **Version 3:** the core tool list keeps `post_task`, `get_agent_inbox`, `reply_to_thread` and `get_thread`. `update_task_status`, `list_threads` and `get_agent_stats` run through `brain_admin`, for example `brain_admin(action="update_task_status", args={"thread_id": "…", "status": "done"})`. A thread keeps the `from_agent` you pass; a blank one is filled from your MCP client's name. Titles are capped at 200 characters, bodies at 20,000, and refs at 50.
 

@@ -242,7 +242,8 @@ def explicit_ref_edges(memory_id: str, project: str, refs: list[dict], db_path: 
             meta.update(how=res["how"], candidates=res["candidates"])
         else:
             dst_kind, dst_id, weight = "dangling", path, 1.0
-        best[dst_kind + ":" + dst_id.lower()] = {
+        key = dst_kind + ":" + (dst_id.lower() if kind == "file" else dst_id)
+        best[key] = {
             "src_kind": "memory", "src_id": memory_id, "dst_kind": dst_kind, "dst_id": dst_id,
             "kind": "file_ref", "weight": weight, "meta": meta}
     return list(best.values())
@@ -306,6 +307,12 @@ def rebuild_file_links(db_path: Path) -> dict:
         explicit = {r[0] for r in conn.execute(
             """SELECT dst_id FROM file_links WHERE src_kind = 'memory' AND kind = 'file_ref'
                AND dst_kind = 'file'""")}
+        waiting = conn.execute(
+            """SELECT fl.src_id, fl.dst_id, fl.meta, m.project FROM file_links fl
+               JOIN memories m ON m.id = fl.src_id
+               WHERE fl.src_kind = 'memory' AND fl.kind = 'file_ref' AND fl.dst_kind = 'dangling'
+                 AND COALESCE(json_extract(fl.meta, '$.explicit'), 0) = 1
+                 AND COALESCE(json_extract(fl.meta, '$.ref_kind'), 'file') = 'file'""").fetchall()
         conn.execute("UPDATE workspace_files SET ref_degree = 0")
         conn.commit()
         rows = conn.execute(
@@ -313,6 +320,24 @@ def rebuild_file_links(db_path: Path) -> dict:
                WHERE status = 'active' ORDER BY timestamp ASC""").fetchall()
     n_edges = n_dangling = 0
     touched: set[str] = set(explicit)  # explicit refs survive, so their files keep a degree
+    # An explicit file ref named before its file was indexed resolves now.
+    explicit_resolved = 0
+    for row in waiting:
+        meta = json.loads(row["meta"] or "{}")
+        res = resolve_token(meta.get("token") or row["dst_id"], row["project"], db_path)
+        if not res["file_id"]:
+            continue
+        with _st._connect(db_path) as conn:
+            conn.execute("""DELETE FROM file_links WHERE src_kind = 'memory' AND src_id = ?
+                            AND dst_kind = 'dangling' AND dst_id = ? AND kind = 'file_ref'""",
+                         (row["src_id"], row["dst_id"]))
+            conn.commit()
+        meta.update(how=res["how"], candidates=res["candidates"])
+        write_file_links([{"src_kind": "memory", "src_id": row["src_id"], "dst_kind": "file",
+                           "dst_id": res["file_id"], "kind": "file_ref",
+                           "weight": res["weight"], "meta": meta}], db_path, explicit=True)
+        touched.add(res["file_id"])
+        explicit_resolved += 1
     for r in rows:
         edges = file_ref_edges(r["id"], r["project"], f"{r['summary'] or ''}\n{r['content'] or ''}", db_path)
         write_file_links(edges, db_path)
@@ -320,4 +345,5 @@ def rebuild_file_links(db_path: Path) -> dict:
         n_dangling += sum(1 for e in edges if e["dst_kind"] == "dangling")
         touched |= {e["dst_id"] for e in edges if e["dst_kind"] == "file"}
     ws.update_ref_degrees(touched, db_path)
-    return {"memories": len(rows), "edges": n_edges, "dangling": n_dangling, "files_touched": len(touched)}
+    return {"memories": len(rows), "edges": n_edges, "dangling": n_dangling,
+            "files_touched": len(touched), "explicit_resolved": explicit_resolved}

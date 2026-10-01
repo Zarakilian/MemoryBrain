@@ -39,7 +39,7 @@ def test_brief_renders_sections_and_the_truncation_line():
         "beliefs": [{"summary": "The export job is fragile"}],
         "conflict_count": 2,
         "recent": [{"summary": "Fixed the export", "timestamp": "2026-09-29T10:00:00+00:00"}],
-        "truncated": True, "dropped": ["recent"], "chars_used": 3400, "char_budget": 3500,
+        "truncated": ["recent"], "chars_used": 3400, "char_budget": 3500,
     }
     lines = render_brief.render(pack).splitlines()
     assert lines[0] == FIRST_LINE
@@ -182,6 +182,20 @@ def test_meta_events_are_skipped_and_long_messages_are_capped(tmp_path):
     assert "INJECTED META" not in tail and "short answer" in tail
     assert "x" * pre_compact.MESSAGE_CHARS in tail
     assert "x" * (pre_compact.MESSAGE_CHARS + 1) not in tail
+
+
+def test_a_reply_cut_off_mid_body_does_not_crash(tmp_path):
+    import http.client
+
+    def cut(req, timeout=None):
+        resp = MagicMock()
+        resp.read.side_effect = http.client.IncompleteRead(b"{", 10)
+        resp.__enter__ = MagicMock(return_value=resp)
+        resp.__exit__ = MagicMock(return_value=None)
+        return resp
+
+    with patch.object(pre_compact.urllib.request, "urlopen", cut):
+        assert pre_compact.post_session("text", "acme", "auto") is False
 
 
 def test_null_content_and_odd_replies_do_not_crash(tmp_path):

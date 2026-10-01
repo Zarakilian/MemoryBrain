@@ -49,8 +49,7 @@ def render(pack: dict) -> str:
         out += ["", "## Recent"] + recent
     if pack.get("truncated"):
         truncated = pack["truncated"]
-        dropped = [str(d) for d in (truncated if isinstance(truncated, list)
-                                    else pack.get("dropped") or [])]
+        dropped = [str(d) for d in truncated] if isinstance(truncated, list) else []
         out += ["", f"Truncated to fit the budget: {', '.join(dropped) or 'some sections'}."]
     return "\n".join(out)
 

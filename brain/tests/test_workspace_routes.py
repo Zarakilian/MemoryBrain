@@ -50,7 +50,8 @@ def test_project_info_and_admin_routes(tmp_db):
     assert body["identity"]["description_source"] == "tool" and body["files_under"] == 1
     assert body["header"].startswith("**Daily Reports** (daily-reports). Acme's reporting job.")
     r = client.post("/admin/rebuild-file-links")
-    assert r.status_code == 200 and set(r.json()) == {"memories", "edges", "dangling", "files_touched"}
+    assert r.status_code == 200 and set(r.json()) == {"memories", "edges", "dangling", "files_touched",
+                                                    "explicit_resolved"}
     with patch("app.workspace.routes.backfill_descriptions", new_callable=AsyncMock) as m:
         m.return_value = {"drafted": [], "skipped": ["daily-reports"]}
         r = client.post("/admin/backfill-project-descriptions")

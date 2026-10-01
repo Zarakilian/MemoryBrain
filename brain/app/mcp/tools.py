@@ -21,6 +21,17 @@ from ..workspace.resolve import MAX_REFS, REF_KINDS, clean_refs, link_explicit_r
 
 logger = logging.getLogger(__name__)
 
+
+class _QuietUnlisted(logging.Filter):
+    """Core mode hides tools on purpose, so a call by name is expected, and
+    _dispatch checks its arguments itself: the SDK's warning is only noise."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "not listed, no validation" not in record.getMessage()
+
+
+logging.getLogger("mcp.server.lowlevel.server").addFilter(_QuietUnlisted())
+
 server = Server("memorybrain")
 
 # Keep in sync with list_tools() and /status mcp.tools
@@ -1428,6 +1439,54 @@ _ADMIN_ONLY_ARGS = {
     "rebuild_file_links":   ([], []),
     "reembed":              ([], ["limit"]),
 }
+_ADMIN_ONLY_SCHEMAS = {
+    "restore_memory": {"memory_id": {"type": "string"}, "reason": {"type": "string"}},
+    "rebuild_graph": {},
+    "rebuild_file_links": {},
+    "reembed": {"limit": {"type": "integer"}},
+}
+_JSON_TYPES = {"string": (str,), "integer": (int,), "number": (int, float),
+               "boolean": (bool,), "array": (list,), "object": (dict,)}
+_PROPERTIES: dict = {}
+
+
+def _properties(name: str) -> dict:
+    """A tool's argument schemas, as the full profile lists them."""
+    if not _PROPERTIES:
+        _PROPERTIES.update({t.name: (t.inputSchema or {}).get("properties", {})
+                            for t in _all_tools()})
+        _PROPERTIES.update(_ADMIN_ONLY_SCHEMAS)
+    return _PROPERTIES.get(name, {})
+
+
+def _type_error(value, schema: dict) -> str:
+    """Why value does not fit a property schema, or "" when it does."""
+    kind = schema.get("type")
+    allowed = _JSON_TYPES.get(kind)
+    if allowed and (not isinstance(value, allowed)
+                    or (kind != "boolean" and isinstance(value, bool))):
+        return f"expected {kind}, got {type(value).__name__} {value!r}"[:160]
+    if "enum" in schema and value not in schema["enum"]:
+        return f"must be one of {', '.join(map(str, schema['enum']))}"
+    items = schema.get("items")
+    if kind == "array" and isinstance(items, dict) and isinstance(value, list):
+        for item in value:
+            problem = _type_error(item, items)
+            if problem:
+                return f"item {problem}"
+    return ""
+
+
+def _check_types(name: str, args: dict) -> None:
+    """The checks the SDK applies to a listed tool's arguments, for every call:
+    a hidden tool called by name and a brain_admin action get them too."""
+    properties = _properties(name)
+    for key, value in args.items():
+        if value is None or key not in properties:
+            continue
+        problem = _type_error(value, properties[key])
+        if problem:
+            raise ValueError(f"Invalid argument {key}: {problem}")
 
 _HANDLERS = {
     "search_memory":        lambda a: handle_search_memory(**a),
@@ -1478,6 +1537,7 @@ async def _dispatch(name: str, arguments: dict) -> str:
     required, optional = _TOOL_ARGS.get(name) or _ADMIN_ONLY_ARGS[name]
     try:
         clean = _validate_and_extract(arguments, required, optional)
+        _check_types(name, clean)
     except ValueError as e:
         return json.dumps({"error": str(e)})
 
@@ -1508,7 +1568,13 @@ async def _admin(arguments: dict) -> str:
         args = {}
     if not isinstance(args, dict):
         return json.dumps({"error": "args must be an object with the action's arguments"})
-    return await _dispatch(ADMIN_ACTIONS[action], args)
+    target = ADMIN_ACTIONS[action]
+    required, optional = _TOOL_ARGS.get(target) or _ADMIN_ONLY_ARGS[target]
+    unknown = sorted(set(args) - set(required) - set(optional))
+    if unknown:  # the model sees no per-action schema, so a typo must not pass silently
+        return json.dumps({"error": f"Unknown argument(s) for {action}: {', '.join(unknown)}. "
+                                    f"Allowed: {', '.join(required + optional) or 'none'}"})
+    return await _dispatch(target, args)
 
 
 @server.call_tool()

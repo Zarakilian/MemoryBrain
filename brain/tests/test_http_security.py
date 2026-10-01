@@ -174,6 +174,18 @@ def test_rest_inbox_does_not_mark_messages_read(client):
     assert first["total"] == 1 and again["total"] == 1
 
 
+def test_a_get_inbox_cannot_mark_messages_read_but_a_post_can(client):
+    client.post("/exchange/threads", json={
+        "project": "acme", "title": "Check the export", "body": "please review",
+        "from_agent": "claude", "to_agent": "grok"})
+    refused = client.get("/exchange/inbox", params={"agent": "grok", "mark_read": "true"})
+    assert refused.status_code == 422 and "POST" in refused.json()["detail"]
+    assert client.get("/exchange/inbox", params={"agent": "grok"}).json()["total"] == 1
+    read = client.post("/exchange/inbox", json={"agent": "grok"}).json()
+    assert read["total"] == 1
+    assert client.post("/exchange/inbox", json={"agent": "grok"}).json()["total"] == 0
+
+
 def test_messages_after_the_first_twenty_arrive_next_time(tmp_db):
     from app.exchange import get_inbox, post_task, reply_to_thread
 

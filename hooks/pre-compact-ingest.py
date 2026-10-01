@@ -13,6 +13,7 @@ to be compacted as a session memory:
 
 The stdin JSON itself is never posted.
 """
+import http.client
 import json
 import os
 import re
@@ -133,8 +134,8 @@ def post_session(content: str, project: str, trigger: str) -> bool:
     except urllib.error.HTTPError as e:
         _log(f"brain answered HTTP {e.code}; session not ingested")
         return False
-    except (urllib.error.URLError, TimeoutError, OSError):
-        _log("brain not running or timed out; session not ingested")
+    except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException):
+        _log("brain not running, timed out, or the reply was cut off; session not ingested")
         return False
     try:
         result = json.loads(raw)
