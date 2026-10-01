@@ -11,8 +11,8 @@
 
 <p align="center">
   <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-2.5.0-ffd98a?style=flat-square" />
-  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-33-7c9cff?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-3.0.0-ffd98a?style=flat-square" />
+  <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-15%20core%20%C2%B7%2035-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
 </p>
@@ -66,6 +66,8 @@ Open **http://localhost:7741/ui** · MCP SSE **http://localhost:7741/sse** · Gr
 | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | Architecture & portable setup |
 | [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) | Let an AI drive install/migrate |
 | [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md) | Claude / Grok / Codex / Gemini / REST |
+| [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) | Move a 2.x brain to 3.0 |
+| [CHANGELOG.md](CHANGELOG.md) | Every change, breaking ones first |
 
 ## Architecture (short)
 
@@ -120,6 +122,15 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
 
 ## What's new
 
+### v3.0.0 — a brain you can trust
+- **Nothing is lost:** every write is stored first, in one transaction; WAL, atomic migrations with automatic backups; deletes archive with an audit row.
+- **Search finds it:** questions work, long memories are chunked, fused keyword and vector ranking, `as_of` for "what was true then".
+- **Provenance:** every memory records its writer and trust; the brief is labelled as data, not instructions; beliefs wait for your approval.
+- **It learns your rules, with your OK:** `record_correction` proposes a rule, you confirm it, and it leads every brief.
+- **Lighter for agents:** 15 core tools plus `brain_admin`; explicit `refs` on `add_memory`.
+- **Safer by default:** secrets redacted on write, loopback-only Host names, a write guard without a key, no GET side effects.
+- **Breaking:** the core tool profile, the write-protection header rule, `delete_memory` archives, proposed beliefs. See [CHANGELOG.md](CHANGELOG.md) and upgrade with [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
+
 ### v2.4.0 — Synapse: the agents talk to each other
 - **Agent Exchange** — threads (task/review/question/handoff/discussion) +
   addressed messages between Claude/Grok/Codex/Gemini; pull-based inbox with
@@ -161,8 +172,8 @@ sqlite-vec in `brain.db`, automatic graph, local Atlas UI (Stream / Constellatio
 |-------|----------------|
 | `log-everything` | Session summary → MemoryBrain (+ project log suites where configured) |
 | `handover` | Full session handover document |
-| `map-project-files` | Authoritative file map as a reference memory |
-| `agent-exchange` | Multi-AI collaboration protocol: inbox, handoffs, reviews (v2.4) |
+| `map-project-files` | The project's most referenced files, from the workspace index |
+| `agent-exchange` | Multi-AI collaboration protocol: inbox, handoffs, reviews |
 
 ## Ops cheatsheet
 
@@ -181,8 +192,8 @@ curl -s "localhost:7741/project-brief?project=my-app"
 curl -s -X POST "localhost:7741/admin/export/obsidian?project=my-app" \
   -H "X-Brain-Client: curl" -H "X-Brain-Key: $BRAIN_API_KEY"
 
-# Rebuild after git pull
-cd ~/memorybrain && git pull && docker compose build brain && docker compose up -d
+# Upgrade after git pull: backup, rebuild, count check, hooks and skills
+cd ~/memorybrain && git pull && python3 cli/brain.py upgrade
 ```
 
 **Never** `docker compose down -v` on a live install — that drops the data volume.
@@ -194,10 +205,15 @@ See [`.env.example`](.env.example). Highlights:
 | Variable | Purpose |
 |----------|---------|
 | `BRAIN_API_KEY` | Protects writes/admin (MCP loopback stays open) |
+| `MEMORYBRAIN_PROVIDER` | `ollama` (default), `gemini` or `openai`; nothing else picks the provider |
+| `MEMORYBRAIN_TOOLS` | `core` (15 tools plus `brain_admin`, default) or `full` |
+| `MEMORYBRAIN_ALLOWED_HOSTS` | Extra Host names besides loopback |
+| `MEMORYBRAIN_REEMBED_RATE` | Background re-embeds per minute (default 25) |
+| `MEMORYBRAIN_JUDGE` | `on` = the model confirms each flagged contradiction |
 | `MEMORYBRAIN_AUTO_CONSOLIDATE` | Nightly light sleep |
 | `MEMORYBRAIN_RETRIEVAL_FEEDBACK_WEIGHT` | Ranking lift from chosen results |
 | `MEMORYBRAIN_VECTOR_BACKEND` | `sqlite_vec` (default) or `chroma` rollback |
-| `OLLAMA_*` / `GOOGLE_*` / `OPENAI_*` | Provider selection |
+| `OLLAMA_*` / `GOOGLE_*` / `OPENAI_*` | Provider models and keys |
 
 ## Docs
 
@@ -206,20 +222,22 @@ See [`.env.example`](.env.example). Highlights:
 | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) | Architecture & portable setup |
 | [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md) | Wire any AI |
 | [docs/CONTEXT_BANK_V2.2.md](docs/CONTEXT_BANK_V2.2.md) | Briefs, pins, conflicts |
-| [MIGRATION.md](MIGRATION.md) | Upgrades & backups |
+| [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) | Upgrade 2.x to 3.0 |
+| [CHANGELOG.md](CHANGELOG.md) | What changed, release by release |
+| [MIGRATION.md](MIGRATION.md) | Older upgrades & backups |
 | [AGENTS.md](AGENTS.md) | Rules for every AI working in this repo |
 
 ## Branch & version policy
 
 | Ref | Meaning |
 |-----|---------|
-| **`master`** (default) | **Only active branch** — MemoryBrain **2.x** (current: 2.5.0) |
-| Tags `v2.x.x` | Releases |
+| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.0.0) |
+| Tags `v3.x.x` | Releases |
 | Old feature branches | Fully merged and removed; do not checkout `feature/memorybrain-2.0` |
 
 ```bash
 git clone https://github.com/Zarakilian/MemoryBrain.git
-git checkout master    # this is MemoryBrain 2
+git checkout master    # this is MemoryBrain 3
 ```
 
 ## License & philosophy

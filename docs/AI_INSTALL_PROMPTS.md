@@ -21,6 +21,11 @@ output back.
 
 ---
 
+> **Upgrading a 2.x brain to 3.0?** Give the assistant
+> [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md) with the same rules as Prompt 2: one step
+> at a time, show each command first, stop on any mismatch, backup first.
+> `python3 cli/brain.py upgrade` already refuses every unsafe state.
+
 ## Prompt 1 — Fresh install
 
 ~~~text
@@ -119,18 +124,21 @@ STEPS
 1. Record the starting state. From the repo directory:
      docker compose exec brain python -c "import sqlite3; print(sqlite3.connect('/app/data/brain.db').execute('SELECT COUNT(*) FROM memories').fetchone()[0])"
    Write this number down as MEMORY_COUNT_BEFORE. EXPECT: an integer.
-2. Backup (data volume + config). Linux/macOS shell:
+2. Backup (data volume + config), with the brain stopped and into a folder
+   OUTSIDE the repo. Linux/macOS shell:
+     mkdir -p ~/memorybrain-backups
      docker compose stop brain
-     docker run --rm -v memorybrain_brain_data:/data -v "$PWD":/backup alpine tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz /data
-     cp .env .env.backup-$(date +%Y%m%d)
+     docker run --rm -v memorybrain_brain_data:/data:ro -v ~/memorybrain-backups:/backup alpine tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz -C /data .
+     cp .env ~/memorybrain-backups/env-backup-$(date +%Y%m%d)
      docker compose start brain
    Windows PowerShell equivalent:
+     New-Item -ItemType Directory -Force "$HOME\memorybrain-backups" | Out-Null
      docker compose stop brain
-     docker run --rm -v memorybrain_brain_data:/data -v "${PWD}:/backup" alpine tar czf /backup/brain-backup-$(Get-Date -Format yyyyMMdd).tar.gz /data
-     Copy-Item .env ".env.backup-$(Get-Date -Format yyyyMMdd)"
+     docker run --rm -v memorybrain_brain_data:/data:ro -v "$HOME\memorybrain-backups:/backup" alpine tar czf /backup/brain-backup-$(Get-Date -Format yyyyMMdd).tar.gz -C /data .
+     Copy-Item .env "$HOME\memorybrain-backups\env-backup-$(Get-Date -Format yyyyMMdd)"
      docker compose start brain
    Then VERIFY the backup exists and is not tiny:
-     ls -l brain-backup-*.tar.gz     (PowerShell: Get-Item brain-backup-*.tar.gz)
+     ls -l ~/memorybrain-backups/brain-backup-*.tar.gz     (PowerShell: Get-Item "$HOME\memorybrain-backups\brain-backup-*.tar.gz")
    EXPECT: a .tar.gz dated today, size at least several hundred KB.
    If the volume name differs, find it with: docker volume ls
 3. Upgrade:

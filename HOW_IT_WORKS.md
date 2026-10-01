@@ -1,640 +1,143 @@
-# MemoryBrain — How It Works
+# How MemoryBrain 3.0 works
 
-> **Status:** v0.4.0 ✅ — passive store, tool-agnostic.
-> **Keep this file up to date** as features are added.
+**Purpose:** explain where a memory goes from the moment an agent writes it to the moment it shows up in a brief, and what happens when a part is down.
+**Audience:** engineers running or changing MemoryBrain. You know Docker, SQLite and HTTP.
+**Done when:** you can say which component handles each step below, and what each failure in the degraded-mode table costs you.
+**Last verified:** 2026-10-01 (version 3.0.0)
 
----
+Setup lives in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), upgrades in [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md), wiring each assistant in [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md). Every setting is in [.env.example](.env.example).
 
-## Philosophy
+## What it is
 
-MemoryBrain is a **passive, tool-agnostic memory store**. It does not pull from external systems. Claude retrieves data using its MCP tools (a wiki, a database, an incident tool, and so on) and saves what it finds useful via `add_memory`. On a new machine with different MCP tools, MemoryBrain works identically — the memories reflect actual usage.
+MemoryBrain is a passive, local memory store shared by every assistant you use. It never pulls from other systems. Assistants read with search and briefs, and write what they learned with `add_memory`. Think of it as a lab notebook that several people write in: each entry is dated and signed, nothing is torn out, a correction is a new entry that points at the old one, and the first page lists the rules the owner set.
 
-At session start, the session hook reads `~/.claude.json` directly on the host and injects a list of your registered MCP servers into the session. This provides context about what tools Claude has available — but MemoryBrain itself only stores what Claude explicitly saves.
+## The parts
 
----
-
-## What problem does this solve?
-
-Every Claude Code session starts completely blank. You manually re-explain context via MEMORY.md files — which have a hard 200-line truncation limit, no search, and no connection to the other tools you use.
-
-MemoryBrain replaces that with a persistent, searchable memory service that:
-- **Automatically orients Claude** at the start of every session (~150 tokens, not 200 lines)
-- **Lets Claude search** across all your past sessions, notes, and external sources
-- **Summarises everything on the way in** — long handovers become short, searchable entries
-- **Runs entirely locally** — your data never leaves your machine
-- **Is portable** — clone this repo on any machine, run one command, and it works
-
----
-
-## Architecture overview
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Claude Code (any machine)                                   │
-│                                                              │
-│  session-start hook ──────────► GET /startup-summary        │
-│  pre-compact hook  ──────────► POST /ingest/session         │
-│  MCP tools (during work) ────► /sse  (6 tools)              │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ HTTP localhost:7741
-┌─────────────────────────▼───────────────────────────────────┐
-│  Brain container  (FastAPI)                                  │
-│                                                              │
-│  Ingest pipeline:                                            │
-│    content ──► Ollama summarise ──► Ollama embed             │
-│             ──► SQLite FTS5 (keyword)                        │
-│             ──► ChromaDB (semantic vectors)                  │
-│                                                              │
-│  Search pipeline:                                            │
-│    query ──► FTS5 keyword search (top 20)                   │
-│          ──► Ollama embed ──► ChromaDB cosine (top 20)       │
-│          ──► Reciprocal Rank Fusion ──► top 10 summaries     │
-└─────────────────────────────────────────────────────────────┘
-┌─────────────────────────────────────────────────────────────┐
-│  Ollama container                                            │
-│    embeddinggemma    — embeddings (~621MB, #1 MTEB sub-500M) │
-│    llama3.2:3b       — summarisation + importance (~2GB)     │
-└─────────────────────────────────────────────────────────────┘
+```text
+Claude Code hooks ─┐                     ┌──────────── brain container (:7741, loopback) ───────────┐
+MCP: /sse  /mcp    ├── HTTP, loopback ──►│ FastAPI app                                               │
+MCP: stdio (docker)│                     │   Host check · write guard · API key · redaction          │
+REST, CLI, Atlas  ─┘                     │   ingest · search · brief · consolidation · learning      │
+                                         │   background: re-embed job, nightly light sleep (opt-in)  │
+                                         │ /app/data (volume memorybrain_brain_data)                 │
+                                         │   brain.db: SQLite + FTS5 + sqlite-vec, WAL               │
+                                         │   backups/: copies taken before each migration            │
+                                         └──────────────┬────────────────────────────────────────────┘
+                                                        │ embed · summarise · judge
+                                         ┌──────────────▼──────────────┐
+                                         │ ollama container (default)  │  or Gemini / OpenAI when
+                                         │ embeddinggemma, llama3.2:3b │  MEMORYBRAIN_PROVIDER says so
+                                         └─────────────────────────────┘
 ```
 
-### Storage split
+- One file holds everything: memories, their full-text index (FTS5), vectors (sqlite-vec), the graph, pins, threads, the workspace index and the audit log.
+- The provider is chosen only by `MEMORYBRAIN_PROVIDER` (`ollama`, `gemini`, `openai`). A cloud key on its own changes nothing; `/readiness` warns when a key is set but ignored.
+- Atlas, the web UI, is at `http://localhost:7741/ui`. The doctor page `/ui/doctor` checks every subsystem.
 
-| Store | What goes in | Used for |
-|---|---|---|
-| SQLite FTS5 (`data/brain.db`) | All content, summaries, metadata | Keyword search, CRUD, full content fetch |
-| ChromaDB (`data/chroma/`) | Embeddings + memory ID reference | Semantic/similarity search |
+## A memory's life
 
-Both stores are in the `data/` directory — a Docker volume on your machine. **Data is machine-local and never synced.** The code is portable; your memories stay on each machine.
+1. **Validate.** Type, size, project and status are checked. Bad input is a 422, never a 500.
+2. **Redact.** Secrets are replaced with `[REDACTED:<rule>]` before anything else sees the text (rules below). Credentials in URLs are stripped.
+3. **Deduplicate.** The same content in the same project returns the stored copy with `duplicate: true`. The check runs again right before storing, so two racing writes still store once.
+4. **Summarise and score.** Bodies up to 400 characters are their own summary. Longer ones are summarised by the model. If the model fails, the summary is the first 280 characters, importance is 3, and the write report says `summary fallback`.
+5. **Embed.** The text gets a document vector, made with EmbeddingGemma's document prompt and tagged with the model's id. Bodies over 1,800 characters are also split into chunks of about 900 characters with 150 overlap, cut at a heading, a blank line or a sentence end, and each chunk gets its own vector. Embedding never fails the write: on error the memory is stored with `embedded=0`.
+6. **Store first.** The row, its vectors and any supersession closures go in one transaction. If the vector store itself will not load, the row is stored without vectors. A memory is never lost because a model was down.
+7. **Supersede.** A new fact or decision that is near-identical (similarity 0.97) to an active one replaces it automatically; for beliefs the bar is 0.95. The old one is archived with `superseded_by` and a `valid_to` date, and an audit row. Other near matches come back in `potential_supersessions` for a person or agent to decide. Sessions are never archived automatically.
+8. **Link.** The graph gains semantic, tag, reference, session-chain and entity edges. Paths in the text become `file_ref` links to indexed files, plus any `refs` the writer named on purpose. Entities (hosts, tickets, ids, paths, products, environment variables) are indexed. Links are cache: a failure here is logged, never fatal.
+9. **Report.** The caller gets the write report: id, summary, writer, trust, embedded, chunk count, duplicate flag, supersessions and warnings.
 
----
+## Provenance
 
-## Data flow — what happens when you work
-
-### Session starts
-1. `session-start-memory.sh` hook fires
-2. **Container health check** — if brain is not running, prints a clear message with the exact `docker compose up -d` command to start it, then falls back to legacy `MEMORY.md` (no crash)
-3. **Version check** — if `MEMORYBRAIN_DIR` is set (written by `brain setup`), compares `$MEMORYBRAIN_DIR/VERSION` against the running container's reported version. If they differ (e.g. after `git pull` without rebuilding), prints an update message with the exact rebuild command
-4. **Subsystem readiness check** — calls `GET /readiness`, which checks all four subsystems: SQLite, ChromaDB, Ollama, and both required models (`embeddinggemma`, `llama3.2:3b`). If anything is degraded, prints a `## MemoryBrain — PARTIAL SERVICE` block listing exactly what failed, what still works, and the exact commands to fix it. On a healthy system, this step is completely silent
-5. **Stamps the project MEMORY.md** — writes a `**MemoryBrain Last Active:** <ISO timestamp>` line to `~/.claude/projects/<hash>/memory/MEMORY.md`. This is the authoritative signal Claude reads at the start of every session to confirm MemoryBrain is active. The hash is derived from the CWD path (all non-alphanumeric characters replaced with `-`). If the MEMORY.md file doesn't exist for this project, the step is silently skipped.
-6. Calls `GET /startup-summary` — brain returns a compact project index (~150 tokens): last activity per project
-7. Hook injects it into your session — Claude is immediately oriented
-
-**Degraded service modes** (reported at startup when detected):
-
-| Condition | Available | Unavailable |
-|---|---|---|
-| Ollama down or models missing | Read + keyword search | `add_memory`, semantic search |
-| ChromaDB down | Read + keyword search + `add_memory` | Semantic search |
-| SQLite down | Nothing | Everything |
-
-### During a session
-Claude calls MCP tools on demand:
-
-| Tool | What it does |
+| Field | Meaning |
 |---|---|
-| `search_memory(query)` | Hybrid keyword+semantic search → returns **summaries** (not full content) |
-| `get_memory(id)` | Fetch **full content** of one specific entry |
-| `add_memory(content, type, project)` | Store a new note or fact right now |
-| `get_recent_context(project, days)` | Chronological recent entries for a project |
-| `list_projects()` | All known projects + last activity |
-| `get_startup_summary()` | Same compact index as session start |
+| `writer` | Who wrote it: the MCP client's name from its initialize request, else an `X-Brain-Agent` header, else the `source` argument, else `unknown`. REST writes say `rest`, Atlas writes `ui`. |
+| `trust` | `user` (you, in Atlas), `agent` (any MCP or REST caller; an agent cannot claim `user`), `derived` (made by the brain, such as beliefs), `imported` (Obsidian import). |
+| `valid_from`, `valid_to`, `invalidated_by` | When a fact was true. Superseding sets `valid_to`; restoring clears it. Search and the timeline take `as_of` to answer "what was true on that date". |
+| `memory_audit` | One row per archive, restore, supersede, pin, unpin and hard delete: who, when, why. |
 
-### Claude behavior rules (MANDATORY)
+Agents archive; only you delete. MCP `delete_memory` archives with an audit row and `brain_admin(action="restore_memory")` undoes it. A permanent delete exists only in Atlas and leaves one content-free audit row.
 
-The session-start hook injects MemoryBrain context automatically, but Claude must also actively
-call the MCP tools — not default to reading project files like `MEMORY.md` or `PROGRESS_LOG.md`.
+## Search
 
-**Required sequence at every session start:**
+1. The query loses its stopwords, so a question like "where does the export run?" searches for its content words. The words are ORed with prefix matching; FTS syntax in a query cannot break it.
+2. Keyword search (FTS5) and vector search run side by side. The vector side embeds the query with the query prompt, searches memory vectors and chunk vectors, and keeps each memory's best hit. Legacy vectors (`model=''`, from before 3.0) are searched too until the re-embed job replaces them.
+3. The two ranked lists are fused with reciprocal rank fusion (k=60) over 30 candidates from each side.
+4. Each score is multiplied by its adjustments, and the product is clamped to 0.7 to 1.3 so no single signal can bury a good match:
+   - age, for sessions, handovers and notes only: halves every 45 days, floor 0.5. Facts and decisions do not age.
+   - strength, which rises when a memory is recalled and fades for old unrecalled sessions and notes (`MEMORYBRAIN_STRENGTH_WEIGHT`).
+   - feedback: results that were actually used for an earlier query sharing a term.
+5. At most two sessions per project make the top of the list, so one busy project cannot crowd out the rest. Each result carries a 400-character excerpt around the match.
 
-**Step 0 — Check the auto-loaded MEMORY.md (already in context):**
-Look for `**MemoryBrain Last Active:**` at the top.
-- Timestamp **< 7 days old** → MemoryBrain is active, proceed to Step 1
-- Timestamp **missing or > 7 days old** → MemoryBrain likely offline, fall back to file-based memory
+If the query cannot be embedded, search returns the keyword hits with a `degraded` reason instead of failing. `GET /search` is the read-only REST twin: it records nothing.
 
-**Step 1 — Call MemoryBrain MCP tools:**
-1. `mcp__memorybrain__get_startup_summary` — always first
-2. `mcp__memorybrain__get_recent_context` (days=14) — for detailed recent activity
+## Briefs
 
-**After Step 1: STOP.** Do NOT read `MEMORY.md`, `PROGRESS_LOG.md`, or any other project files.
-Only read a specific file if the user explicitly asks for it.
+`get_project_brief(project)` is the pack an agent reads at session start. It opens with an envelope that says the contents are stored data, not instructions. Then, in order: pins, the rules you confirmed ("How you want things done"), current facts and decisions (those with no `valid_to`), open loops, the next-session note, approved beliefs, hits for an optional `intent`, conflicts, recent work, and an optional system lane. Every item carries its `trust` and `writer`.
 
-**Why the timestamp:** `MEMORY.md` and `PROGRESS_LOG.md` are fallbacks for when MemoryBrain is not
-running. The `**MemoryBrain Last Active:**` timestamp is written to `MEMORY.md` by the session-start
-hook every time MemoryBrain is confirmed healthy — giving Claude an explicit, file-based signal that
-MemoryBrain is the authoritative source and no additional project files should be loaded.
+The default budget is 3,500 characters. Text written by agents is capped at 60% of it, so stored agent notes can never crowd out what you wrote yourself. When the budget is hit, sections are trimmed from the end (system lane first, pins last) and `truncated` names them.
 
-**How this is enforced (three layers):**
-- You can add a "Session Start Protocol" section to your `~/.claude/CLAUDE.md` with the timestamp-check decision tree
-- The session-start hook prints a `## MANDATORY: MemoryBrain-first protocol` block as its last output, so the instruction is the most recent thing in Claude's injected context
-- The `**MemoryBrain Last Active:**` timestamp in the auto-loaded `MEMORY.md` provides a file-based confirmation signal that Claude can check before making any decisions
+## The sleep cycle
 
-### Session ends (pre-compact)
-1. `pre-compact-auto-handover.py` hook fires
-2. Reads handover content from stdin or the most recent `HANDOVER-*.md` file
-3. POSTs it to `POST /ingest/session`
-4. Brain: summarises → scores importance (1–5) → embeds → stores in SQLite + ChromaDB
-5. **Stamps the project MEMORY.md** — same timestamp update as session start, confirming MemoryBrain was active during this session
-6. The session is now permanently searchable
+`brain_admin(action="consolidate")`, the ☾ sleep button in Atlas, or the opt-in nightly light sleep (`MEMORYBRAIN_AUTO_CONSOLIDATE`) runs one cycle. Only one runs at a time; a run older than two hours counts as dead.
 
-### Why summaries, not full content in search results
-A 5000-token handover becomes a ~50-token summary on ingest. Search returns summaries only. Claude calls `get_memory(id)` only for entries it actually needs in full. This keeps the context window lean.
+- **Beliefs.** Clusters of related memories are distilled into beliefs. Each sentence must cite the memories it came from, and uncited sentences are dropped. Beliefs are stored as `proposed` and stay out of briefs until you approve them in Atlas or with `brain beliefs`.
+- **Conflicts.** Pairs that look contradictory are flagged as `conflicts_with` edges. With `MEMORYBRAIN_JUDGE=on` the model must also answer YES to "do these contradict?". Resolve or dismiss them in Atlas or through `brain_admin`.
+- **Open loops.** Unfinished work found in sessions becomes open loops, and a loop closes itself when a later memory reports it done.
+- **Decay.** Strength is computed when a memory is read: after 14 days without a recall it halves every 60 days, within 0.2 to 3.0, and only for sessions, handovers and notes. Pinned memories do not decay. Because it is computed from time, running the cycle twice changes nothing.
 
----
+## Learning your rules
 
-## Hybrid search — how it works
+When you correct how an agent works, the agent calls `record_correction(rule, evidence, project)`. The rule is stored as a proposed procedure, with the agent as writer. Only you can confirm it, in Atlas (✓ review) or with `brain procedures --confirm <id>`; no tool can. Confirmed rules lead every brief for that project, or for every project when they have none.
 
-```
-query: "invoice export job"
-    │
-    ├── FTS5 keyword search → BM25 ranked → top 20
-    │
-    └── embed(query) → ChromaDB cosine → top 20
-                │
-                ▼
-        Reciprocal Rank Fusion
-        score = Σ  1 / (60 + rank + 1)  per list
-                │
-                ▼
-        top 10 results (entries in BOTH lists rank highest)
-```
+## The agent surface
 
-Entries that match both keyword and semantic search rank highest. Keyword-only and semantic-only hits are included but ranked lower.
+- **Transports.** MCP over SSE (`/sse`, Claude Code), streamable HTTP (`/mcp`, Grok) and stdio through `docker exec` (Codex, Gemini), plus REST for anything else. They all reach the same tools.
+- **Core profile.** By default the tool list holds 15 tools: `search_memory`, `get_memory`, `add_memory`, `get_project_brief`, `get_startup_summary`, `get_recent_context`, `pin_memory`, `set_project_info`, `get_file_context`, `get_agent_inbox`, `post_task`, `reply_to_thread`, `get_thread`, `record_correction` and `brain_admin`. The list is about 7,000 characters of schema, which matters because every agent loads it at session start.
+- **brain_admin.** One tool runs the 24 less common operations, with the same arguments and validation as the full tools. `MEMORYBRAIN_TOOLS=full` lists every tool again. A tool that is not listed still answers when called by name.
+- **Explicit refs.** `add_memory(refs=[{"path", "kind"}])` names up to 25 files, folders, urls, tasks or services. File refs resolve against the workspace index and are kept even when they dangle; they survive every relink and rebuild.
+- **Synapse.** Agents hand each other work through threads with a pull inbox. See [docs/AGENT_EXCHANGE.md](docs/AGENT_EXCHANGE.md).
 
----
+## The hooks
 
-## Project detection
-
-The brain needs to know which project a session belongs to. It uses this order:
-
-1. **`.brainproject` file** in the CWD — contains just the project slug (e.g. `api-service`)
-2. **Heuristic** — last meaningful path segment of CWD (e.g. `/home/user/projects/api-service` → `api-service`)
-
-To explicitly tag a repo, create a `.brainproject` file:
-```bash
-echo "my-project-name" > .brainproject
-```
-
----
-
-## MCP Tool Awareness
-
-At session start, the `session-start-memory.sh` hook reads `~/.claude.json` **directly on the host** and injects a list of your registered MCP servers into the session context. Example:
-
-```
-## Available MCP Tools
-- db-query
-- memorybrain
-- pager
-- wiki
-
-MemoryBrain will store what you retrieve with these tools.
-```
-
-This happens on the host — not inside Docker. `~/.claude.json` is never mounted into the container (it contains credentials). If `~/.claude.json` is missing or has no `mcpServers`, the block is silently skipped.
-
-The `brain/app/mcp_discovery.py` module still exists and is unit-tested — it can be used by the CLI or future tooling. It is intentionally not exposed as an HTTP endpoint because the Docker container cannot access `~/.claude.json` (the `brain` user's home is `/app`, not the host home). Host-side execution is both simpler and more secure.
-
----
-
-## Setup — any machine
-
-> This section is written so Claude can follow it autonomously.
-> If you're asking Claude to set this up, point it here.
-
-### Prerequisites
-
-| Requirement | Check command | Install if missing |
-|---|---|---|
-| Docker | `docker --version` | Install Docker Desktop (Mac/Windows) or Docker Engine (Linux) |
-| Docker running | `docker ps` | Start Docker Desktop / Rancher Desktop |
-| Git | `git --version` | Usually pre-installed |
-| curl | `curl --version` | Usually pre-installed |
-| ~3GB disk space | `df -h ~` | For Ollama models |
-
-**WSL users (Windows):** Docker must be accessible from WSL. If `docker: command not found` in WSL, enable WSL integration in Docker Desktop or Rancher Desktop → Preferences → WSL Integrations.
-
----
-
-### Step 1 — Clone the repo
-
-```bash
-git clone https://github.com/Zarakilian/MemoryBrain ~/memorybrain
-cd ~/memorybrain
-```
-
-> You can clone to any path — the CLI and hooks resolve paths dynamically from `__file__` / CWD. `~/memorybrain` is conventional but not required.
-
----
-
-### Option A — One-command setup (recommended)
-
-After cloning, run:
-
-```bash
-cp .env.example .env
-python3 cli/brain.py setup --auto-detect
-```
-
-This handles Steps 3–8 automatically: starts Docker, pulls models, registers the MCP server, installs hooks + skills, adds the `brain` shell alias. Skip to Step 8 (tag your projects) when done.
-
----
-
-### Option B — Manual setup (Steps 2–7)
-
-### Step 2 — Configure environment
-
-```bash
-cp .env.example .env
-```
-
-Open `.env` if you need to change the port or add API key authentication. All fields are optional:
-
-```bash
-# Required
-BRAIN_PORT=7741          # change if 7741 is in use
-OLLAMA_URL=http://ollama:11434   # leave as-is for Docker Compose setup
-
-# Authentication (optional but recommended)
-# Set to any random string — enables X-Brain-Key header check on all endpoints
-# Leave blank to run open (fine for single-user localhost-only use)
-BRAIN_API_KEY=
-```
-
----
-
-### Step 3 — Start the service
-
-```bash
-docker compose up -d
-```
-
-This starts:
-- `brain` container (FastAPI on port 7741)
-- `ollama` container (Ollama model server)
-
-Verify both are running:
-```bash
-docker compose ps
-curl http://localhost:7741/health
-# Expected: {"status":"ok"}
-```
-
----
-
-### Step 4 — Pull Ollama models (first time only, ~2.6GB)
-
-```bash
-docker compose exec ollama ollama pull embeddinggemma
-docker compose exec ollama ollama pull llama3.2:3b
-```
-
-This is a one-time download. Models are stored in a Docker volume (`ollama_data`) and persist across container restarts.
-
-Verify:
-```bash
-docker compose exec ollama ollama list
-# Should show: embeddinggemma, llama3.2:3b
-```
-
----
-
-### Step 5 — Add MemoryBrain as an MCP server in Claude Code
-
-```bash
-claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse
-```
-
-Verify it's registered:
-```bash
-claude mcp list
-# Should show: memorybrain   http://localhost:7741/sse
-```
-
----
-
-### Step 6 — Install hooks and skills
-
-The `brain setup --auto-detect` command (Option A above) handles this automatically. To install manually:
-
-```bash
-# Hooks — replace existing flat-file hooks
-cp hooks/session-ingest.sh ~/.claude/hooks/session-start-memory.sh
-cp hooks/pre-compact-ingest.py ~/.claude/hooks/pre-compact-auto-handover.py
-chmod +x ~/.claude/hooks/session-start-memory.sh
-chmod +x ~/.claude/hooks/pre-compact-auto-handover.py
-
-# Skills — copy to ~/.claude/skills/
-mkdir -p ~/.claude/skills/log-everything
-cp skills/log-everything/SKILL.md ~/.claude/skills/log-everything/SKILL.md
-mkdir -p ~/.claude/skills/handover
-cp skills/handover/SKILL.md ~/.claude/skills/handover/SKILL.md
-mkdir -p ~/.claude/skills/map-project-files
-cp skills/map-project-files/SKILL.md ~/.claude/skills/map-project-files/SKILL.md
-```
-
-Skills included:
-| Skill | Trigger | What it does |
-|---|---|---|
-| `log-everything` | `/log-everything` | Generates session summary → saves via `add_memory` → prompts for next-session notes |
-| `handover` | `/handover` | Creates a comprehensive session handover document → saves to MemoryBrain or file |
-| `map-project-files` | `/map-project-files` | Discovers high-priority `.md` files for the project → saves a file map as a `reference` memory so future sessions know exactly where to look without scanning the filesystem |
-
----
-
-### Step 7 — Verify end-to-end
-
-```bash
-# Store a test note
-curl -s -X POST http://localhost:7741/ingest/note \
-  -H "Content-Type: application/json" \
-  -d '{"content":"MemoryBrain is installed and working on this machine","project":"personal","tags":["setup"]}'
-# Expected: {"id":"...","summary":"...","importance":3}
-
-# Check startup summary
-curl -s http://localhost:7741/startup-summary
-# Expected: {"summary":"# MemoryBrain — Session Context\n- personal: ..."}
-```
-
-Open a **new Claude Code session**. You should see the session context injected automatically at the top.
-
----
-
-### Step 8 — Scan your workspace (v2.5)
-
-MemoryBrain never reads your disk. The `brain scan` command walks your workspace root on
-the host and pushes a manifest of file names, sizes, times, hashes and Markdown titles
-(never contents) to the brain. From then on:
-
-- every memory that names a file gets a resolved `file_ref` edge to it (backfilled once),
-- every project knows its home folders, and files inherit the project of the deepest
-  folder above them,
-- `get_project_files`, `get_file_context`, `get_workspace_map` answer "which files matter
-  here" and "what does this file connect to".
-
-First run, per machine:
-
-```bash
-python cli/brain.py scan --root "C:\work\repos" --label git --init   # writes workspace-map.proposed.json
-#   edit the `project` values (blank = leave unmapped)
-python cli/brain.py scan --apply workspace-map.proposed.json           # writes .brainproject markers, binds folders
-python cli/brain.py scan                                               # pushes the manifest (incremental after the first)
-```
-
-Deleted and moved files are only detected by a full scan (`python cli/brain.py scan --full`), because the everyday scan sends changes only. Run a full scan now and then, weekly is plenty. The REST route `GET /workspace/find?query=` is already live for scripts; the matching MCP tool `find_file` arrives in phase 2.
-
-Bindings also arrive without the map file: a `.brainproject` marker in any folder, the
-folder you open a session in, a sentence to your assistant such as "all ReportFlow files live
-in Tools\ReportFlow" (it calls `set_project_info`), and paths named inside memories
-(inferred, unconfirmed until you or a marker confirm). Precedence: marker and tool beat
-cwd, which beats init, which beats inference.
-
-Exclusions: `.git node_modules venv .venv __pycache__ …` directories, and `.env*`,
-`*.pem`, `*.key`, `*secret*`, `*password*` files are never indexed.
-Add your own globs, one per line, in `~/.memorybrain/scan-ignore`.
-
----
-
-## Workspace layer (v2.5)
-
-| Table | Holds |
-|---|---|
-| `workspace_roots` | one row per (root label, machine): `git` on `WORK-PC` is `C:\work\repos` |
-| `project_folders` | project ↔ folder bindings with `how` (marker/tool/cwd/init/memory), confidence, confirmed |
-| `workspace_files` | root-relative path, ext, size, mtime, hash, title, status (active/moved/deleted), `ref_degree` |
-| `file_links` | memory→file `file_ref`, file→file `links_to`, session→file `touched` (phase 2) |
-| `workspace_touches` | raw edit events from the PostToolUse hook (phase 2) |
-
-Project identity: `projects.description` with `description_source` = `user` > `tool` > `auto`.
-Light consolidation drafts an `auto` description for any project without one. You or
-an assistant (`set_project_info`) can overwrite `auto`; nothing overwrites `user`.
-
-Rebuild: `POST /admin/rebuild-file-links` recomputes every memory→file edge; it also runs
-after any scan that adds files, so a once-dangling reference resolves when the file appears.
-
-### In the Atlas
-
-- **Constellation:** with `files` ticked (default), files that memories name appear as ice crystals and each project's bound folders as planets; cyan filaments join memories to files. Click a planet to pull its files in (150 at a time, strongest referenced first). Untick `files` to see memories only.
-- **Layout:** the Constellation's `layout` picker reshapes the same stars: Organic (the force layout), Orb (everything on a sphere so lines read as clean chords), Flow down and Flow right (rank layers, heads first, files and folders last), Web (concentric rings per project, flat), Tree (a radial tree, computed and still, the neatest for tracing a line). Remembered per browser; the Tree layout also renders in the 2D fallback (the force-driven shapes need a visible tab).
-- **Files lens (tab 4):** the folder tree per project, files with a heat bar for how often memories name them, extension and text filters, and the dangling mentions (names in memories that match no indexed file, or several).
-- **File page** `/ui/file/<id>`: everything the brain knows about one file, no JavaScript needed.
-- **Doctor** `/ui/doctor`: last scan age, unmapped folders, projects without a folder, dangling count.
-- The UI reads `/api/ui/workspace/*` (public, read-only). The write paths stay `brain scan` and `set_project_info`.
-
----
-
-## The `brain` CLI ✅
-
-After running `brain setup`, a `brain` alias is available in your terminal:
-
-```bash
-brain add "just discovered X about Y"       # store a note from anywhere
-brain import ~/Downloads/some-doc.md        # import a file
-brain seed                                  # bulk import MEMORY.md + HANDOVER files from CWD
-brain status                                # check brain health + service version
-brain setup --auto-detect                   # re-run setup (safe on any machine)
-```
-
-On a fresh machine, the full setup is one command:
-```bash
-python3 ~/path/to/MemoryBrain/cli/brain.py setup --auto-detect
-```
-
-This single command: starts Docker containers, pulls Ollama models, registers the MCP server with Claude Code, installs session hooks, installs skills, and adds the `brain` shell alias.
-
-### Embedding model
-
-MemoryBrain uses **EmbeddingGemma** (`embeddinggemma` via Ollama) for semantic search — the #1 ranked sub-500M embedding model on MTEB benchmarks, at ~621MB.
-
----
+- **Session start** (`session-start-memory.sh`): finds the project from a `.brainproject` file in the folder or up to four parents, binds the folder to it, then prints this project's brief, rendered as data, and its next-session note labelled with who wrote it and when. It warns when the running version differs from the repo's, and says what still works when a subsystem is down. A project with no notes gets one line, never other projects' notes.
+- **Pre-compact** (`pre-compact-auto-handover.py`): stores a `HANDOVER-*.md` written in the last 12 hours, or else the last 40 messages of the transcript (at most 20,000 characters, 4,000 per message, injected context skipped). Never the hook's own JSON.
 
 ## Security
 
-MemoryBrain runs on loopback (`127.0.0.1`) and is designed for single-user local use. Several protections are in place as of v0.3.0:
-
-| Protection | Details |
+| Rule | What it does |
 |---|---|
-| **Loopback binding** | Port bound to 127.0.0.1 — not reachable from other machines on your network |
-| **Optional API key** | Set `BRAIN_API_KEY` in `.env` to require `X-Brain-Key` header on all requests |
-| **OLLAMA_URL validation** | Must be `http://` or `https://` — rejects `file://`, `ftp://`, etc. at startup |
-| **Hook URL validation** | Both Claude Code hooks refuse to connect to non-localhost `MEMORYBRAIN_URL` |
-| **Input validation** | Memory type must be in allowed enum; project slug regex-validated; content capped at 100K chars; tags bounded at 20 items |
-| **Content deduplication** | Same content+project hash won't be ingested twice — hooks are idempotent |
-| **Concurrency limit** | Max 3 concurrent ingest pipeline runs (asyncio semaphore) |
-| **Non-root container** | Brain container runs as dedicated `brain` user, not root |
-| **Cross-store rollback** | If ChromaDB write fails after SQLite insert, the SQLite entry is deleted |
+| Loopback only | Requests whose Host is not `localhost`, `127.0.0.1` or `[::1]` get 421, on REST and on every MCP transport. `MEMORYBRAIN_ALLOWED_HOSTS` adds names. This stops DNS rebinding. |
+| Write guard | Without `BRAIN_API_KEY`, a POST, PUT, PATCH or DELETE needs `Content-Type: application/json` or an `X-Brain-Client` header, or it gets 403. A web page cannot send either without a CORS preflight, which the brain never grants. |
+| API key | With `BRAIN_API_KEY` set, every write and admin call needs `X-Brain-Key`. The CLI never sends the key to a non-localhost URL. |
+| No GET side effects | A GET never changes state. Exports, imports and rebuilds are POSTs; `GET /search` records nothing. |
+| Redaction | On every write and every edit: GitHub tokens, `sk-` API keys (OpenAI, Anthropic), AWS key ids, Slack tokens, private key blocks, bearer tokens, JWTs, credentials in URLs, connection-string passwords, `NAME=secret` assignments and long hex keys next to words like token or key. A value that is only a reference (`${VAR}`, `%VAR%`, `os.environ[...]`, `<placeholder>`) is left alone. |
+| Imports | The Obsidian import reads only from `MEMORYBRAIN_IMPORT_DIR`, skips files over 1 MB, ignores privileged front matter and marks everything `trust=imported`. |
+| Limits | Thread titles 200 characters, bodies 20,000, refs 50. Workspace bindings refuse `..` and absolute escapes. |
 
-If you use `BRAIN_API_KEY`, add the header to any direct API calls:
-```bash
-curl -H "X-Brain-Key: your-key" http://localhost:7741/status
-```
+Redaction is a net, not a licence: agents are still told never to write secrets.
 
-The Claude Code hooks read `BRAIN_API_KEY` from env automatically and pass it as a header — no extra config needed.
+## Storage and data safety
 
----
+- **Where the data is.** Everything lives in the Docker volume `<folder>_brain_data` (for a folder called `memorybrain`, `memorybrain_brain_data`), mounted at `/app/data`. Nothing is kept in the git folder. `docker compose down -v` deletes the volume: never run it on a brain you care about.
+- **SQLite settings.** WAL journal, foreign keys on, `busy_timeout` 5 seconds, `synchronous=NORMAL`.
+- **Migrations.** They run at startup. Each one runs inside one transaction, so a failure leaves the database as it was. Before each one, a copy is taken with `VACUUM INTO` into `/app/data/backups/` (written to a temporary name, then renamed; the last 5 kept). A migration that tries to end its own transaction is refused.
+- **Backups.** `brain upgrade` stops the brain, tars the volume into `~/memorybrain-backups`, and refuses to rebuild unless the archive reached this machine. By hand, stop the brain first: a tar of a live WAL database can be torn.
+- **The re-embed job.** After an upgrade or a model change, memories with `embedded=0` or no vector for the current model are re-embedded in the background: 30 seconds after startup, then a batch every minute at `MEMORYBRAIN_REEMBED_RATE` (default 25). A memory whose embedding fails waits 30 minutes before another try. `/readiness` and the doctor page show `reembed_pending`; search keeps working meanwhile.
 
-## Upgrading
+## Degraded modes
 
-```bash
-cd ~/memorybrain
-git pull
-docker compose up -d --build
-```
+| What is down | `/readiness` shows | Writes | Search | Briefs |
+|---|---|---|---|---|
+| Ollama (container stopped) | `ollama: error` | Stored. Summary is the first 280 characters, importance 3, no vectors (`embedded=0`) until the re-embed job catches up | Keyword hits, with a `degraded` reason | Work; intent hits are keyword only |
+| Embedding model not pulled | `embedding_model: missing` | Stored without vectors, embedded later | Keyword hits, with a `degraded` reason | Work |
+| Summary model not pulled | `summary_model: missing` | Stored with the 280-character fallback summary and importance 3; vectors are made | Full | Work |
+| Cloud provider key missing | `gemini_api_key: missing` or `openai_api_key: missing` | As for Ollama down | Keyword hits | Work |
+| Vector store (sqlite-vec will not load) | `vector_store: error` | Stored without vectors | Keyword hits | Work |
+| SQLite | `sqlite: error` | Fail | Fail | Fail |
 
-Both data (`memorybrain_brain_data`) and model (`memorybrain_ollama_data`) volumes are preserved — no re-download needed. Open a new Claude session after the upgrade.
+The session hook turns any of these into a short "partial service" note with what still works and how to fix it.
 
----
+## What this page does not cover
 
-## Troubleshooting
-
-### Brain container won't start
-
-```bash
-docker compose logs brain
-```
-
-Common causes:
-- Port 7741 already in use → change `BRAIN_PORT` in `.env`
-- `.env` file missing → `cp .env.example .env`
-
-### Ollama models not found (500 errors on ingest)
-
-```bash
-docker compose exec ollama ollama list
-```
-
-If models are missing, re-run Step 4.
-
-### Hook not firing
-
-```bash
-ls -la ~/.claude/hooks/
-```
-
-Verify `session-start-memory.sh` and `pre-compact-auto-handover.py` exist and are executable (`-rwxr-xr-x`).
-
-### MCP server not showing in Claude
-
-```bash
-claude mcp list
-```
-
-If missing, re-run Step 5. If present but not connecting, verify the brain is running: `curl http://localhost:7741/health`.
-
-### WSL: `docker: command not found`
-
-Enable WSL integration in Docker Desktop / Rancher Desktop:
-- Docker Desktop → Settings → Resources → WSL Integration → enable your distro
-- Rancher Desktop → Preferences → WSL → Integrations → enable your distro
-
-Then restart WSL: `wsl --shutdown` from PowerShell, reopen terminal.
-
-### Shell scripts failing with syntax errors after cloning on Windows
-
-If you cloned on Windows and are running scripts in WSL/Linux, shell scripts may have Windows CRLF
-line endings. Fix with:
-
-```bash
-cd ~/memorybrain
-sed -i 's/\r$//' hooks/session-ingest.sh hooks/pre-compact-ingest.py
-```
-
-The `.gitattributes` in this repo enforces LF line endings on clone — but if you cloned before it
-was added, run the fix above once.
-
----
-
-## Data location
-
-| What | Where |
-|---|---|
-| SQLite database | Docker named volume `memorybrain_brain_data` |
-| ChromaDB vectors | Docker named volume `memorybrain_brain_data` (subdirectory) |
-| Ollama models | Docker named volume `memorybrain_ollama_data` |
-| Config | `.env` in repo root (machine-local, never committed) |
-
-Data lives in Docker named volumes — not in the repo directory. This ensures data survives container recreation.
-
-**To back up your memories:**
-```bash
-docker run --rm -v memorybrain_brain_data:/data -v $(pwd):/backup alpine \
-  tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz -C /data .
-```
-
-**To restore:**
-```bash
-docker run --rm -v memorybrain_brain_data:/data -v $(pwd):/backup alpine \
-  tar xzf /backup/brain-backup-YYYYMMDD.tar.gz -C /data
-```
-
-**Data is machine-local by design.** Each machine keeps its own memory database. The code (this repo) is shared; the memories are not.
-
----
-
-## Restart behavior
-
-| Command | What happens | Data safe? | MCP session? |
-|---|---|---|---|
-| `docker compose restart brain` | Stops + restarts container process | ✅ Yes | ⚠️ Breaks — open new Claude session |
-| `docker compose up -d` | No change if config unchanged; recreates if changed | ✅ Yes (named volume) | ⚠️ Breaks if recreated |
-| `docker compose up -d --force-recreate` | Always recreates container | ✅ Yes (named volume) | ⚠️ Breaks — open new Claude session |
-| `docker compose down && up -d` | Stops + removes containers, restarts | ✅ Yes (named volume) | ⚠️ Breaks — open new Claude session |
-
-**MCP session note:** When the brain container restarts mid-session, the SSE connection drops. The MCP client reconnects but the server-side session state is reset — tool calls will fail with "initialization not complete". Open a new Claude Code session to restore full MCP functionality.
-
----
-
-## v2.0.0 — single-file store, memory graph, web UI
-
-**Vector storage** now lives inside `brain.db` (`vec_memories` table, powered by
-the `sqlite-vec` extension). `add_memory` writes content, FTS index, embedding
-and graph edges in one place; hybrid search is unchanged in behaviour (FTS5 +
-cosine KNN + RRF + recency decay) but no longer round-trips to ChromaDB. The
-legacy Chroma directory is only read once — at first v2 startup, to copy
-embeddings across — and then kept untouched as a rollback target
-(`MEMORYBRAIN_VECTOR_BACKEND=chroma`).
-
-**The memory graph** is derived automatically when a memory is ingested:
-
-- `semantic` — embedding neighbours above a type-aware similarity floor
-  (deliberately below the supersession thresholds: near-duplicates supersede,
-  related memories link)
-- `tag` — IDF-weighted tag overlap (a shared rare tag counts, `python` on
-  everything does not)
-- `reference` — supersession trail, shared `source`, explicit memory-UUID
-  mentions in content
-- `session_chain` — each session/handover links to the previous one in the
-  same project
-
-Edge weights combine per pair via noisy-OR; the sum over a memory's neighbours
-is cached as `link_degree` ("gravity"). Edges are cache, not truth: a linker
-failure never fails an ingest, and `POST /admin/rebuild-graph` recomputes the
-whole graph from scratch.
-
-**The web UI — MemoryBrain Atlas** (`http://localhost:7741/ui`) is
-server-rendered Jinja2 with vanilla JS — no build step, no CDN, fully
-offline. Three lenses on the same data (Stream / Constellation / Chronicle),
-a `Ctrl+K` palette, and a sliding inspector. Every read path runs on
-`PRAGMA query_only` connections; search uses the same hybrid pipeline as
-the `search_memory` MCP tool, falling back to keyword-only FTS5 when the
-embedding provider is down. The UI can also write — add, edit, archive,
-delete for memories and projects — but only through `/api/ui/edit/*`,
-which enforces `X-Brain-Key` (when set) exactly like `/ingest/*`, uses the
-same storage/ingest layer as the MCP tools, and carries server-side
-guardrails (archive as the reversible default, typed confirmation for hard
-delete, no deleting projects that still hold memories).
-
-**MCP surface** grows from 7 to 10 tools with `get_related_memories` (ranked
-neighbours with per-kind explanations, direction included — backlinks are the
-`in` direction), `get_memory_graph` (node/edge payload, per project or
-global), and `consolidate_memory` (v2.1.0 — one consolidation cycle: distil
-clusters into cited beliefs, flag contradictions, extract open loops, decay
-the unrecalled; same behaviour as `POST /admin/consolidate`). Existing tool
-contracts are byte-compatible with v0.5.x.
-
-**The consolidation cycle (v2.1.0)** is the layer above storage: memories
-carry a `strength` that retrieval reinforces (MCP fetches, search hits, UI
-inspector opens) and consolidation decays when nothing has recalled them —
-bounded, floored, never deleting. Beliefs are typed `belief`, cite their
-sources via `derived_from` edges, and may auto-supersede only prior beliefs.
-Suspiciously-similar coexisting facts/beliefs get `conflicts_with` edges and
-wait for a human verdict in the UI (rail chip → review modal).
+- Exact model prompts and the consolidation clustering details live in `brain/app/consolidate.py` and `brain/app/summarise.py`.
+- Timings and sizes quoted here come from the defaults in code, not from measurements of a large brain.

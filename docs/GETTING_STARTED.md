@@ -161,25 +161,30 @@ docker compose ps                     # containers
 
 **Never** run `docker compose down -v` on a machine you care about — `-v` deletes the named data volume (`brain_data`) and **wipes all memories**.
 
-Backup once in a while:
+Back up once in a while, with the brain stopped (a copy of a live WAL
+database can be torn) and into a folder outside the repo:
 
 ```bash
+mkdir -p ~/memorybrain-backups
 docker compose stop brain
-docker run --rm -v memorybrain_brain_data:/data -v "$PWD:/backup" alpine \
-  tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz /data
+docker run --rm -v memorybrain_brain_data:/data:ro -v ~/memorybrain-backups:/backup alpine \
+  tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz -C /data .
 docker compose start brain
 ```
 
-(On Windows PowerShell, adjust volume mount syntax; compose project name may prefix the volume as `memorybrain_brain_data`.)
+PowerShell: the same commands, with `"$HOME\memorybrain-backups:/backup"` as the second
+mount. The volume is named after the install folder (`memorybrain_brain_data` for a
+folder called `memorybrain`); `docker volume ls` shows yours.
 
 ---
 
-## Upgrading from older MemoryBrain (v0.5.x)
+## Upgrading
 
-1. **Backup the data volume** (see above).  
-2. `git pull origin master` and rebuild.  
-3. Follow [MIGRATION.md](MIGRATION.md) if you are crossing major storage changes.  
-4. Prefer the migration prompt in [AI_INSTALL_PROMPTS.md](AI_INSTALL_PROMPTS.md).
+- **From 2.x to 3.0:** follow [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md). If your clone was
+  made before 2026-09-30, rename it and clone again first. Then
+  `python3 cli/brain.py upgrade` backs up, rebuilds and checks the memory count.
+- **From 0.5.x:** back up (see above), then follow [MIGRATION.md](../MIGRATION.md),
+  or let an assistant drive it with [AI_INSTALL_PROMPTS.md](AI_INSTALL_PROMPTS.md).
 
 You do **not** need the old `feature/memorybrain-2.0` branch — it is fully merged into `master`.
 
@@ -207,14 +212,15 @@ Doctor UI: http://localhost:7741/ui/doctor
 | [HOW_IT_WORKS.md](../HOW_IT_WORKS.md) | Architecture and portable setup detail |
 | [CONNECTING_ASSISTANTS.md](CONNECTING_ASSISTANTS.md) | Wire Claude / Grok / Codex / Gemini / REST |
 | [CONTEXT_BANK_V2.2.md](CONTEXT_BANK_V2.2.md) | Briefs, pins, conflicts, write policy |
-| [MIGRATION.md](../MIGRATION.md) | Upgrades and data safety |
+| [UPGRADE_TO_V3.md](UPGRADE_TO_V3.md) | Move a 2.x brain to 3.0 |
+| [MIGRATION.md](../MIGRATION.md) | Older upgrades and data safety |
 | [AI_INSTALL_PROMPTS.md](AI_INSTALL_PROMPTS.md) | Let an AI drive install/migrate |
 
 ---
 
 ## Branch policy (maintainers)
 
-- **`master`** — only active line. MemoryBrain 2.x lives here.  
+- **`master`** — only active line. MemoryBrain 3.x lives here.  
 - Feature work → short-lived branches → merge to `master` → delete branch.  
-- Release tags: `v2.5.0`, `v2.4.0`, `v2.3.1`, etc.  
+- Release tags: `v3.0.0`, `v2.5.0`, `v2.4.0`, etc.  
 - Historical branches (`feature/memorybrain-2.0`, etc.) are removed once fully merged.

@@ -1,7 +1,15 @@
 # Migrating MemoryBrain v0.5.x → v2.0.0
 
+> **Upgrading a 2.x brain to 3.0?** Use [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md)
+> (`python3 cli/brain.py upgrade` does the backup, rebuild and count check).
+> This page covers the older upgrades.
+
 This guide is for anyone running MemoryBrain v0.5.x who wants to upgrade to
 v2.0.0.
+
+**Backups always go outside the repo** (`~/memorybrain-backups`) and are taken
+with the brain stopped: a copy of a live WAL database can be torn, and brain
+data must never sit in a git folder.
 
 > **Letting an AI assistant do this for you?** Use the strict, model-agnostic
 > prompts in [docs/AI_INSTALL_PROMPTS.md](docs/AI_INSTALL_PROMPTS.md) — they
@@ -29,24 +37,27 @@ Claude Code / Gemini configuration keeps working as-is.
 1. **Back up your data volume and config.** Non-negotiable, takes seconds:
 
    ```bash
+   mkdir -p ~/memorybrain-backups
    docker compose stop brain
-   docker run --rm -v memorybrain_brain_data:/data -v "$PWD":/backup alpine \
-       tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz /data
-   cp .env .env.backup-$(date +%Y%m%d)
+   docker run --rm -v memorybrain_brain_data:/data:ro -v ~/memorybrain-backups:/backup alpine \
+       tar czf /backup/brain-backup-$(date +%Y%m%d).tar.gz -C /data .
+   cp .env ~/memorybrain-backups/env-backup-$(date +%Y%m%d)
    docker compose start brain
    ```
 
    Windows PowerShell:
 
    ```powershell
+   New-Item -ItemType Directory -Force "$HOME\memorybrain-backups" | Out-Null
    docker compose stop brain
-   docker run --rm -v memorybrain_brain_data:/data -v "${PWD}:/backup" alpine tar czf /backup/brain-backup-$(Get-Date -Format yyyyMMdd).tar.gz /data
-   Copy-Item .env ".env.backup-$(Get-Date -Format yyyyMMdd)"
+   docker run --rm -v memorybrain_brain_data:/data:ro -v "$HOME\memorybrain-backups:/backup" alpine tar czf /backup/brain-backup-$(Get-Date -Format yyyyMMdd).tar.gz -C /data .
+   Copy-Item .env "$HOME\memorybrain-backups\env-backup-$(Get-Date -Format yyyyMMdd)"
    docker compose start brain
    ```
 
-   Verify the `.tar.gz` exists and isn't tiny before continuing. If your
-   volume has a different name, find it with `docker volume ls`.
+   Verify the `.tar.gz` in `~/memorybrain-backups` exists and isn't tiny
+   before continuing. If your volume has a different name, find it with
+   `docker volume ls`.
 
 2. Note your memory count — you'll verify it after migration:
    open a session and ask the assistant to `list_projects`, or:
@@ -118,7 +129,8 @@ Two independent levels, both non-destructive:
 - **Full rollback:** `git checkout v0.5.0 && docker compose build && docker
   compose up -d`. The new tables (`vec_memories`, `memory_links`, `tag_stats`)
   and two new columns are simply ignored by the old code. Restore the tar
-  backup only if something went badly wrong.
+  backup only if something went badly wrong: with the brain stopped,
+  `docker run --rm -v memorybrain_brain_data:/data -v ~/memorybrain-backups:/backup alpine sh -c "rm -f /data/brain.db /data/brain.db-wal /data/brain.db-shm && tar xzf /backup/<your-backup>.tar.gz -C /data"`.
 
 Once you've run happily on v2 for a while, you may delete the legacy
 directory to reclaim disk: `docker compose exec brain rm -rf /app/data/chroma`
