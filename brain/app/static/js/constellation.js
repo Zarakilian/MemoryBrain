@@ -39,7 +39,8 @@
   var FILE_COL = "#bfe9ff", FOLDER_COL = "#8ea0c8", FILELINK_COL = "127, 216, 255", FOLDLINK_COL = "107, 127, 168";
 
   function nebula() {
-    return (window.Nebula && window.Nebula.available) ? window.Nebula : null;
+    var N = window.Nebula;
+    return (N && N.available && !N.lost) ? N : null;
   }
   function status(msg) { if (statusEl) statusEl.textContent = msg; }
 
@@ -337,7 +338,9 @@
     toggleEmpty(data.nodes.length === 0);
   }
 
-  function setMode(m) {
+  /* persist false: a switch forced by circumstance (a graphics reset),
+     not chosen, so the saved choice stays and the next load tries again */
+  function setMode(m, persist) {
     if (m === mode) return;
     if (m === "3d" && !nebula()) {
       status("3D unavailable here — staying 2D");
@@ -345,7 +348,9 @@
       if (box) box.checked = false;
       return;
     }
-    try { localStorage.setItem("nebula-cst-mode", m); } catch (e) {}
+    if (persist !== false) {
+      try { localStorage.setItem("nebula-cst-mode", m); } catch (e) {}
+    }
     mode = m;
     if (m === "2d") {
       if (typeof ForceGraph !== "function") { status("2D engine missing"); return; }
@@ -497,6 +502,17 @@
       if (ev.detail.lens === "constellation" && mode === "2d") fit2d();
     });
     syncFocus();   // nebula assumed 3D at its own init; correct for 2D boots
+
+    /* the graphics card reset and the world did not come back: show the
+       2D constellation rather than an empty sky */
+    document.addEventListener("nebula:lost", function () {
+      setTimeout(function () {
+        if (!window.Nebula || !window.Nebula.lost || mode !== "3d") return;
+        if (typeof ForceGraph !== "function") return;
+        setMode("2d", false);
+        status("3D paused after a graphics reset · showing 2D");
+      }, 2500);
+    });
     window.addEventListener("resize", fit2d);
 
     var w = document.getElementById("cst-weight");

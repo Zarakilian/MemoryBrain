@@ -526,12 +526,19 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 .orb-caption span { color: var(--ink-faint); font: 11px var(--sans); }
 
 /* ---------------------------------------------------------- the familiar
-   A companion of starlight following the cursor: footprints → bird →
-   moth → cat. The layer can never intercept a pointer. */
+   A companion of starlight following the cursor: paws, butterfly,
+   spider, comet, wisps. The layer can never intercept a pointer. */
 #familiar-layer {
   position: fixed; inset: 0; z-index: 45; overflow: hidden;
   pointer-events: none !important;
 }
+/* everything drawn in light (comet, wisps, sparks, click bursts) */
+.fam-sky {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none !important;
+}
+/* asleep: the loop has stopped, so the wing beat stops with it */
+.fam.resting .fam-wing-l, .fam.resting .fam-wing-r { animation-play-state: paused; }
 .fam {
   position: absolute; left: 0; top: 0;
   color: rgba(190, 214, 255, .6);
@@ -550,16 +557,8 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 .fam .fam-wing-r { transform-origin: 32px 30px; }
 @keyframes fam-flutter { from { transform: scaleX(1); } to { transform: scaleX(.4); } }
 
-/* spider: alternating leg groups scuttle while it runs */
-.fam.scuttle .fam-legs-a {
-  transform-box: fill-box; transform-origin: 50% 50%;
-  animation: fam-scuttle .12s ease-in-out infinite alternate;
-}
-.fam.scuttle .fam-legs-b {
-  transform-box: fill-box; transform-origin: 50% 50%;
-  animation: fam-scuttle .12s ease-in-out infinite alternate-reverse;
-}
-@keyframes fam-scuttle { from { transform: rotate(-5deg); } to { transform: rotate(5deg); } }
+/* spider: its eight legs are posed by familiar.js every frame, paced by
+   the ground it covers, so there is no CSS beat to fall out of step */
 
 /* the silk the spider swings from — an SVG path so it sags and bows */
 .fam-web-svg {
@@ -567,9 +566,9 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
   pointer-events: none !important; overflow: visible;
 }
 .fam-web-path {
-  fill: none; stroke: rgba(222, 236, 255, .8); stroke-width: 1.6;
+  fill: none; stroke: rgba(226, 238, 255, .62); stroke-width: 1.1;
   stroke-linecap: round;
-  filter: drop-shadow(0 0 4px rgba(160, 195, 240, .55));
+  filter: drop-shadow(0 0 3px rgba(160, 195, 240, .5));
 }
 
 .fam-print {
@@ -699,6 +698,40 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 .lens-tab:hover { transform: translateY(-1px); }
 .rail-projects a:hover .pdot, .rail-nav a:hover .pdot { box-shadow: 0 0 8px currentColor; }
 .mem:hover .badge { box-shadow: 0 0 8px -2px currentColor; }
+
+/* v3.1 energy: slow light in the glass (the ambient speed, 6 s and up).
+   Every animation here is silenced by the reduced-motion rule. */
+.lens-tab { position: relative; }
+.lens-tab.on::after {                 /* starlight runs along the chosen lens */
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: 1px; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--star), var(--aura), transparent);
+  background-size: 200% 100%;
+  animation: lens-energy 6s linear infinite;
+  opacity: .75; pointer-events: none;
+}
+@keyframes lens-energy { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.brand-logo { animation: brand-breathe 7s ease-in-out infinite; }
+@keyframes brand-breathe {
+  0%, 100% { box-shadow: 0 0 12px rgba(143, 184, 232, .35); }
+  50% { box-shadow: 0 0 20px rgba(255, 217, 138, .42); }
+}
+.mem:hover {                          /* a warm wash from the edge you came in by */
+  background: linear-gradient(90deg, rgba(255, 217, 138, .07), var(--glass-hi) 38%);
+}
+.rail-projects a.on .pdot { box-shadow: 0 0 10px 1px hsl(var(--ph, 40) 70% 66%); }
+
+/* thin glass scrollbars, so a scroll never breaks the window into the world */
+.rail, .stream-glass, .inspector, .palette-results, #chronicle {
+  scrollbar-width: thin; scrollbar-color: rgba(150, 175, 235, .22) transparent;
+}
+.rail::-webkit-scrollbar, .stream-glass::-webkit-scrollbar, .inspector::-webkit-scrollbar,
+.palette-results::-webkit-scrollbar, #chronicle::-webkit-scrollbar { width: 8px; }
+.rail::-webkit-scrollbar-thumb, .stream-glass::-webkit-scrollbar-thumb,
+.inspector::-webkit-scrollbar-thumb, .palette-results::-webkit-scrollbar-thumb,
+#chronicle::-webkit-scrollbar-thumb {
+  background: rgba(150, 175, 235, .22); border-radius: 8px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
 
 /* ------------------------------------------------------------ responsive */
 @media (max-width: 1200px) { :root { --insp-w: 380px; } }

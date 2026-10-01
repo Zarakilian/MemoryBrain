@@ -94,6 +94,18 @@ if (renderer) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   host.appendChild(renderer.domElement);
+  /* a GPU reset (sleep and wake, a driver hiccup) loses the context.
+     three.js takes it back by itself when the browser allows; until then,
+     or if the browser refuses, the page is told, so the Constellation can
+     show 2D instead of an empty sky */
+  renderer.domElement.addEventListener("webglcontextlost", function () {
+    N.lost = true;
+    document.dispatchEvent(new CustomEvent("nebula:lost"));
+  });
+  renderer.domElement.addEventListener("webglcontextrestored", function () {
+    N.lost = false;
+    document.dispatchEvent(new CustomEvent("nebula:restored"));
+  });
 
   var scene = new THREE.Scene();
   var camera = new THREE.PerspectiveCamera(
@@ -118,11 +130,17 @@ if (renderer) {
 
   var clockTime = 0;                      // world time, seconds
 
-  /* =========================================================== textures */
+  /* =========================================================== textures
+     Every canvas that feeds a texture is kept in CPU memory
+     (willReadFrequently): after a GPU reset (sleep and wake, a driver
+     hiccup) three.js re-uploads textures from these canvases, and a
+     GPU-kept canvas would come back blank. Painted once, so it costs
+     nothing. */
+  var CPU_CANVAS = { willReadFrequently: true };
   function glowTexture(size, inner, mid) {
     var c = document.createElement("canvas");
     c.width = c.height = size;
-    var g = c.getContext("2d");
+    var g = c.getContext("2d", CPU_CANVAS);
     var grad = g.createRadialGradient(size / 2, size / 2, 0,
                                       size / 2, size / 2, size / 2);
     grad.addColorStop(0, inner);
@@ -582,7 +600,7 @@ if (renderer) {
   var rippleTex = (function () {
     var size = 256, cv = document.createElement("canvas");
     cv.width = cv.height = size;
-    var g = cv.getContext("2d");
+    var g = cv.getContext("2d", CPU_CANVAS);
     var grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     grad.addColorStop(0, "rgba(255,255,255,0)");
     grad.addColorStop(0.62, "rgba(255,255,255,0)");
@@ -1789,7 +1807,8 @@ if (renderer) {
   var hoverPending = false;
   function onHoverCheck() {
     hoverPending = false;
-    if (!focus || orb.veil || drag.node) return;
+    /* a hidden constellation (the 2D view is up) never answers the hand */
+    if (!focus || orb.veil || drag.node || !graph.group.visible) return;
     var n = pick();
     var li = n ? -1 : pickLink();          // stars outrank filaments
     var id = n ? n.id : null;
@@ -1882,7 +1901,7 @@ if (renderer) {
                moved: 0, downAt: null };
 
   renderer.domElement.addEventListener("pointerdown", function (ev) {
-    if (!focus || orb.veil) return;
+    if (!focus || orb.veil || !graph.group.visible) return;
     pointer.nx = (ev.clientX / window.innerWidth) * 2 - 1;
     pointer.ny = -(ev.clientY / window.innerHeight) * 2 + 1;
     var n = pick();
@@ -1957,7 +1976,7 @@ if (renderer) {
     W = W || 2048; H = H || 1024;
     var c = document.createElement("canvas");
     c.width = W; c.height = H;
-    var g = c.getContext("2d");
+    var g = c.getContext("2d", CPU_CANVAS);
     g.clearRect(0, 0, W, H);
     g.fillStyle = "rgba(240, 220, 178, .95)";
     g.shadowColor = "rgba(255, 217, 138, .55)";
