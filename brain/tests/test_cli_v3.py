@@ -289,3 +289,37 @@ def test_stock_versions_come_from_every_commit_that_touched_the_skill(tmp_path):
         raise FileNotFoundError("git")
 
     assert cli._stock_skill_hashes(tmp_path, "skills/handover/SKILL.md", run=no_git) == set()
+
+
+class CwdRun(FakeRun):
+    """FakeRun that also records each command's cwd, and can make the
+    running-brain count fail (the brain is stopped)."""
+
+    def __init__(self, exec_count_fails=False, **kwargs):
+        super().__init__(**kwargs)
+        self.exec_count_fails = exec_count_fails
+        self.cwds: list = []
+
+    def __call__(self, cmd, **kwargs):
+        self.cwds.append((list(cmd), kwargs.get("cwd")))
+        if (self.exec_count_fails and cmd[:3] == ["docker", "compose", "exec"]
+                and "SELECT COUNT(*) FROM memories" in " ".join(cmd)):
+            self.exec_count_fails = False  # only the first, before-the-upgrade count
+            self.calls.append(list(cmd))
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="service not running")
+        return super().__call__(cmd, **kwargs)
+
+
+def test_every_compose_command_runs_in_the_repo(tmp_path):
+    fake = CwdRun()
+    assert _upgrade(tmp_path, fake) == 0
+    compose = [(cmd, cwd) for cmd, cwd in fake.cwds if cmd[:2] == ["docker", "compose"]]
+    assert compose and all(cwd == (tmp_path / "repo").resolve() for _, cwd in compose)
+
+
+def test_a_stopped_brain_is_counted_from_the_volume_read_only(tmp_path):
+    fake = CwdRun(exec_count_fails=True)
+    assert _upgrade(tmp_path, fake) == 0
+    counts = [" ".join(c) for c in fake.calls if "SELECT COUNT(*) FROM memories" in " ".join(c)]
+    assert counts[0].startswith("docker compose exec")       # tried the running brain first
+    assert ":ro" in counts[1] and "immutable=1" in counts[1]   # a stopped WAL brain has no -shm

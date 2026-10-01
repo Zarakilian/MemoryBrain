@@ -614,7 +614,7 @@ def _get_url(url: str) -> dict:
 
 CLEAN_START_MARK = "application only, clean start"
 DEFAULT_BACKUP_DIR = Path.home() / "memorybrain-backups"
-_COUNT_SQL = ("import sqlite3; print(sqlite3.connect('file:{db}?mode=ro', uri=True)"
+_COUNT_SQL = ("import sqlite3; print(sqlite3.connect('file:{db}?mode=ro{extra}', uri=True)"
               ".execute('SELECT COUNT(*) FROM memories').fetchone()[0])")
 
 
@@ -628,8 +628,8 @@ def _compose_project(repo: Path, run) -> str:
         return os.getenv("COMPOSE_PROJECT_NAME") or repo.name.lower()
 
 
-def _count_memories(cmd: list, run) -> int:
-    r = run(cmd, capture_output=True, text=True)
+def _count_memories(cmd: list, run, cwd: Path = None) -> int:
+    r = run(cmd, capture_output=True, text=True, cwd=cwd)
     try:
         return int(r.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
@@ -673,12 +673,22 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
         return fail(f"No volume {volume} for compose project '{project}'. Run brain upgrade "
                     "from the folder of your live install (or set COMPOSE_PROJECT_NAME), so the "
                     "upgrade cannot start an empty brain next to your real one.")
+    # Count through the running brain when it is up: it holds the WAL. A stopped
+    # brain is read from its volume instead; with no -shm file, which a read-only
+    # mount cannot create, a WAL database only opens as immutable (exact, since
+    # nothing is writing).
     try:
-        before = _count_memories(["docker", "run", "--rm", "--entrypoint", "python",
-                                  "-v", f"{volume}:/data:ro", image, "-c",
-                                  _COUNT_SQL.format(db="/data/brain.db")], run)
-    except RuntimeError as e:
-        return fail(str(e))
+        before = _count_memories(["docker", "compose", "exec", "-T", "brain", "python", "-c",
+                                  _COUNT_SQL.format(db="/app/data/brain.db", extra="")],
+                                 run, cwd=repo)
+    except RuntimeError:
+        try:
+            before = _count_memories(["docker", "run", "--rm", "--entrypoint", "python",
+                                      "-v", f"{volume}:/data:ro", image, "-c",
+                                      _COUNT_SQL.format(db="/data/brain.db",
+                                                        extra="&immutable=1")], run)
+        except RuntimeError as e:
+            return fail(str(e))
     print(f"✅ {before} memories in {volume}")
 
     # 3. Stop, then back up the whole volume (brain.db and its WAL files).
@@ -722,7 +732,8 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
         sleep(5)
     try:
         after = _count_memories(["docker", "compose", "exec", "-T", "brain", "python", "-c",
-                                 _COUNT_SQL.format(db="/app/data/brain.db")], run)
+                                 _COUNT_SQL.format(db="/app/data/brain.db", extra="")],
+                                run, cwd=repo)
     except RuntimeError as e:
         return fail(f"{e}. The backup is {archive}.")
     if after < before:
