@@ -72,6 +72,17 @@ def test_add_note_degraded_without_provider(edit_client):
     assert r2.json().get("duplicate") is True
 
 
+def test_a_note_written_in_atlas_is_the_users_own(edit_client):
+    """Atlas is the person's door: what they write there is trust=user, so the
+    brief never counts it against the cap on agent-written text."""
+    from app.storage import get_memory
+    c, db = edit_client
+    r = c.post("/api/ui/edit/notes", json={"content": "Invoices go out on the first.",
+                                            "project": "proj-a", "type": "fact"})
+    stored = get_memory(r.json()["id"], db_path=db)
+    assert (stored.trust, stored.writer) == ("user", "ui")
+
+
 def test_add_note_validations(edit_client):
     c, _ = edit_client
     assert c.post("/api/ui/edit/notes",

@@ -221,8 +221,9 @@ class NoteBody(BaseModel):
 async def add_note(body: NoteBody):
     if body.type not in EDITABLE_TYPES:
         raise HTTPException(422, f"type must be one of {EDITABLE_TYPES}")
+    # Atlas is the person's own door: what they write here is trust=user.
     entry = MemoryEntry(content=body.content, type=body.type, project=body.project,
-                        tags=body.tags, source=body.source)
+                        tags=body.tags, source=body.source, writer="ui", trust="user")
     if body.importance:
         entry.importance = body.importance
     # v3 ingest never fails because the AI provider is down: it stores the
