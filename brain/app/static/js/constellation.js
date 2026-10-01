@@ -128,11 +128,54 @@
   }
 
   /* ------------------------------------------------------------ 2D engine */
+  /* flat, the Brain is seen from above: two hemispheres side by side,
+     their medial walls almost touching, a few sulci for shape. Drawn under
+     the graph each frame while the 2D layout is the Brain. */
+  var brain2d = null;                  // { R } while the 2D layout is the Brain
+  function drawBrain2d(ctx, scale) {
+    var L = window.NebulaLayouts, B = L && L.BRAIN;
+    if (!B || !brain2d) return;
+    var R = brain2d.R, ey = B.rz * 0.7 * R;
+    ctx.save();
+    [-1, 1].forEach(function (side) {
+      var ex = (1 + B.medial) * B.rx / 2 * R;
+      var cx = (L.hemiCentre(side) + side * (1 - B.medial) * B.rx / 2) * R;
+      var g = ctx.createRadialGradient(cx, 0, 0, cx, 0, Math.max(ex, ey));
+      g.addColorStop(0, "rgba(120, 140, 255, .07)");
+      g.addColorStop(1, "rgba(120, 140, 255, .015)");
+      ctx.fillStyle = g;
+      ctx.strokeStyle = "rgba(165, 178, 255, .34)";
+      ctx.lineWidth = 1.3 / scale;
+      ctx.beginPath();
+      ctx.ellipse(cx, 0, ex, ey, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      /* sulci: the central one, and two either side of it */
+      ctx.strokeStyle = "rgba(165, 178, 255, .14)";
+      [[-0.05, 0.5], [-0.42, 0.62], [0.36, 0.55]].forEach(function (s) {
+        var y0 = s[0] * ey, reach = s[1] * ex;
+        var x0 = cx - side * ex * 0.82, x1 = x0 + side * reach * 1.6;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.quadraticCurveTo((x0 + x1) / 2, y0 - ey * 0.16, x1, y0 + ey * 0.09);
+        ctx.stroke();
+      });
+    });
+    ctx.restore();
+  }
+  /* a stable side for a node of a project that spans both hemispheres */
+  function sideOf(id) {
+    var h = 2166136261;
+    for (var i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0) % 2 ? 1 : -1;
+  }
+
   function build2d() {
     el.innerHTML = "";
     el.classList.add("flat");
     graph2d = ForceGraph()(el)
       .backgroundColor("rgba(0,0,0,0)")
+      .onRenderFramePre(function (ctx, scale) { if (brain2d) drawBrain2d(ctx, scale); })
       .nodeId("id")
       .nodeVal(nodeSize)
       .nodeColor(nodeCol)
@@ -244,6 +287,16 @@
     var nodes = data.nodes, links = data.links;
     nodes.forEach(function (n) { n.fx = n.fy = undefined; });
     ["flow", "web", "orb"].forEach(function (name) { graph2d.d3Force(name, null); });
+    brain2d = null;
+    /* in the Brain, synapses are weak springs and the lobes hold the shape
+       (as in 3D); every other layout keeps the engine's own link strength */
+    var lf = graph2d.d3Force("link");
+    if (lf && lf.strength) {
+      if (!lf._mbDefault) lf._mbDefault = lf.strength();
+      lf.strength(m === "brain" ? function (l) {
+        return l.kinds && l.kinds.indexOf("file_ref") >= 0 ? 0.12 : 0.03;
+      } : lf._mbDefault);
+    }
     var planeR = Math.max(140, 34 * Math.sqrt(nodes.length));
     var centres = L.projectCentres(nodes, planeR);
     if (m === "tree") {
@@ -264,17 +317,26 @@
       });
     } else if (m === "web" || m === "orb" || m === "brain") {
       /* flat, the brain is its two hemispheres: lobes left and right */
+      var own = {};                    // the Brain: a node's own lobe centre
       if (m === "brain") {
         var lobes = L.brainLobes(nodes, planeR * 1.4);
+        brain2d = { R: planeR * 1.4 };
         Object.keys(lobes).forEach(function (p) {
           var lb = lobes[p].side === 0 ? lobes[p].left : lobes[p];
           centres[p] = { x: lb.x, y: lb.z * 0.7 };
         });
+        /* a project spanning both hemispheres fills both, not just the left */
+        nodes.forEach(function (n) {
+          var lb = lobes[n.project || ""];
+          if (!lb || lb.side !== 0) return;
+          var c = sideOf(String(n.id)) < 0 ? lb.left : lb.right;
+          own[n.id] = { x: c.x, y: c.z * 0.7 };
+        });
       }
       graph2d.d3Force("web", function (alpha) {
-        var k = 0.2 * alpha;
+        var k = (m === "brain" ? 0.32 : 0.2) * alpha;
         nodes.forEach(function (n) {
-          var c = centres[n.project || ""] || { x: 0, y: 0 };
+          var c = own[n.id] || centres[n.project || ""] || { x: 0, y: 0 };
           var ring = 22 + L.ringOf(n) * 42, dx = n.x - c.x, dy = n.y - c.y;
           var d = Math.sqrt(dx * dx + dy * dy) || 1, f = (ring - d) / d * k;
           n.vx += dx * f; n.vy += dy * f;
