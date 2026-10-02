@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from .. import storage as _st
 from ..models import PROJECT_SLUG_RE, Project
-from ..redact import strip_url_userinfo
+from ..redact import scrub, strip_url_userinfo
 from .paths import ci, split_ext
 
 RANK = {"marker": 5, "tool": 5, "cwd": 4, "init": 3, "memory": 2}
@@ -104,6 +104,7 @@ def bind_folder(root_id: str, rel_path: str, project: str, how: str, db_path: Pa
     if not PROJECT_SLUG_RE.match(project or ""):
         raise ValueError(f"invalid project slug: {project!r}")
     remote_url = strip_url_userinfo(remote_url)
+    label = scrub(label or "")
     _ensure_project(project, db_path)
     rel = _norm_rel(rel_path)
     rel_ci = ci(rel)
@@ -236,6 +237,8 @@ def apply_manifest(manifest: dict, db_path: Path) -> dict:
     new_by_hash: dict[str, str] = {}   # sha256 -> file_id inserted this run
     with _st._connect(db_path) as conn:
         for f in manifest.get("files", []):
+            if f.get("title"):
+                f = {**f, "title": scrub(str(f["title"]))}
             rel = _norm_rel(f["rel_path"])
             if not rel:
                 continue

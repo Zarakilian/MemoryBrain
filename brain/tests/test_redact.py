@@ -310,3 +310,17 @@ def test_threads_descriptions_and_policy_notes_are_redacted(tmp_db):
     assert token not in get_project("acme", db_path=tmp_db).description
     set_policy("acme", notes=f"push with {token}", db_path=tmp_db)
     assert token not in get_policy("acme", db_path=tmp_db)["notes"]
+
+
+def test_an_identifier_called_a_key_is_not_a_secret():
+    """A dedup, cache or partition key is an id that happens to be hex; the
+    word "key" in front of it does not make it a credential."""
+    for text in (f"so the dedup key `{HEX64}` did not change",
+                 f"Alert dedupe key: {HEX64}", f"the idempotency key {HEX64}",
+                 f"cache key={HEX64}", f"partition key {HEX64}", f"primary key {HEX64}"):
+        assert out(text) == text, text
+
+
+def test_a_real_key_next_to_hex_is_still_redacted():
+    for text in (f"api key {HEX64}", f"signing key: {HEX64}", f"the key is {HEX64}"):
+        assert "[REDACTED:" in out(text), text

@@ -357,6 +357,50 @@ def test_restore_never_activates_a_proposal(tmp_db):
     assert get_memory(belief, db_path=tmp_db).status == "proposed"
 
 
+def test_archive_then_restore_puts_a_proposal_back_in_the_queue(tmp_db):
+    from app.storage import archive_memory_audited, restore_memory
+    belief = _mem(tmp_db, "Belief [m:x].", type_="belief", status="proposed")
+    rule = _mem(tmp_db, "Always use tabs.", type_="procedure", status="proposed", trust="agent")
+    for mid in (belief, rule):
+        assert archive_memory_audited(mid, actor="mcp", db_path=tmp_db)
+        assert restore_memory(mid, actor="mcp", db_path=tmp_db) is True
+        assert get_memory(mid, db_path=tmp_db).status == "proposed"
+    assert get_memory(rule, db_path=tmp_db).trust == "agent"
+
+
+def test_restoring_a_rejected_belief_or_rule_never_makes_it_active(tmp_db):
+    from app.procedures import reject_procedure
+    from app.storage import restore_memory, set_belief_status
+    belief = _mem(tmp_db, "Belief [m:x].", type_="belief", status="proposed")
+    rule = _mem(tmp_db, "Always use tabs.", type_="procedure", status="proposed", trust="agent")
+    assert set_belief_status(belief, approve=False, actor="ui", db_path=tmp_db)
+    assert reject_procedure(rule, actor="ui", db_path=tmp_db)
+    for mid in (belief, rule):
+        assert restore_memory(mid, actor="mcp", db_path=tmp_db) is True
+        assert get_memory(mid, db_path=tmp_db).status == "proposed"
+
+
+def test_an_approved_belief_comes_back_active_after_an_archive(tmp_db):
+    from app.storage import archive_memory_audited, restore_memory, set_belief_status
+    belief = _mem(tmp_db, "Belief [m:x].", type_="belief", status="proposed")
+    assert set_belief_status(belief, approve=True, actor="ui", db_path=tmp_db)
+    assert archive_memory_audited(belief, actor="mcp", db_path=tmp_db)
+    assert restore_memory(belief, actor="mcp", db_path=tmp_db) is True
+    assert get_memory(belief, db_path=tmp_db).status == "active"
+
+
+def test_atlas_archive_then_active_keeps_a_proposal_proposed(tmp_db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    monkeypatch.setattr("app.ui.editor.DB_PATH", tmp_db)
+    belief = _mem(tmp_db, "Belief [m:x].", type_="belief", status="proposed")
+    client = TestClient(app, headers={"X-Brain-Client": "atlas"})
+    assert client.patch(f"/api/ui/edit/memories/{belief}", json={"status": "archived"}).status_code == 200
+    client.patch(f"/api/ui/edit/memories/{belief}", json={"status": "active"})
+    assert get_memory(belief, db_path=tmp_db).status == "proposed"
+
+
 def test_atlas_cannot_restore_a_proposal_either(tmp_db, monkeypatch):
     from fastapi.testclient import TestClient
     from app.main import app

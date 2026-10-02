@@ -35,6 +35,20 @@ _PREAMBLE_RE = re.compile(
     re.IGNORECASE)
 
 
+DEFAULT_MODEL_TIMEOUT = 120.0
+
+
+def model_timeout() -> float:
+    """Seconds an Ollama call may wait for an answer (MEMORYBRAIN_MODEL_TIMEOUT).
+    Long enough for a cold model load on a laptop CPU, short enough that a
+    model server that accepts and never answers cannot hold a write forever."""
+    try:
+        value = float(os.getenv("MEMORYBRAIN_MODEL_TIMEOUT", DEFAULT_MODEL_TIMEOUT))
+    except ValueError:
+        return DEFAULT_MODEL_TIMEOUT
+    return value if value > 0 else DEFAULT_MODEL_TIMEOUT
+
+
 def summary_input(content: str) -> str:
     """What the summariser reads: the body, or its head and tail when long, so
     the end of a long session (usually the outcome) is not cut off."""
@@ -79,7 +93,10 @@ class OllamaProvider(SummariseProvider):
     def __init__(self):
         import ollama as _ollama
         url = self._validate_url(os.getenv("OLLAMA_URL", "http://ollama:11434"))
-        self._client = _ollama.AsyncClient(host=url)
+        import httpx
+        # ollama's own default is no timeout at all
+        self._client = _ollama.AsyncClient(
+            host=url, timeout=httpx.Timeout(model_timeout(), connect=5.0))
         self._embed_model = os.getenv("OLLAMA_EMBED_MODEL", "embeddinggemma")
         self._summarise_model = os.getenv("OLLAMA_SUMMARISE_MODEL", "llama3.2:3b")
 

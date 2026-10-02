@@ -190,11 +190,14 @@ def _session_chain_edge(entry_id: str, entry_type: str, project: str,
                         allowed_ids: Optional[set] = None) -> list[dict]:
     if entry_type not in ("session", "handover"):
         return []
+    # the newest earlier session that is still live: an archived one is
+    # stepped over, so archiving a session (or a 2.x auto-archive) never cuts
+    # the chain, at ingest or in a rebuild
     with _conn(db_path) as conn:
         row = conn.execute(
             """SELECT id FROM memories
                WHERE project = ? AND type IN ('session','handover')
-                 AND id != ? AND timestamp < ?
+                 AND status = 'active' AND id != ? AND timestamp < ?
                ORDER BY timestamp DESC LIMIT 1""",
             (project, entry_id, timestamp)).fetchone()
     if not row:

@@ -351,7 +351,11 @@ async def handle_restore_memory(memory_id: str, reason: str = "") -> str:
                                     "the user's approval."})
     if not restore_memory(memory_id, actor=_mcp_actor(), reason=reason, db_path=DB_PATH):
         return json.dumps({"error": f"Memory {memory_id} not found"})
-    return json.dumps({"restored": True, "id": memory_id})
+    restored = get_memory(memory_id, db_path=DB_PATH)
+    out = {"restored": True, "id": memory_id, "status": restored.status}
+    if restored.status == "proposed":
+        out["note"] = "Back in the approval queue: the user has not approved it."
+    return json.dumps(out)
 
 
 async def handle_rebuild_graph() -> str:

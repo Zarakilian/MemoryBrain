@@ -63,6 +63,20 @@ If your container has a different name, find it with `docker ps`
 claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse
 ```
 
+With `BRAIN_API_KEY` set in `.env`, add the key header (setup does this for
+a new registration; Claude Code stores it in `~/.claude.json`):
+
+```bash
+claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse --header "X-Brain-Key: <BRAIN_API_KEY from .env>"
+```
+
+**The key and HTTP clients.** With `BRAIN_API_KEY` set, `/sse`, `/messages/`
+and `/mcp` answer 401 without it. Every HTTP client must send
+`X-Brain-Key: <key>` or `Authorization: Bearer <key>`. The stdio form
+(`docker exec ... stdio_server.py`) needs no key. A client that cannot send
+a header needs `MEMORYBRAIN_MCP_KEY=off` in `.env`, which opens the MCP
+doors to every local process.
+
 ## Gemini (Antigravity)
 
 Registered automatically by `brain setup` when `~/.gemini/antigravity/`
@@ -156,8 +170,9 @@ read and write the brain with plain HTTP calls.
 
 - **Auth:** the brain answers only loopback Host names (add more with
   `MEMORYBRAIN_ALLOWED_HOSTS`). Reads under `/api/ui/*` are open on loopback.
-  Writes (`/ingest/*`, `/api/ui/edit/*`, admin) require the `X-Brain-Key`
-  header whenever `BRAIN_API_KEY` is set in `.env`. Without a key, a write
+  Every other REST route (reads included, `/health` and `/readiness` aside),
+  `/api/ui/edit/*` and the MCP transports require the key whenever
+  `BRAIN_API_KEY` is set in `.env`. Without a key, a write
   needs `Content-Type: application/json` or an `X-Brain-Client` header, so a
   web page cannot write to the brain behind your back.
 - **Installing with an AI's help:** the strict, model-agnostic prompts in

@@ -84,3 +84,37 @@ def test_token_never_starts_after_a_dot():
     # a %VAR% path is outside the workspace: better nothing than 'claude\settings.json'
     assert extract_path_tokens(r"edit %USERPROFILE%\.claude\settings.json now") == []
     assert extract_path_tokens(r"config ~\.claude.json") == []
+
+
+# W5: path-dense text must cost about linear time, never quadratic
+def _timed(text):
+    import time
+    start = time.perf_counter()
+    toks = extract_path_tokens(text)
+    return toks, time.perf_counter() - start
+
+
+def test_short_slash_tokens_without_extensions_stay_fast():
+    text = "a/b c/d " * 12_500                    # 100,000 characters
+    toks, took = _timed(text)
+    assert toks == []
+    assert took < 3, f"took {took:.1f}s"
+
+
+def test_many_real_paths_stay_fast_and_are_all_found():
+    text = "".join(f"see docs/note{i}.md and src/mod{i}.py then " for i in range(2_500))
+    toks, took = _timed(text)
+    assert took < 3, f"took {took:.1f}s"
+    assert len(toks) == 5_000 and toks[0] == "docs/note0.md" and toks[-1] == "src/mod2499.py"
+
+
+def test_a_long_path_with_spaced_folders_is_still_found():
+    path = r"C:\work\repos\Daily Reports\Archive 2026\Q3 Reviews\TODO-DailyReports.md"
+    assert extract_path_tokens(f"open {path} now") == [path]
+
+
+def test_a_folder_name_longer_than_80_characters_is_kept_whole():
+    folder = "Quarterly Reports And Reviews For The Platform Delivery Team Archive Folder 2026 Q3"
+    sep = chr(92)  # a Windows backslash
+    path = "C:" + sep + "work" + sep + folder + sep + "notes.md"
+    assert extract_path_tokens(f"open {path} now") == [path]

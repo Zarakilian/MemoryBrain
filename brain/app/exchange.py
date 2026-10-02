@@ -137,7 +137,7 @@ def post_task(
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Create a thread with its opening message."""
-    from .redact import redact
+    from .redact import redact, scrub
     title, _ = redact(title or "")
     body, _ = redact(body or "")
     if not title or not title.strip():
@@ -170,7 +170,7 @@ def post_task(
                (id, thread_id, from_agent, to_agent, intent, body, refs, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (message_id, thread_id, sender, recipient, intent, body,
-             json.dumps(refs or []), now),
+             json.dumps(scrub(refs or [])), now),
         )
         # The author has obviously read their own opening message.
         conn.execute(
@@ -196,7 +196,7 @@ def reply_to_thread(
     db_path: Path = DB_PATH,
 ) -> dict[str, Any]:
     """Append a message to a thread; optionally flip its status in one call."""
-    from .redact import redact
+    from .redact import redact, scrub
     body, _ = redact(body or "")
     if not body or not body.strip():
         raise ValueError("body must not be empty")
@@ -221,7 +221,7 @@ def reply_to_thread(
                (id, thread_id, from_agent, to_agent, intent, body, refs, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (message_id, thread_id, sender, recipient, intent, body,
-             json.dumps(refs or []), now),
+             json.dumps(scrub(refs or [])), now),
         )
         if status is not None:
             conn.execute(

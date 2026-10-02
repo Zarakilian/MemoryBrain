@@ -338,3 +338,123 @@ def test_upgrade_stops_when_a_cloud_key_would_be_dropped(tmp_path, capsys):
     out = capsys.readouterr().out
     assert code == 1 and "MEMORYBRAIN_PROVIDER" in out and "k" * 20 not in out
     assert not any("compose stop" in c for c in _joined(fake))
+
+
+# ------------------------------------------------- a key by default (W1)
+
+EXAMPLE = "BRAIN_PORT=7741\n# a comment\nBRAIN_API_KEY=\nMEMORYBRAIN_TOOLS=core\n"
+
+
+def _key_in(env_path: Path) -> str:
+    return cli._env_settings(env_path).get("BRAIN_API_KEY", "")
+
+
+def test_a_new_env_gets_a_generated_key(tmp_path):
+    (tmp_path / ".env.example").write_text(EXAMPLE, encoding="utf-8")
+    created, generated = cli.ensure_env(tmp_path / ".env", tmp_path / ".env.example")
+    assert created and generated
+    key = _key_in(tmp_path / ".env")
+    assert len(key) >= 32
+    text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "MEMORYBRAIN_TOOLS=core" in text and "# a comment" in text
+    # a second install gets a different key
+    other = tmp_path / "b"
+    other.mkdir()
+    (other / ".env.example").write_text(EXAMPLE, encoding="utf-8")
+    cli.ensure_env(other / ".env", other / ".env.example")
+    assert _key_in(other / ".env") != key
+
+
+def test_an_existing_env_is_never_given_a_key(tmp_path):
+    env = tmp_path / ".env"
+    env.write_text("BRAIN_API_KEY=\nOLLAMA_URL=http://ollama:11434\n", encoding="utf-8")
+    assert cli.ensure_env(env, tmp_path / ".env.example") == (False, False)
+    assert _key_in(env) == ""
+
+
+def test_update_and_upgrade_never_write_a_key():
+    for fn in (cli.cmd_update, cli.cmd_upgrade):
+        src = inspect.getsource(fn)
+        assert "ensure_env(" not in src and "token_urlsafe" not in src, fn.__name__
+
+
+def test_claude_is_registered_with_the_key_header_when_there_is_one():
+    args = cli.claude_mcp_add_args("claude", "http://localhost:7741", "k" * 40)
+    assert args[:3] == ["claude", "mcp", "add"]
+    assert args[args.index("--header") + 1] == "X-Brain-Key: " + "k" * 40
+    assert "--header" not in cli.claude_mcp_add_args("claude", "http://localhost:7741", "")
+
+
+def test_setup_never_prints_the_key_when_claude_is_already_registered(tmp_path, monkeypatch, capsys):
+    (tmp_path / ".env").write_text("BRAIN_API_KEY=" + "s" * 40 + "\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "MEMORYBRAIN_DIR", tmp_path)
+    cli.register_claude_mcp("claude", run=lambda cmd, **k: subprocess.CompletedProcess(
+        cmd, 0, stdout="memorybrain: http://localhost:7741/sse (SSE)\n", stderr=""))
+    out = capsys.readouterr().out
+    assert "s" * 40 not in out
+    assert "--header" in out and "claude mcp remove memorybrain" in out
+
+
+def test_installing_the_hooks_records_where_the_install_lives(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / "hooks").mkdir(parents=True)
+    for name in cli.HOOK_INSTALL_MAP:
+        (repo / "hooks" / name).write_text("# hook\n", encoding="utf-8")
+    hooks_dir = tmp_path / "hooks"
+    cli.install_hooks(repo, hooks_dir)
+    assert (hooks_dir / "memorybrain-home").read_text(encoding="utf-8").strip() == repo.as_posix()
+
+
+# ------------------------------------------------- Windows pipes (cp1252)
+
+def test_the_cli_survives_a_cp1252_pipe(tmp_path):
+    """Windows Python writes a pipe in cp1252 unless told otherwise; the CLI's
+    first emoji then crashed it, which stopped any AI that captures output."""
+    import http.server
+    import threading
+
+    class Brain(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = json.dumps({"status": "ok", "version": "3.1.0", "project_count": 2}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Brain)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        env = {k: v for k, v in __import__("os").environ.items()
+               if k not in ("PYTHONUTF8", "PYTHONIOENCODING", "BRAIN_API_KEY")}
+        env.update(PYTHONIOENCODING="cp1252",
+                   MEMORYBRAIN_URL=f"http://127.0.0.1:{srv.server_address[1]}")
+        r = subprocess.run([sys.executable, cli.__file__, "status"], env=env,
+                           capture_output=True, timeout=30)
+    finally:
+        srv.shutdown()
+    assert r.returncode == 0, r.stderr.decode("utf-8", "replace")
+    assert "✅ running" in r.stdout.decode("utf-8")
+
+
+def test_setup_never_replaces_a_skill_you_edited(tmp_path, monkeypatch, capsys):
+    repo = _skill_repo(tmp_path, "# stock v3\n")
+    (repo / "hooks").mkdir(exist_ok=True)
+    (repo / ".env").write_text("BRAIN_API_KEY=\n", encoding="utf-8")
+    home = tmp_path / "home"
+    edited = home / ".claude" / "skills" / "handover" / "SKILL.md"
+    edited.parent.mkdir(parents=True)
+    edited.write_text("# my own version\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    monkeypatch.setattr(cli, "MEMORYBRAIN_DIR", repo)
+    monkeypatch.setattr(cli, "_run", lambda cmd, **k: subprocess.CompletedProcess(
+        cmd, 0, stdout="brain\nembeddinggemma\nllama3.2:3b\nmemorybrain\n", stderr=""))
+    monkeypatch.setattr(cli, "_stock_skill_hashes", lambda repo, rel, run=None: set())
+    monkeypatch.setattr("builtins.input", lambda *a: "n")
+    cli.cmd_setup()
+    assert edited.read_text(encoding="utf-8") == "# my own version\n"
+    assert (edited.parent / "SKILL.md.new").read_text(encoding="utf-8") == "# stock v3\n"

@@ -1,3 +1,5 @@
+import asyncio
+import hmac
 import logging
 import os
 import sqlite3
@@ -39,17 +41,40 @@ from .reembed import pending_count, reembed_batch, reembed_loop
 
 logger = logging.getLogger(__name__)
 
-# Loopback-only MCP + health surfaces. Bound to 127.0.0.1 in compose; no
-# remote network exposure. Classic SSE clients use /sse + /messages/; Grok and
-# other streamable-HTTP clients use /mcp.
+# Surfaces that never need the key: health, and the Atlas pages and reads
+# (loopback trust boundary; Atlas edits still need it).
 MCP_PUBLIC_PATHS = {
-    "/sse",
-    "/messages/",
-    "/mcp",
     "/health",
     "/readiness",
 }
-MCP_PUBLIC_PREFIXES = ("/mcp/", "/messages", "/ui", "/api/ui", "/static")
+MCP_PUBLIC_PREFIXES = ("/ui", "/api/ui", "/static")
+# The MCP transports: classic SSE clients use /sse + /messages/; Grok and other
+# streamable-HTTP clients use /mcp. With BRAIN_API_KEY set they need the key
+# like every REST write, unless MEMORYBRAIN_MCP_KEY=off leaves them open for a
+# client that cannot send a header.
+MCP_TRANSPORT_PATHS = {"/sse", "/messages/", "/mcp"}
+MCP_TRANSPORT_PREFIXES = ("/mcp/", "/messages")
+
+
+def mcp_key_required() -> bool:
+    return os.getenv("MEMORYBRAIN_MCP_KEY", "on").strip().lower() not in ("off", "false", "0", "no")
+
+
+def security_warning():
+    """A key that leaves the MCP doors open protects less than it looks."""
+    if os.getenv("BRAIN_API_KEY") and not mcp_key_required():
+        return ("BRAIN_API_KEY is set but MEMORYBRAIN_MCP_KEY=off: the MCP transports "
+                "accept any local caller without the key")
+    return None
+
+
+def _presented_key(headers: dict) -> str:
+    """X-Brain-Key, or an Authorization: Bearer token (what most MCP clients can send)."""
+    key = headers.get("x-brain-key", "")
+    if key:
+        return key
+    auth = headers.get("authorization", "")
+    return auth[7:].strip() if auth[:7].lower() == "bearer " else ""
 
 # Single process-wide streamable HTTP manager (required by the MCP SDK).
 # stateless=True: each request is independent — ideal for local single-user tools.
@@ -99,10 +124,21 @@ def _reembed_pending():
         return None
 
 
+def run_startup_scrub() -> None:
+    """S3: once per brain, redact secrets stored before 3.0 (backup first).
+    A failure is logged and never stops the brain from starting."""
+    from .redact_store import scrub_store_once
+    try:
+        scrub_store_once(DB_PATH)
+    except Exception:
+        logger.exception("Redaction scan failed; nothing was changed. It runs again next start.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
     init_db()
+    run_startup_scrub()
     # v2.0.0: idempotent one-time copy of embeddings out of the legacy Chroma
     # directory into brain.db (no-op once complete, no-op on chroma backend).
     report = startup_backfill()
@@ -173,12 +209,15 @@ class PureASGIAuthMiddleware:
             return
 
         path = scope.get("path", "") or ""
-        # Public MCP/health/UI surfaces (loopback trust boundary).
+        # Public health/UI surfaces (loopback trust boundary).
         if path in MCP_PUBLIC_PATHS or any(path.startswith(p) for p in MCP_PUBLIC_PREFIXES):
             # UI write endpoints still require a key when configured.
             if not path.startswith("/api/ui/edit"):
                 await self.app(scope, receive, send)
                 return
+        if (path in MCP_TRANSPORT_PATHS or path.startswith(MCP_TRANSPORT_PREFIXES))                 and not mcp_key_required():
+            await self.app(scope, receive, send)
+            return
 
         api_key = os.getenv("BRAIN_API_KEY")
         if not api_key:
@@ -189,8 +228,8 @@ class PureASGIAuthMiddleware:
             k.decode("latin-1").lower(): v.decode("latin-1")
             for k, v in scope.get("headers", [])
         }
-        presented = headers.get("x-brain-key", "")
-        if presented != api_key:
+        presented = _presented_key(headers)
+        if not hmac.compare_digest(presented.encode("utf-8"), api_key.encode("utf-8")):
             body = b'{"detail":"Invalid or missing API key"}'
             await send({
                 "type": "http.response.start",
@@ -295,7 +334,8 @@ async def readiness():
         # Ollama + model presence checks
         if ollama_client is not None:
             try:
-                response = await ollama_client.list()
+                # a health check answers fast even when Ollama hangs
+                response = await asyncio.wait_for(ollama_client.list(), timeout=5)
                 model_names = [
                     (m.model if hasattr(m, "model") else m.get("model", m.get("name", "")))
                     for m in (response.models if hasattr(response, "models") else response.get("models", []))
@@ -337,7 +377,8 @@ async def readiness():
 
     ready = all(v == "ok" for v in checks.values())
     return {"ready": ready, "checks": checks,
-            "reembed_pending": _reembed_pending(), "provider_warning": provider_warning()}
+            "reembed_pending": _reembed_pending(), "provider_warning": provider_warning(),
+            "security_warning": security_warning()}
 
 
 @app.get("/status")

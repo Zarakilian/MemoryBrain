@@ -33,6 +33,35 @@ TAIL_CHARS = 20_000
 MESSAGE_CHARS = 4_000  # one pasted log or injected summary must not fill the tail
 
 
+# brain setup records the install folder beside the installed hooks
+HOME_FILE = Path(__file__).resolve().parent / "memorybrain-home"
+
+
+def brain_key() -> str:
+    """BRAIN_API_KEY from the environment, else from the install's .env
+    (MEMORYBRAIN_DIR, else the folder memorybrain-home names). Never logged."""
+    key = os.getenv("BRAIN_API_KEY", "").strip()
+    if key:
+        return key
+    home = os.getenv("MEMORYBRAIN_DIR", "").strip()
+    if not home:
+        try:
+            home = HOME_FILE.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    try:
+        lines = (Path(home) / ".env").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in reversed(lines):
+        s = line.strip()
+        if s.startswith("BRAIN_API_KEY") and "=" in s:
+            name, value = s.split("=", 1)
+            if name.strip() == "BRAIN_API_KEY":
+                return value.strip().strip('"').strip("'")
+    return ""
+
+
 def _log(msg: str) -> None:
     print(f"[memorybrain] {msg}", file=sys.stderr)
 
@@ -129,7 +158,7 @@ def _post(content: str, project: str, trigger: str):
     payload = json.dumps({"content": content, "project": project,
                           "source": f"pre-compact:{trigger}"}).encode("utf-8")
     headers = {"Content-Type": "application/json", "X-Brain-Client": "hook"}
-    api_key = os.getenv("BRAIN_API_KEY")
+    api_key = brain_key()
     if api_key:
         headers["X-Brain-Key"] = api_key
     req = urllib.request.Request(f"{BRAIN_URL}/ingest/session", data=payload, headers=headers)

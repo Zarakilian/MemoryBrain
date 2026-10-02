@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from .. import storage as _st
+from ..redact import scrub
 from ..models import PROJECT_SLUG_RE, Project
 from ..summarise import summarise
 from . import store as ws
@@ -79,10 +80,10 @@ def set_identity(slug: str, db_path: Path, *, name: Optional[str] = None,
         source = "tool"
     existing = _st.get_project(slug, db_path=db_path)
     if existing is None:
-        _st.upsert_project(Project(slug=slug, name=name or slug.replace("-", " ").title()), db_path=db_path)
+        _st.upsert_project(Project(slug=slug, name=scrub(name) or slug.replace("-", " ").title()), db_path=db_path)
     if name:
         with _st._connect(db_path) as conn:
-            conn.execute("UPDATE projects SET name = ? WHERE slug = ?", (name.strip(), slug))
+            conn.execute("UPDATE projects SET name = ? WHERE slug = ?", (scrub(name.strip()), slug))
             conn.commit()
     skipped = False
     if description is not None and description.strip():

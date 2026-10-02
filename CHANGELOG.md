@@ -3,6 +3,62 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
+## Unreleased
+
+Fixes from the review of 3.0.0 and 3.1.0.
+
+### Breaking changes
+
+- **With `BRAIN_API_KEY` set, the MCP transports need the key too.** `/sse`,
+  `/messages/` and `/mcp` answer 401 without `X-Brain-Key: <key>` or
+  `Authorization: Bearer <key>` (both now work on REST as well). Register
+  Claude Code again with `--header`, and add the header to every other HTTP
+  client ([docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)). Stdio clients
+  need nothing. `MEMORYBRAIN_MCP_KEY=off` keeps the old open behaviour, and
+  `/readiness` then reports a `security_warning`. A brain without a key is
+  unchanged.
+- **`brain setup` writes a random `BRAIN_API_KEY` into a new `.env`**, and
+  registers Claude Code with the key header. An existing `.env` is never
+  changed, and `update` and `upgrade` never add a key.
+
+### Fixes
+
+- Archiving and then restoring a proposed or rejected belief or rule no
+  longer makes it active: it goes back to the approval queue. Only Approve
+  or Confirm activates one, over MCP and in Atlas alike.
+- Every Ollama call has a timeout (`MEMORYBRAIN_MODEL_TIMEOUT`, default 120
+  seconds). A model server that accepts and never answers can no longer hold
+  a write unstored, block search's keyword fallback, or hang `/readiness`
+  (now 5 seconds at most).
+- Path extraction is bounded: 100,000 characters of path-dense text take
+  under a second instead of most of a minute. An Atlas edit and
+  `/workspace/scan` index off the event loop.
+- Redaction covers tags, source, writer, refs, thread refs, pin labels,
+  project names and one-liners, default tags, audit reasons, folder labels
+  and file titles, not only the text.
+- The hex-key rule no longer redacts identifiers that are called keys
+  (dedup, cache, partition, primary and similar keys): they are ids, not
+  credentials.
+- Secrets stored before 3.0 are redacted once, on the first start of this
+  release, after a `VACUUM INTO` backup in `data/backups/` (taken only when
+  something changes). Changed memories are re-embedded. The backup keeps the
+  old text, so a rule that redacted too much can be undone from it.
+- The hooks read `BRAIN_API_KEY` from the install's `.env`, not only from
+  the environment. `brain setup`, `update` and `upgrade` record the install
+  folder beside the installed hooks (`memorybrain-home`). A hook the brain
+  refuses says so instead of reporting the brain as running, and the
+  version warning works with a key set.
+- The session hook frames the next-session note as data, caps it at 800
+  characters, and no longer says "no stored notes" above a note.
+- The CLI writes UTF-8 to a pipe on Windows instead of crashing at its
+  first emoji.
+- `brain setup` keeps a skill you edited, as `update` already did.
+- A graph rebuild links sessions across an archived one instead of dropping
+  the chain.
+- An Atlas content edit marks the memory for re-embedding until its new
+  vector is written, so an interrupted edit never leaves the old vector
+  passing as current.
+
 ## 3.1.0 (2026-10-01)
 
 The brain you can see. The Constellation opens on a glass brain, the camera

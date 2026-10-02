@@ -108,8 +108,20 @@ Without it, MemoryBrain falls back to the last folder name of the working direct
 
 ## Optional: API key
 
-If you set `BRAIN_API_KEY` in `.env`, **write and admin** HTTP routes require header `X-Brain-Key`.  
-MCP on loopback stays usable without that key (by design). Restart after changing `.env`:
+`brain setup` writes a random `BRAIN_API_KEY` into a new `.env`. An `.env` that already exists is never changed.
+
+With a key set, every HTTP route except `/health`, `/readiness` and the Atlas pages needs it, reads included, and so do the MCP transports (`/sse`, `/messages/`, `/mcp`). Send it as `X-Brain-Key: <key>` or `Authorization: Bearer <key>`. The stdio transport (`docker exec ... stdio_server.py`) never touches HTTP and needs no key. The hooks read the key from the install's `.env`.
+
+To turn a key on for an existing install:
+
+1. Put `BRAIN_API_KEY=<a long random value>` in `.env`.
+2. Register Claude Code again with the header (it keeps it in `~/.claude.json`):
+   `claude mcp remove memorybrain -s user`, then
+   `claude mcp add -s user --transport sse memorybrain http://localhost:7741/sse --header "X-Brain-Key: <key>"`.
+3. Add the same header to Grok's and any other HTTP client's MCP config ([CONNECTING_ASSISTANTS.md](CONNECTING_ASSISTANTS.md)). A client that cannot send a header needs `MEMORYBRAIN_MCP_KEY=off`, which leaves every MCP door open to any local process.
+4. Run `python3 cli/brain.py update` once, so the installed hooks know where the `.env` lives.
+
+Restart after changing `.env`:
 
 ```bash
 docker compose up -d brain

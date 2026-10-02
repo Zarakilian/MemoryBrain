@@ -136,7 +136,7 @@ async def test_admin_restore_brings_an_archived_memory_back(mcp_db):
                                         "args": {"memory_id": stored["id"]}}))["archived"]
     back = await _call("brain_admin", {"action": "restore_memory",
                                        "args": {"memory_id": stored["id"], "reason": "wrong one"}})
-    assert back == {"restored": True, "id": stored["id"]}
+    assert back == {"restored": True, "id": stored["id"], "status": "active"}
     conn = connect(mcp_db)
     try:
         status = conn.execute("SELECT status FROM memories WHERE id = ?",

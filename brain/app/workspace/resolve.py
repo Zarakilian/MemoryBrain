@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import storage as _st
+from ..redact import scrub
 from . import store as ws
 from .paths import ci, extract_path_tokens, is_path_shaped, normalise_rel
 
@@ -222,7 +223,7 @@ def clean_refs(refs) -> list[dict]:
             raise ValueError(f"refs: a path is longer than {MAX_REF_CHARS} characters")
         if kind not in REF_KINDS:
             raise ValueError(f"refs: kind must be one of {', '.join(REF_KINDS)}")
-        out.append({"path": path, "kind": kind})
+        out.append({"path": scrub(path), "kind": kind})
     return out
 
 

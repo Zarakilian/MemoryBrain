@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -256,6 +257,12 @@ def install_hooks(repo: Path, hooks_dir: Path, now: datetime = None) -> list:
         shutil.copy2(src, dst)
         dst.chmod(dst.stat().st_mode | 0o755)
         changed.append(dst_name)
+    # Hooks run in a shell that never reads ~/.bashrc: tell them where the
+    # install (its VERSION and the .env holding BRAIN_API_KEY) lives.
+    home_file = hooks_dir / "memorybrain-home"
+    home = Path(repo).resolve().as_posix() + "\n"
+    if not home_file.exists() or home_file.read_text(encoding="utf-8") != home:
+        home_file.write_text(home, encoding="utf-8")
     return changed
 
 
@@ -319,6 +326,51 @@ def _print_skills(result: dict) -> None:
         print(f"ℹ️  Kept your edited skill: {name} (the new version is beside it as SKILL.md.new)")
 
 
+def ensure_env(env_path: Path, example_path: Path) -> tuple:
+    """Create .env from .env.example when it is missing. A new .env gets its
+    own random BRAIN_API_KEY, so a fresh install is never keyless. An existing
+    .env is never changed: a key added behind its back would lock out every
+    client that does not send it. Returns (created, key_generated)."""
+    if env_path.exists():
+        return False, False
+    text = example_path.read_text(encoding="utf-8") if example_path.exists() else ""
+    key = secrets.token_urlsafe(32)
+    lines, generated = text.splitlines(), False
+    for i, line in enumerate(lines):
+        if line.strip() == "BRAIN_API_KEY=":
+            lines[i], generated = f"BRAIN_API_KEY={key}", True
+    if not generated:
+        lines.append(f"BRAIN_API_KEY={key}")
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True, True
+
+
+def claude_mcp_add_args(claude_cmd: str, brain_url: str, key: str) -> list:
+    """`claude mcp add` for the SSE door, with the key header when there is one
+    (Claude Code keeps it in ~/.claude.json)."""
+    args = [claude_cmd, "mcp", "add", "-s", "user", "--transport", "sse",
+            "memorybrain", f"{brain_url}/sse"]
+    if key:
+        args += ["--header", f"X-Brain-Key: {key}"]
+    return args
+
+
+def register_claude_mcp(claude_cmd: str, run=None) -> None:
+    run = run or _run
+    key = _brain_key()
+    if "memorybrain" not in run([claude_cmd, "mcp", "list"]).stdout:
+        run(claude_mcp_add_args(claude_cmd, BRAIN_URL, key))
+        print("✅ MCP server registered for Claude" + (" (with the API key)" if key else ""))
+        return
+    print("⏭️  MCP server for Claude — already registered")
+    if key:
+        print("   With BRAIN_API_KEY set, Claude Code must send it. If it was registered "
+              "without the key, register it again:")
+        print("     claude mcp remove memorybrain -s user")
+        print(f"     claude mcp add -s user --transport sse memorybrain {BRAIN_URL}/sse "
+              '--header "X-Brain-Key: <BRAIN_API_KEY from .env>"')
+
+
 def cmd_setup(auto_detect: bool = False):
     print("MemoryBrain setup")
     print("\u2500" * 45)
@@ -330,12 +382,11 @@ def cmd_setup(auto_detect: bool = False):
         sys.exit(1)
     print("\u2705 Docker running")
 
-    # 2. Ensure .env exists
-    env_path = MEMORYBRAIN_DIR / ".env"
-    if not env_path.exists():
-        example = MEMORYBRAIN_DIR / ".env.example"
-        env_path.write_text(example.read_text() if example.exists() else "")
-        print("\u2705 .env created from .env.example")
+    # 2. Ensure .env exists (a new one gets its own API key)
+    created, generated = ensure_env(MEMORYBRAIN_DIR / ".env", MEMORYBRAIN_DIR / ".env.example")
+    if created:
+        print("\u2705 .env created from .env.example"
+              + (", with a new BRAIN_API_KEY (never shown)" if generated else ""))
     else:
         print("\u23ed\ufe0f  .env \u2014 already exists")
 
@@ -367,13 +418,7 @@ def cmd_setup(auto_detect: bool = False):
         if sys.platform == "win32":
             claude_cmd = shutil.which("claude") or "claude.cmd"
 
-        mcp_list = _run([claude_cmd, "mcp", "list"])
-        if "memorybrain" not in mcp_list.stdout:
-            _run([claude_cmd, "mcp", "add", "-s", "user", "--transport", "sse",
-                  "memorybrain", f"{BRAIN_URL}/sse"])
-            print("\u2705 MCP server registered for Claude")
-        else:
-            print("\u23ed\ufe0f  MCP server for Claude \u2014 already registered")
+        register_claude_mcp(claude_cmd)
     except (FileNotFoundError, subprocess.CalledProcessError):
         print("\u23ed\ufe0f  Claude CLI not found or error \u2014 skipping Claude MCP registration")
 
@@ -431,22 +476,12 @@ def cmd_setup(auto_detect: bool = False):
     hooks_installed = bool(install_hooks(MEMORYBRAIN_DIR, hooks_dir))
     print("\u2705 Hooks installed" if hooks_installed else "\u23ed\ufe0f  Hooks \u2014 already up to date")
 
-    # 7. Install Claude Code skills
-    skills_src = MEMORYBRAIN_DIR / "skills"
-    skills_dst = Path.home() / ".claude" / "skills"
-    skills_installed = False
-    if skills_src.exists():
-        for skill_dir in skills_src.iterdir():
-            if skill_dir.is_dir():
-                skill_file = skill_dir / "SKILL.md"
-                if skill_file.exists():
-                    dst_skill_dir = skills_dst / skill_dir.name
-                    dst_skill_dir.mkdir(parents=True, exist_ok=True)
-                    dst_file = dst_skill_dir / "SKILL.md"
-                    if _file_hash(dst_file) != _file_hash(skill_file):
-                        shutil.copy2(skill_file, dst_file)
-                        skills_installed = True
-    print("\u2705 Skills installed" if skills_installed else "\u23ed\ufe0f  Skills \u2014 already up to date")
+    # 7. Install Claude Code skills (a skill you edited is never replaced)
+    skills = install_skills(MEMORYBRAIN_DIR, Path.home() / ".claude" / "skills")
+    if skills["updated"] or skills["kept"]:
+        _print_skills(skills)
+    else:
+        print("\u23ed\ufe0f  Skills \u2014 already up to date")
 
     # 8. Install shell alias + MEMORYBRAIN_DIR export
     # MEMORYBRAIN_DIR is read by the session hook for version checks and start instructions.
@@ -839,7 +874,21 @@ def cmd_update():
 
 # ── Entry point ──────────────────────────────────────────────────────────────
 
+def ensure_utf8_output() -> None:
+    """Windows Python writes a pipe in cp1252 unless told otherwise, and the
+    first emoji below then crashes the command. Speak UTF-8 to any stream that
+    is not already, as the hooks do."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass
+
+
 def main():
+    ensure_utf8_output()
     parser = argparse.ArgumentParser(description="MemoryBrain CLI")
     sub = parser.add_subparsers(dest="command")
 

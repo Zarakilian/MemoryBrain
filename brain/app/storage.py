@@ -8,6 +8,7 @@ from typing import Optional
 
 from .db import connect
 from .models import MemoryEntry, Project
+from .redact import scrub
 from .migrations.runner import run_migrations
 
 DB_PATH = Path("/app/data/brain.db")
@@ -449,8 +450,8 @@ def _audit(conn: sqlite3.Connection, memory_id: str, action: str, actor: str,
     conn.execute(
         """INSERT INTO memory_audit (id, memory_id, action, actor, reason, at, detail)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (str(uuid.uuid4()), memory_id, action, actor or "", reason or "",
-         datetime.now(timezone.utc).isoformat(), json.dumps(detail or {})),
+        (str(uuid.uuid4()), memory_id, action, actor or "", scrub(reason or ""),
+         datetime.now(timezone.utc).isoformat(), json.dumps(scrub(detail or {}))),
     )
 
 
@@ -483,16 +484,29 @@ def restore_memory(memory_id: str, actor: str, db_path: Path = DB_PATH,
                    reason: str = "") -> bool:
     """Bring an archived memory back to active, with an audit row. A restored
     memory is valid again, so its closure (superseded_by, invalidated_by,
-    valid_to) is cleared; the audit row keeps the old values."""
+    valid_to) is cleared; the audit row keeps the old values.
+
+    A belief or rule the user never approved (or rejected) goes back to the
+    approval queue as proposed, never to active: archiving and then restoring
+    must not stand in for the user's Approve or Confirm."""
     with _connect(db_path) as conn:
-        row = conn.execute("SELECT status, superseded_by, invalidated_by, valid_to FROM memories "
-                           "WHERE id = ?", (memory_id,)).fetchone()
+        row = conn.execute("SELECT type, status, superseded_by, invalidated_by, valid_to "
+                           "FROM memories WHERE id = ?", (memory_id,)).fetchone()
         # Only an archived or done memory comes back: a proposed belief or rule
         # becomes active through approval by the user, never through a restore.
         if row is None or row["status"] not in ("archived", "done"):
             return False
-        conn.execute("""UPDATE memories SET status = 'active', superseded_by = NULL,
-                        invalidated_by = NULL, valid_to = NULL WHERE id = ?""", (memory_id,))
+        status = "active"
+        if row["type"] in ("belief", "procedure"):
+            decision = conn.execute(
+                """SELECT action FROM memory_audit WHERE memory_id = ?
+                   AND action IN ('approve', 'confirm', 'reject')
+                   ORDER BY rowid DESC LIMIT 1""", (memory_id,)).fetchone()
+            if decision is None or decision["action"] == "reject":
+                status = "proposed"
+        conn.execute("""UPDATE memories SET status = ?, superseded_by = NULL,
+                        invalidated_by = NULL, valid_to = NULL WHERE id = ?""",
+                     (status, memory_id))
         _audit(conn, memory_id, "restore", actor, reason,
                {k: row[k] for k in ("superseded_by", "invalidated_by", "valid_to") if row[k]})
         conn.commit()

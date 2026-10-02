@@ -6,7 +6,7 @@ session/handover. Open loops should be actionable one-liners.
 from __future__ import annotations
 
 from .models import MemoryEntry, ValidationError
-from .redact import redact
+from .redact import redact, scrub
 
 # Soft guidance thresholds (characters)
 FACT_DECISION_MAX = 4_000
@@ -33,6 +33,12 @@ def apply_write_policy(entry: MemoryEntry) -> list[str]:
     if entry.summary:
         entry.summary, summary_fired = redact(entry.summary)
         fired += summary_fired
+    for field_name in ("tags", "source", "writer"):
+        before = getattr(entry, field_name)
+        after = scrub(before)
+        if after != before:
+            setattr(entry, field_name, after)
+            fired.append(f"{field_name}")
     warnings += [f"redacted: {rule}" for rule in dict.fromkeys(fired)]
 
     content_len = len(entry.content or "")

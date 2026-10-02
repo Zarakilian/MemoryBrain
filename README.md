@@ -242,7 +242,8 @@ See [`.env.example`](.env.example). Highlights:
 
 | Variable | Purpose |
 |----------|---------|
-| `BRAIN_API_KEY` | Protects writes/admin (MCP loopback stays open) |
+| `BRAIN_API_KEY` | With a key set, every REST call except health and the Atlas pages, and the MCP transports, need it (`X-Brain-Key` or `Authorization: Bearer`). `brain setup` generates one for a new install |
+| `MEMORYBRAIN_MCP_KEY` | `off` leaves the MCP transports open beside a key, for a client that cannot send a header |
 | `MEMORYBRAIN_PROVIDER` | `ollama` (default), `gemini` or `openai`; nothing else picks the provider |
 | `MEMORYBRAIN_TOOLS` | `core` (15 tools including `brain_admin`, default) or `full` |
 | `MEMORYBRAIN_ALLOWED_HOSTS` | Extra Host names besides loopback |

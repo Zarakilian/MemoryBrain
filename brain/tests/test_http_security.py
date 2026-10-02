@@ -302,3 +302,62 @@ def test_status_reports_the_version_file(client):
     from app.main import read_version
     assert client.get("/status").json()["version"] == read_version()
     assert read_version() != "unknown"
+
+
+# ------------------------------------------------- MCP needs the key too (S2)
+
+_MCP_HEADERS = {"Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json", "mcp-protocol-version": "2025-06-18"}
+
+
+def _mcp_list(client, extra=None):
+    """tools/list over /mcp. The session manager runs once per process, so
+    these tests check the door (401 or let through), not the MCP answer."""
+    c = TestClient(client.app, base_url="http://localhost:7741", raise_server_exceptions=False)
+    body = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    return c.post("/mcp/", json=body, headers={**_MCP_HEADERS, **(extra or {})})
+
+
+@pytest.mark.parametrize("method,path", [("get", "/sse"), ("post", "/messages/"),
+                                         ("post", "/mcp/"), ("post", "/mcp")])
+def test_with_a_key_set_every_mcp_door_needs_it(client, monkeypatch, method, path):
+    monkeypatch.setenv("BRAIN_API_KEY", "fake-test-key-123456")
+    kwargs = {"json": {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+              "headers": _MCP_HEADERS} if method == "post" else {}
+    c = TestClient(client.app, base_url="http://localhost:7741", raise_server_exceptions=False)
+    r = getattr(c, method)(path, **kwargs)
+    assert r.status_code == 401
+
+
+def test_an_mcp_client_with_the_key_or_a_bearer_token_gets_in(client, monkeypatch):
+    monkeypatch.setenv("BRAIN_API_KEY", "fake-test-key-123456")
+    assert _mcp_list(client, {"X-Brain-Key": "fake-test-key-123456"}).status_code != 401
+    assert _mcp_list(client, {"Authorization": "Bearer " + "fake-test-key-123456"}).status_code != 401
+    assert _mcp_list(client, {"Authorization": "Bearer wrong"}).status_code == 401
+
+
+def test_a_bearer_token_works_on_rest_too(client, monkeypatch):
+    monkeypatch.setenv("BRAIN_API_KEY", "fake-test-key-123456")
+    r = client.get("/status", headers={"Authorization": "Bearer " + "fake-test-key-123456"})
+    assert r.status_code == 200
+
+
+def test_mcp_can_be_left_open_on_purpose(client, monkeypatch):
+    monkeypatch.setenv("BRAIN_API_KEY", "fake-test-key-123456")
+    monkeypatch.setenv("MEMORYBRAIN_MCP_KEY", "off")
+    assert _mcp_list(client).status_code != 401
+    assert client.post("/ingest/note", json={"content": "x", "project": "acme"}).status_code == 401
+
+
+def test_without_a_key_mcp_stays_open(client):
+    assert _mcp_list(client).status_code != 401
+
+
+def test_readiness_says_when_mcp_is_left_open_beside_a_key(client, monkeypatch):
+    with patch("app.main.ollama_client", None):
+        assert client.get("/readiness").json()["security_warning"] is None
+        monkeypatch.setenv("BRAIN_API_KEY", "fake-test-key-123456")
+        assert client.get("/readiness").json()["security_warning"] is None
+        monkeypatch.setenv("MEMORYBRAIN_MCP_KEY", "off")
+        warning = client.get("/readiness").json()["security_warning"]
+    assert "MEMORYBRAIN_MCP_KEY" in warning and "fake-test-key" not in warning

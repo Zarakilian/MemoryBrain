@@ -1,6 +1,7 @@
 """REST surface for the workspace layer. Loopback only, behind the API key middleware."""
 from __future__ import annotations
 
+import asyncio
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -73,9 +74,11 @@ class ProjectInfoRequest(BaseModel):
 
 @router.post("/workspace/scan")
 async def workspace_scan(req: ScanRequest):
-    report = ws.apply_manifest(req.model_dump(), db_path=_st.DB_PATH)
+    # both walk every file row and memory: off the event loop, so MCP
+    # clients are not frozen while a scan lands
+    report = await asyncio.to_thread(ws.apply_manifest, req.model_dump(), db_path=_st.DB_PATH)
     if report["added"] or report["moved"]:
-        report["relink"] = rebuild_file_links(db_path=_st.DB_PATH)
+        report["relink"] = await asyncio.to_thread(rebuild_file_links, db_path=_st.DB_PATH)
     return report
 
 

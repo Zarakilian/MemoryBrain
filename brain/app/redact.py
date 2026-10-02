@@ -90,8 +90,20 @@ _RULES: tuple[_Rule, ...] = (
         ("dq", "sq", "bare"), _env_value_is_literal),
     _Rule("keyword-hex", re.compile(
         r"(?i)(?<![a-z])(?:tokens?|bearer|secrets?|keys?|passwords?|auth(?:orization)?)(?![a-z])"
-        r"[^\n]{0,30}?(?<![0-9a-f])(?P<v>[0-9a-f]{32,})(?![0-9a-f])"), "v"),
+        r"[^\n]{0,30}?(?<![0-9a-f])(?P<v>[0-9a-f]{32,})(?![0-9a-f])"), "v",
+        lambda m: _keyword_names_a_secret(m)),
 )
+
+
+# "key" also names identifiers that are hex by nature: a dedup or cache key is
+# an id, not a credential (one real alert dedup key was redacted in review)
+_ID_KEY_BEFORE = re.compile(
+    r"(?i)(?:dedup(?:e|lication)?|idempotency|cache|primary|foreign|partition|sort"
+    r"|routing|row|composite|unique|lookup|join|grouping)[ _-]?$")
+
+
+def _keyword_names_a_secret(match: re.Match) -> bool:
+    return not _ID_KEY_BEFORE.search(match.string[max(0, match.start() - 20):match.start()])
 
 
 def _pass(text: str) -> tuple[str, list[str]]:
@@ -143,6 +155,19 @@ def redact(text: str) -> tuple[str, list[str]]:
             break
         fired += names
     return text, list(dict.fromkeys(fired))
+
+
+def scrub(value):
+    """A redacted copy of a stored field: a string, or a list or dict of them.
+    For metadata (tags, labels, refs, reasons) where the caller does not need
+    the rule names."""
+    if isinstance(value, str):
+        return redact(value)[0]
+    if isinstance(value, list):
+        return [scrub(v) for v in value]
+    if isinstance(value, dict):
+        return {k: scrub(v) for k, v in value.items()}
+    return value
 
 
 _URL_USERINFO = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]{0,30}://)[^/?#\s]*@")

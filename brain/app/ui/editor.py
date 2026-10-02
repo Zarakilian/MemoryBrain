@@ -18,6 +18,7 @@ Guardrails:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -29,7 +30,7 @@ from pydantic import BaseModel, Field
 from ..db import connect
 from ..ingest_pipeline import ingest
 from ..models import MemoryEntry, Project, ValidationError
-from ..redact import redact
+from ..redact import redact, scrub
 from ..storage import (DB_PATH, DERIVED_EDGE_KINDS, archive_memory_audited, content_hash,
                        audit, get_memory, get_project, hard_delete_memory, record_recall,
                        restore_memory, set_belief_status, upsert_project)
@@ -58,6 +59,7 @@ class ProjectBody(BaseModel):
 @router.post("/api/ui/edit/projects", status_code=201)
 def create_or_update_project(body: ProjectBody):
     existed = get_project(body.slug, db_path=DB_PATH) is not None
+    body.name, body.one_liner = scrub(body.name), scrub(body.one_liner)
     upsert_project(Project(slug=body.slug, name=body.name,
                            one_liner=body.one_liner), db_path=DB_PATH)
     return {"slug": body.slug, "name": body.name,
@@ -280,7 +282,7 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
             params.append(val)
     if body.tags is not None:
         fields.append("tags = ?")
-        params.append(json.dumps(body.tags))
+        params.append(json.dumps(scrub(body.tags)))
     if not fields and body.status is None:
         raise HTTPException(422, "Nothing to update")
     updated_cols = sorted(f.split(" ")[0] for f in fields)
@@ -291,6 +293,9 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
     if body.content is not None:
         fields.append("content_updated_at = ?")
         params.append(datetime.now(timezone.utc).isoformat())
+        # the vector still describes the old text until the re-index below
+        # finishes; if it never does, the re-embed job picks this up
+        fields.append("embedded = 0")
     if fields:
         with _rw() as conn:
             conn.execute(f"UPDATE memories SET {' , '.join(fields)} WHERE id = ?",
@@ -305,6 +310,8 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
             archive_memory_audited(memory_id, actor="ui", db_path=DB_PATH)
         else:
             restore_memory(memory_id, actor="ui", db_path=DB_PATH)
+            if get_memory(memory_id, db_path=DB_PATH).status == "proposed":
+                warnings.append("never approved: back in the approval queue")
         updated_cols.append("status")
 
     relinked = False
@@ -327,8 +334,11 @@ async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
     try:
         if content_changed:
             from ..entities import index_entities
-            index_entities(memory_id, f"{updated.summary or ''}\n{updated.content}",
-                           db_path=DB_PATH)
+            # extraction is CPU work on up to 100,000 characters: keep it off
+            # the event loop so other clients are not frozen behind it
+            await asyncio.to_thread(index_entities, memory_id,
+                                    f"{updated.summary or ''}\n{updated.content}",
+                                    db_path=DB_PATH)
             result = await index_memory_vectors(memory_id, updated.content, db_path=DB_PATH)
             if not result["embedded"]:
                 # The old vectors describe the old text: drop them so search
@@ -347,7 +357,7 @@ async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
         embedding = vec_get(memory_id, db_path=DB_PATH)
         if embedding is None:
             return False
-        link_new_memory(updated, embedding, db_path=DB_PATH)
+        await asyncio.to_thread(link_new_memory, updated, embedding, db_path=DB_PATH)
         return True
     except Exception:
         logger.warning("Relink after edit failed: text updated, edges unchanged",

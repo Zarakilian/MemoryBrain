@@ -313,3 +313,81 @@ def test_restore_reopens_the_validity_window(tmp_db):
     got = get_memory(mid, db_path=tmp_db)
     assert (got.status, got.superseded_by, got.invalidated_by, got.valid_to) == \
         ("active", None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_an_atlas_edit_indexes_off_the_event_loop(tmp_db, fake_provider, monkeypatch):
+    """W5: entity and path extraction on a long edit must not freeze every
+    other client while it runs."""
+    import asyncio
+    import time
+    from app.ui import editor
+
+    monkeypatch.setattr("app.ui.editor.DB_PATH", tmp_db)
+    mid = _mem(tmp_db, "docs/a.md and src/b.py", vector=[0.1] * 768)
+
+    def slow_index(*a, **k):
+        time.sleep(0.6)
+        return 0
+    monkeypatch.setattr("app.entities.index_entities", slow_index)
+    monkeypatch.setattr("app.linker.link_new_memory", lambda *a, **k: time.sleep(0.6))
+
+    gaps, done = [], asyncio.Event()
+
+    async def ticker():
+        last = time.monotonic()
+        while not done.is_set():
+            await asyncio.sleep(0.02)
+            now = time.monotonic()
+            gaps.append(now - last)
+            last = now
+
+    tick = asyncio.create_task(ticker())
+    await editor._reindex_after_edit(mid, content_changed=True)
+    done.set()
+    await tick
+    assert max(gaps) < 0.3, f"event loop stalled {max(gaps):.2f}s"
+
+
+def test_a_rebuild_chains_sessions_across_an_archived_one(tmp_db):
+    """D3 chains sessions instead of archiving them. A 2.x brain still holds
+    sessions it archived; a rebuild must link around them, not drop the chain."""
+    from datetime import datetime, timedelta, timezone
+    base = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    ids = []
+    for i in range(3):
+        entry = MemoryEntry(content=f"session {i}", type="session", project="acme",
+                            importance=3, timestamp=base + timedelta(days=i))
+        add_memory(entry, db_path=tmp_db)
+        ids.append(entry.id)
+    s1, s2, s3 = ids
+    assert archive_memory_audited(s2, actor="ui", db_path=tmp_db)
+    rebuild_graph(tmp_db)
+    chain = {(k[0], k[1]) for k in _edges(tmp_db) if k[2] == "session_chain"}
+    assert chain == {(s3, s1)}
+
+
+def test_an_edit_cut_off_before_its_reindex_still_queues_a_re_embed(
+        tmp_db, fake_provider, monkeypatch):
+    """The new text is committed first. If the re-index never finishes (a
+    restart, a lock, a hung model), the old vector must not pass as current."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.reembed import pending_count
+
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    monkeypatch.setattr("app.ui.editor.DB_PATH", tmp_db)
+    mid = _mem(tmp_db, "the car is red", vector=[1.0, 0.0, 0.0, 0.0])
+
+    async def cut_off(*a, **k):
+        raise RuntimeError("process stopped")
+    monkeypatch.setattr("app.ui.editor._reindex_after_edit", cut_off)
+    with pytest.raises(RuntimeError):
+        TestClient(app).patch(f"/api/ui/edit/memories/{mid}", json={"content": "the car is blue"})
+    conn = connect(tmp_db)
+    try:
+        row = conn.execute("SELECT content, embedded FROM memories WHERE id = ?", (mid,)).fetchone()
+    finally:
+        conn.close()
+    assert row["content"] == "the car is blue" and row["embedded"] == 0
+    assert pending_count(db_path=tmp_db) >= 1

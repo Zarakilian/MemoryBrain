@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from .redact import scrub
 from .storage import DB_PATH, _connect, get_memory
 
 PIN_KINDS = frozenset(
@@ -68,7 +69,7 @@ def pin_memory(
             )
         }
     priority = max(-100, min(int(priority), 100))
-    label = (label or "")[:200]
+    label = scrub((label or "")[:200])
     with _connect(db_path) as conn:
         conn.execute(
             """INSERT INTO project_pins
