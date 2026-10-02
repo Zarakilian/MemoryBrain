@@ -540,10 +540,10 @@ def test_a_long_folder_name_gives_the_same_slug_in_both_hooks(tmp_path):
     assert slug == pre_compact.detect_project(folder) and len(slug) <= 64
 
 
-@needs_bash
 AT = "@"     # kept apart, so the repo hygiene check does not read an email address
 
 
+@needs_bash
 @pytest.mark.parametrize("url", [f"http://localhost:7741{AT}evil.example/",
                                  "http://localhost:7741.evil.example",
                                  f"http://127.0.0.1:7741{AT}evil.example"])
