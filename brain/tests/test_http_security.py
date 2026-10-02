@@ -430,3 +430,68 @@ def test_the_sse_transport_keeps_its_rebinding_protection():
     assert settings is not None and settings.enable_dns_rebinding_protection
     assert "localhost:*" in settings.allowed_hosts
     assert "http://localhost:*" in settings.allowed_origins
+
+
+@pytest.mark.asyncio
+async def test_an_sse_client_that_disconnects_leaves_no_error(monkeypatch):
+    """The /sse route returned into FastAPI, which then sent a second response
+    on a finished stream: one traceback per client disconnect."""
+    import asyncio
+    from app.main import sse_asgi
+    sent, calls = [], 0
+
+    async def receive():
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if sent and sent[-1].get("type") == "http.response.body" and not sent[-1].get("more_body"):
+            raise RuntimeError(f"sent {message['type']} after the response completed")
+        sent.append(message)
+
+    scope = {"type": "http", "method": "GET", "path": "/sse", "raw_path": b"/sse",
+             "query_string": b"", "root_path": "", "scheme": "http", "server": ("localhost", 7741),
+             "client": ("127.0.0.1", 5000), "headers": [(b"host", b"localhost:7741")],
+             "http_version": "1.1"}
+    await asyncio.wait_for(sse_asgi(scope, receive, send), timeout=10)
+    assert sent and sent[0]["type"] == "http.response.start" and sent[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_sse_answers_405_to_anything_but_get():
+    from app.main import sse_asgi
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+    scope = {"type": "http", "method": "POST", "path": "/sse", "headers": []}
+    await sse_asgi(scope, receive, send)
+    assert sent[0]["status"] == 405
+
+
+def test_a_message_post_gets_exactly_one_response(client):
+    """handle_post_message answers by itself; the FastAPI endpoint then sent
+    a second response, which raised on every MCP message over SSE."""
+    from app.main import messages_asgi
+    import asyncio
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"{}", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+    scope = {"type": "http", "method": "POST", "path": "/messages/", "raw_path": b"/messages/",
+             "query_string": b"session_id=" + b"0" * 32, "root_path": "", "scheme": "http",
+             "server": ("localhost", 7741), "client": ("127.0.0.1", 5000),
+             "headers": [(b"host", b"localhost:7741"), (b"content-type", b"application/json")],
+             "http_version": "1.1"}
+    asyncio.run(messages_asgi(scope, receive, send))
+    assert [m["type"] for m in sent].count("http.response.start") == 1
+    r = client.post("/messages/?session_id=" + "0" * 32, json={"jsonrpc": "2.0"})
+    assert r.status_code in (400, 404)

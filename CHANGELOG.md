@@ -3,6 +3,16 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
+## 3.2.1 (2026-10-02)
+
+- Every MCP message over the classic SSE transport raised an error after it
+  was answered: `/messages/` (and `/sse`) were FastAPI endpoints around a
+  transport that writes its own response, so FastAPI sent a second one
+  ("Unexpected ASGI message 'http.response.start' sent, after response
+  already completed"). Both are raw ASGI routes now. A client that closed
+  its session cleanly could hang waiting on the broken reply. Present since
+  2.5.0; found in the live log after the 3.2.0 upgrade.
+
 ## 3.2.0 (2026-10-02)
 
 Fixes from a full review of 3.0.0 and 3.1.0: a key that now covers MCP,

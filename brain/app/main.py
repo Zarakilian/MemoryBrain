@@ -10,6 +10,7 @@ from typing import Callable, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
@@ -481,20 +482,45 @@ async def next_session(project: str = ""):
             "timestamp": note["timestamp"]}
 
 
-@app.get("/sse")
-async def sse_endpoint(request: Request):
-    """Classic MCP SSE transport (GET open stream; posts go to /messages/)."""
-    async with sse_transport.connect_sse(
-        request.scope, request.receive, request._send
-    ) as streams:
-        await mcp_server.run(
-            streams[0], streams[1], mcp_server.create_initialization_options()
-        )
+class _SseApp:
+    """Classic MCP SSE transport (GET opens the stream; posts go to /messages/).
+
+    A raw ASGI app, not a FastAPI endpoint: the transport writes the whole
+    response itself, and an endpoint's return value made FastAPI send a second
+    response after a client disconnected (one traceback per disconnect)."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("method") != "GET":
+            await send({"type": "http.response.start", "status": 405,
+                        "headers": [(b"allow", b"GET"), (b"content-length", b"0")]})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        async with sse_transport.connect_sse(scope, receive, send) as streams:
+            await mcp_server.run(
+                streams[0], streams[1], mcp_server.create_initialization_options()
+            )
 
 
-@app.post("/messages/")
-async def handle_messages(request: Request):
-    await sse_transport.handle_post_message(request.scope, request.receive, request._send)
+sse_asgi = _SseApp()
+app.router.routes.append(Route("/sse", endpoint=sse_asgi))
+
+
+class _MessagesApp:
+    """The SSE transport's message posts. Raw ASGI for the same reason as
+    /sse: handle_post_message answers by itself (202), and a FastAPI endpoint
+    then sent a second response, which raised on every MCP message."""
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("method") != "POST":
+            await send({"type": "http.response.start", "status": 405,
+                        "headers": [(b"allow", b"POST"), (b"content-length", b"0")]})
+            await send({"type": "http.response.body", "body": b""})
+            return
+        await sse_transport.handle_post_message(scope, receive, send)
+
+
+messages_asgi = _MessagesApp()
+app.router.routes.append(Route("/messages/", endpoint=messages_asgi))
 
 
 async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
