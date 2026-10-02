@@ -276,3 +276,12 @@ async def test_the_next_session_note_is_not_also_an_open_loop(tmp_db):
     add_memory(entry, db_path=tmp_db)
     brief = await build_project_brief("acme", db_path=tmp_db)
     assert entry.id not in [x["id"] for x in brief.get("open_loops", [])]
+
+
+@pytest.mark.asyncio
+async def test_the_brief_says_when_its_task_hits_are_keyword_only(tmp_db, fake_provider):
+    add_memory(MemoryEntry(content="the invoice export runs nightly", type="note",
+                           project="acme"), db_path=tmp_db)
+    fake_provider.fail_on = {"task: search result"}       # query embeddings are down
+    pack = await build_project_brief("acme", intent="invoice export", db_path=tmp_db)
+    assert any("keyword" in w for w in pack["warnings"])

@@ -538,3 +538,44 @@ def test_a_long_folder_name_gives_the_same_slug_in_both_hooks(tmp_path):
                       {"BRAIN_API_KEY": KEY, "MEMORYBRAIN_DEBUG": "1"})
     slug = r.stderr.decode().split("slug=", 1)[1].split()[0]
     assert slug == pre_compact.detect_project(folder) and len(slug) <= 64
+
+
+@needs_bash
+AT = "@"     # kept apart, so the repo hygiene check does not read an email address
+
+
+@pytest.mark.parametrize("url", [f"http://localhost:7741{AT}evil.example/",
+                                 "http://localhost:7741.evil.example",
+                                 f"http://127.0.0.1:7741{AT}evil.example"])
+def test_the_session_hook_refuses_a_url_that_only_starts_like_localhost(tmp_path, url):
+    r, out = _keyed_run(tmp_path, _installed_hook(tmp_path), _project(tmp_path),
+                        {"BRAIN_API_KEY": KEY, "MEMORYBRAIN_URL": url})
+    assert "must be localhost" in r.stderr.decode() and "KEYED PIN" not in out
+
+
+@needs_bash
+@pytest.mark.parametrize("url", ["http://localhost:7741", "http://127.0.0.1:7741/",
+                                 "http://[::1]:7741"])
+def test_the_session_hook_accepts_a_loopback_url(tmp_path, url):
+    r, out = _keyed_run(tmp_path, _installed_hook(tmp_path), _project(tmp_path),
+                        {"BRAIN_API_KEY": KEY, "MEMORYBRAIN_URL": url})
+    assert "must be localhost" not in r.stderr.decode()
+
+
+@needs_bash
+def test_a_readiness_that_does_not_answer_is_reported(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    keyed = STUB_CURL_KEYED.replace("""  */readiness) echo '{"ready": true}' ;;""",
+                                    """  */readiness) [ "$fail" = 1 ] && exit 22; echo 'oops' ;;""")
+    (bin_dir / "curl").write_text(keyed, encoding="utf-8")
+    (bin_dir / "curl").chmod(0o755)
+    brief = tmp_path / "brief.json"
+    brief.write_text(json.dumps(PIN_BRIEF), encoding="utf-8")
+    env = {"PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+           "HOME": str(tmp_path / "home"), "STUB_BRIEF": str(brief), "STUB_KEY": KEY,
+           "BRAIN_API_KEY": KEY}
+    r = subprocess.run(["bash", str(_installed_hook(tmp_path)), str(_project(tmp_path))],
+                       env=env, capture_output=True, timeout=60)
+    out = r.stdout.decode("utf-8", "replace")
+    assert "PARTIAL SERVICE" in out and "/readiness" in out

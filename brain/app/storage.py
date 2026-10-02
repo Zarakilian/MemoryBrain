@@ -220,12 +220,22 @@ def get_recent(
 
 def archive_memory(memory_id: str, superseded_by: str, db_path: Path = DB_PATH,
                    actor: str = "system", reason: str = ""):
-    """Mark a memory as archived (superseded) with an audit row. Never deletes."""
+    """Mark a memory as archived (superseded) with an audit row. Never deletes.
+    A memory something else replaced was valid until now: its validity window
+    is closed, so as_of still finds it on the days it was current."""
     with _connect(db_path) as conn:
-        cur = conn.execute(
-            "UPDATE memories SET status = 'archived', superseded_by = ? WHERE id = ?",
-            (superseded_by, memory_id),
-        )
+        if superseded_by:
+            cur = conn.execute(
+                """UPDATE memories SET status = 'archived', superseded_by = ?,
+                          invalidated_by = COALESCE(invalidated_by, ?),
+                          valid_to = COALESCE(valid_to, ?) WHERE id = ?""",
+                (superseded_by, superseded_by, datetime.now(timezone.utc).isoformat(),
+                 memory_id))
+        else:
+            cur = conn.execute(
+                "UPDATE memories SET status = 'archived', superseded_by = ? WHERE id = ?",
+                (superseded_by, memory_id),
+            )
         if cur.rowcount:
             _audit(conn, memory_id, "archive", actor, reason,
                    {"superseded_by": superseded_by} if superseded_by else None)
@@ -466,9 +476,12 @@ def audit(memory_id: str, action: str, actor: str, reason: str = "",
 def _set_status_audited(memory_id: str, status: str, action: str, actor: str,
                         reason: str, db_path: Path) -> bool:
     with _connect(db_path) as conn:
-        cur = conn.execute("UPDATE memories SET status = ? WHERE id = ?", (status, memory_id))
-        if cur.rowcount == 0:
+        row = conn.execute("SELECT status FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        if row is None:
             return False
+        if row["status"] == status:          # already there: nothing to record
+            return True
+        conn.execute("UPDATE memories SET status = ? WHERE id = ?", (status, memory_id))
         _audit(conn, memory_id, action, actor, reason)
         conn.commit()
     return True

@@ -3,7 +3,7 @@
 **Purpose:** explain where a memory goes from the moment an agent writes it to the moment it shows up in a brief, and what happens when a part is down.
 **Audience:** engineers running or changing MemoryBrain. You know Docker, SQLite and HTTP.
 **Done when:** you can say which component handles each step below, and what each failure in the degraded-mode table costs you.
-**Last verified:** 2026-10-01 (version 3.1.0; 3.1 changed only the Atlas UI)
+**Last verified:** 2026-10-02 (version 3.2.0)
 
 Setup lives in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), upgrades in [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md), wiring each assistant in [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md). Every setting is in [.env.example](.env.example).
 
@@ -106,7 +106,7 @@ When you correct how an agent works, the agent calls `record_correction(rule, ev
 
 | Rule | What it does |
 |---|---|
-| Loopback only | Requests whose Host is not `localhost`, `127.0.0.1` or `[::1]` get 421, on REST and on every MCP transport. `MEMORYBRAIN_ALLOWED_HOSTS` adds names. This stops DNS rebinding. |
+| Loopback only | Requests whose Host is not `localhost`, `127.0.0.1` or `[::1]` get 421, on REST and on every MCP transport. `MEMORYBRAIN_ALLOWED_HOSTS` adds names. This stops DNS rebinding. A request whose `Origin` is not one of those names (or is `null`) gets 403; the hooks and the CLI send none, and Atlas sends its own. |
 | Write guard | Without `BRAIN_API_KEY`, a POST, PUT, PATCH or DELETE needs `Content-Type: application/json` or an `X-Brain-Client` header, or it gets 403. A web page cannot send either without a CORS preflight, which the brain never grants. |
 | API key | With `BRAIN_API_KEY` set, every REST call except `/health`, `/readiness` and the Atlas pages and reads needs it, GETs included, and so do the MCP transports (`/sse`, `/messages/`, `/mcp`). It is accepted as `X-Brain-Key` or `Authorization: Bearer`, compared in constant time. `MEMORYBRAIN_MCP_KEY=off` leaves the MCP transports open for a client that cannot send a header, and `/readiness` then reports a `security_warning`. `brain setup` generates a key for a new `.env`. The hooks read the key from the install's `.env`, and the CLI never sends it to a non-localhost URL. |
 | No GET side effects | A GET never changes state. Exports, imports and rebuilds are POSTs; `GET /search` records nothing. |

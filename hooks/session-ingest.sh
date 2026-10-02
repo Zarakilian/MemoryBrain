@@ -54,10 +54,13 @@ case "$CWD" in
 esac
 
 # Validate BRAIN_URL is localhost-only (prevent SSRF via env manipulation)
-case "$BRAIN_URL" in
-    http://localhost:*|http://127.0.0.1:*|http://\[::1\]:*) ;;
-    *) echo "[memorybrain] BRAIN_URL must be localhost — refusing to connect to ${BRAIN_URL}" >&2; exit 0 ;;
-esac
+# (a whole-URL match: localhost:7741 followed by an @ and another host starts
+# like localhost but goes to that other host, with the key)
+if ! [[ "$BRAIN_URL" =~ ^http://(localhost|127\.0\.0\.1|\[::1\]):[0-9]{1,5}/?$ ]]; then
+    echo "[memorybrain] BRAIN_URL must be localhost — refusing to connect to ${BRAIN_URL}" >&2
+    exit 0
+fi
+BRAIN_URL="${BRAIN_URL%/}"
 
 # Project slug: .brainproject in this folder or up to 4 parents (confidence 1.0),
 # else the folder name (a guess, bound with confidence 0.5 for Doctor to confirm).
@@ -198,7 +201,15 @@ fi
 
 READINESS_MSG=$("${CURL[@]}" "${BRAIN_URL}/readiness" | "$PY" -c "
 import sys, json
-data = json.load(sys.stdin)
+try:
+    data = json.load(sys.stdin)
+except ValueError:
+    # no answer, an error status or not JSON: say so, never stay silent
+    print('\n'.join(['', '## MemoryBrain — PARTIAL SERVICE', '',
+                     '  /readiness gave no usable answer, so the model and vector checks',
+                     '  are unknown. Search may be keyword only. Check:',
+                     '    curl -s http://localhost:7741/readiness', '']))
+    sys.exit(0)
 if data.get('ready', True):
     sys.exit(0)  # all OK — print nothing
 

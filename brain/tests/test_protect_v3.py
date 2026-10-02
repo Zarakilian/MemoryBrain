@@ -477,3 +477,25 @@ def test_a_hard_delete_leaves_no_row_pointing_at_the_deleted_memory(tmp_db):
     finally:
         conn.close()
     assert dangling == 0 and old in json.loads(detail)["had_superseded"]
+
+
+def test_a_conflict_loser_was_current_until_it_lost(tmp_db):
+    """as_of treats an archived row with no valid_to as deleted; a resolved
+    contradiction must close the loser's window instead."""
+    from app.conflicts import resolve_conflict
+    from app.linker import _write_edges
+    a = _mem(tmp_db, "The port is 7741.", type_="fact")
+    b = _mem(tmp_db, "The port is 7742.", type_="fact")
+    lo, hi = sorted((a, b))
+    _write_edges([{"src": lo, "dst": hi, "kind": "conflicts_with", "weight": 0.9,
+                   "directed": 0, "meta": {}}], tmp_db)
+    assert "error" not in resolve_conflict(winner_id=b, loser_id=a, db_path=tmp_db)
+    loser = get_memory(a, db_path=tmp_db)
+    assert loser.status == "archived" and loser.valid_to and loser.invalidated_by == b
+
+
+def test_archiving_twice_writes_one_audit_row(tmp_db):
+    mid = _mem(tmp_db, "a note")
+    assert archive_memory_audited(mid, actor="mcp", db_path=tmp_db)
+    assert archive_memory_audited(mid, actor="mcp", db_path=tmp_db)
+    assert len([r for r in _audit_rows(tmp_db, mid) if r["action"] == "archive"]) == 1

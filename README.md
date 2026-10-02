@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-3.1.0-ffd98a?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-3.2.0-ffd98a?style=flat-square" />
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-15%20core%20%C2%B7%2035-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
@@ -131,8 +131,8 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
 ## What's new in MemoryBrain 3
 
 Version 3 rebuilt how the brain stores, finds, trusts and learns, and 3.1
-lets you watch it do so. Releases: **3.1.0** (the Atlas) and **3.0.0** (the
-engine). [CHANGELOG.md](CHANGELOG.md) has every detail, breaking changes
+lets you watch it do so. Releases: **3.2.0** (a key that covers MCP, secrets
+scrubbed, safer upgrades), **3.1.0** (the Atlas) and **3.0.0** (the engine). [CHANGELOG.md](CHANGELOG.md) has every detail, breaking changes
 first. Upgrading takes about 15 minutes with
 [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md).
 
@@ -270,7 +270,7 @@ See [`.env.example`](.env.example). Highlights:
 
 | Ref | Meaning |
 |-----|---------|
-| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.1.0) |
+| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.2.0) |
 | Tags `v3.x.x` | Releases |
 | Old feature branches | Fully merged and removed; do not checkout `feature/memorybrain-2.0` |
 

@@ -3,9 +3,12 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
-## Unreleased
+## 3.2.0 (2026-10-02)
 
-Fixes from the review of 3.0.0 and 3.1.0.
+Fixes from a full review of 3.0.0 and 3.1.0: a key that now covers MCP,
+secrets scrubbed from what was already stored, safer upgrades and
+migrations, and many smaller repairs. Upgrade with `brain upgrade`; read
+"From 3.1 to 3.2" in [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md) first.
 
 ### Breaking changes
 
@@ -58,6 +61,37 @@ Fixes from the review of 3.0.0 and 3.1.0.
 - An Atlas content edit marks the memory for re-embedding until its new
   vector is written, so an interrupted edit never leaves the old vector
   passing as current.
+- Search hits and `get_memory` carry `trust` and `writer`.
+- Summary, importance and embedding run side by side: a slow or hung model
+  costs the slowest call, not the sum of three.
+- A request whose `Origin` is a foreign site (or `null`) gets 403 on every
+  door. The hooks and the CLI send no Origin; Atlas sends its own.
+- The Obsidian import skips links that lead out of the import folder, and
+  front matter can no longer make a fact or a decision or set importance.
+- An Atlas edit meets the limits a write meets (type size caps, tag caps,
+  422) and cannot make a second copy of another memory's text (409). Tag
+  edits no longer inflate tag counts.
+- `as_of` is read once, in UTC, by search and the timeline alike. `20260930`
+  and `2026-09-30` both mean the end of that day. REST `/timeline` takes
+  `as_of`, and a bad one is an error there too.
+- A resolved contradiction closes the loser's validity window, so `as_of`
+  still finds it on the days it was current.
+- A rule the user rejected cannot be proposed again. The next-session note is
+  no longer also listed as an open loop. With the judge on, a pair it cleared
+  is not sent to it again every night. Only one process can hold the sleep
+  marker at a time.
+- The brief says when its task hits are keyword only.
+- The hooks skip a Python that does not run (the Windows Store alias), keep
+  MEMORY.md's line endings, cut a long folder slug the same way, refuse a URL
+  that only starts like localhost, and report a `/readiness` that gives no
+  usable answer.
+- Migration backups: a crash loop keeps two copies of its own migration and
+  never rotates out older ones; a copy cut off by a hard kill is cleaned up.
+- The scanner strips URL credentials up to the last `@` before the host.
+- A hard delete leaves no row pointing at the deleted memory, and its audit
+  row names the rows it had closed. Archiving an archived memory writes no
+  second audit row. The unused `auth.py` is gone.
+- The hygiene check warns when it loaded no private patterns.
 - `brain upgrade` counts a stopped brain from a copy of its volume, so rows
   still in a WAL left by a crash are counted (immutable=1 missed them and
   weakened the "count fell" check). The backup is opened and must hold a

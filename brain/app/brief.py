@@ -351,10 +351,12 @@ async def build_project_brief(
     intent_hits: list[dict[str, Any]] = []
     if intent and intent.strip():
         try:
-            from .search import hybrid_search
-            hits = await hybrid_search(
+            from .search import search_with_status
+            hits, degraded = await search_with_status(
                 intent.strip(), limit=5, project=project, db_path=db_path
             )
+            if degraded:
+                warnings.append(f"intent hits are keyword only ({degraded})")
             intent_hits = [
                 {
                     "id": h.get("id"),

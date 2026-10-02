@@ -2,13 +2,13 @@
 
 **Purpose:** move a running MemoryBrain (2.5 or any 3.x) to the newest 3.x release without losing a memory.
 **Audience:** you at a terminal, or an AI assistant. For an AI, paste [Prompt 3](AI_INSTALL_PROMPTS.md#prompt-3-upgrade-an-existing-install-to-3x): it holds these steps plus the rules an AI must keep.
-**Done when:** the running brain reports the new version, `/readiness` says `"ready": true`, and the count printed after the upgrade equals the count before it.
+**Done when:** the running brain reports the new version, `/readiness` says `"ready": true`, and the count printed after the upgrade is at least the count before it.
 **Last verified:** 2026-10-01, on a real 3.0.0 to 3.1.0 upgrade.
 **Time:** 10 to 15 minutes. From 2.x, a background re-embed follows (about a minute per 25 memories). Search keeps working while it runs.
 **You need:** Docker running, Git, Python 3 on the host, and the folder of your live install.
 **Out of scope:** first installs ([GETTING_STARTED.md](GETTING_STARTED.md)), upgrades from 0.5.x ([MIGRATION.md](../MIGRATION.md) first).
 
-One command does the work: `python3 cli/brain.py upgrade`. It refuses every unsafe state, backs the data volume up before it touches anything, and counts your memories before and after. Most of the time below is reading its output.
+One command does the work: `python3 cli/brain.py upgrade`. It refuses the unsafe states listed in step 2, backs the data volume up before it touches anything, and counts your memories before and after. Most of the time below is reading its output.
 
 The examples use `~/memorybrain` for the install folder and `~/memorybrain-backups` for backups. Use your own names. On Windows, run the commands in PowerShell, use `python` where this says `python3`, and `curl.exe` where it says `curl`.
 
@@ -85,7 +85,20 @@ docker compose build brain
 docker compose up -d
 ```
 
-**Expect:** the `.tar.gz` in `~/memorybrain-backups` is not tiny (several hundred KB or more). Check it before `docker compose build`.
+PowerShell:
+
+```powershell
+cd ~\memorybrain
+New-Item -ItemType Directory -Force "$HOME\memorybrain-backups" | Out-Null
+docker compose stop brain
+$stamp = Get-Date -Format yyyyMMdd-HHmm
+docker run --rm -v memorybrain_brain_data:/data:ro -v "$HOME\memorybrain-backups:/backup" alpine tar czf "/backup/brain-backup-$stamp.tar.gz" -C /data .
+Copy-Item .env "$HOME\memorybrain-backups\env-backup-$stamp"
+docker compose build brain
+docker compose up -d
+```
+
+**Expect:** the `.tar.gz` in `~/memorybrain-backups` is not tiny (several hundred KB or more), and `tar tzf <file>` lists `./brain.db`. Check it before `docker compose build`. (`brain upgrade` checks both for you.)
 
 ## 3. Verify
 
@@ -135,13 +148,39 @@ Merge any `SKILL.md.new` soon: a kept skill may call a tool the core profile hid
 | `No .env in …` | Is this the new clone? | Copy `.env` from the old folder |
 | `Your .env sets … but not MEMORYBRAIN_PROVIDER` | Which provider your brain really uses | Add `MEMORYBRAIN_PROVIDER=gemini`, `openai` or `ollama` to `.env`, run again |
 | `No volume memorybrain_brain_data …` | `docker compose ls --all`, `docker volume ls` | Run from the folder whose name owns the volume, or set `COMPOSE_PROJECT_NAME` |
+| `could not count memories: …` | Is Docker running? Is the volume readable? | Fix what the message names, run again. Nothing was stopped |
+| `Failed while stopping the brain` | `docker compose ps` | Fix it, run again. Nothing was backed up or changed |
+| `Failed while backing up the volume` | Can Docker write to the backup folder? | Fix the path or permissions, `docker compose start brain`, run again |
 | `The backup did not reach …` | Is Docker running, and can it see the backup folder? | Fix the path, `docker compose start brain`, run again |
+| `The backup … has no brain.db in it` (or an empty or unreadable one) | `tar tzf` the file it names | Do not rebuild. `docker compose start brain`, find out why the volume holds no database, run again |
 | `Failed while building the new image` | `docker compose build brain` output | Fix it, then `docker compose up -d brain` starts the old image again |
+| `Failed while starting the brain` | `docker compose logs brain` | Fix it, then `docker compose up -d brain`. The backup it names is your way back |
 | `Memory count fell from …` | Nothing else. Stop here | Rollback, below |
 | `running but not ready` | `curl -s localhost:7741/readiness` | Usually `docker compose exec ollama ollama pull embeddinggemma` |
 | The Constellation shows 2D only | Is WebGL on in this browser? | After a graphics reset, Chrome can block 3D until the browser restarts. Restart it |
 
+## From 3.1 to 3.2
+
+- **The first start scrubs stored secrets.** Secrets written before 3.0 are redacted once, after a copy of the database lands in `/app/data/backups/` inside the volume (only when something changes). The brain log names the rows' tables and the copy: `docker compose logs brain | grep "Redaction scan"`.
+- **A key now covers MCP.** With `BRAIN_API_KEY` set, `/sse`, `/messages/` and `/mcp` need it. Register Claude Code again with the key header and add it to other HTTP clients ([GETTING_STARTED.md](GETTING_STARTED.md#optional-api-key)). No key set: nothing changes.
+- **The hooks find the key themselves.** `brain upgrade` reinstalls them and records the install folder beside them, so they read `BRAIN_API_KEY` from its `.env`.
+
 ## Rollback
+
+### The code, between two 3.x releases
+
+There is no old folder to go back to. In the live folder, find the commit of the release you came from and run it detached:
+
+```bash
+cd ~/memorybrain
+git log --oneline -15
+git switch --detach <commit of the previous release>
+docker compose up -d --build brain
+```
+
+Your memories stay as they are. Go back to the newest release later with `git switch master`, then `python3 cli/brain.py upgrade`. Restore the data as well (below) only if the count fell.
+
+### The data
 
 From the new folder, stop the brain, then put the backup back. The first command removes the new database files so a newer WAL file cannot be replayed onto the older copy:
 
