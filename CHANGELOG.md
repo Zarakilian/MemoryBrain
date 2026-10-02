@@ -58,6 +58,12 @@ Fixes from the review of 3.0.0 and 3.1.0.
 - An Atlas content edit marks the memory for re-embedding until its new
   vector is written, so an interrupted edit never leaves the old vector
   passing as current.
+- `brain upgrade` counts a stopped brain from a copy of its volume, so rows
+  still in a WAL left by a crash are counted (immutable=1 missed them and
+  weakened the "count fell" check). The backup is opened and must hold a
+  `brain.db` before anything is rebuilt, not just be a non-empty file.
+- A migration that contains its own BEGIN, COMMIT or ROLLBACK is refused
+  before any of it runs (it used to commit its first half first).
 
 ## 3.1.0 (2026-10-01)
 

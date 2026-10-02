@@ -109,16 +109,30 @@ def test_setup_and_update_share_the_install_map():
 
 # ------------------------------------------------------------- brain upgrade
 
+def _write_backup(path: Path, members) -> None:
+    """A real tar.gz, as the tar container writes it."""
+    import io
+    import tarfile
+    with tarfile.open(path, "w:gz") as tar:
+        for name in members:
+            data = b"SQLite format 3" + bytes(1) + b"x" * 100
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+
+
 class FakeRun:
     """subprocess.run stand-in: records every command and answers the few
     that brain upgrade reads (root commit, compose project, volume, counts)."""
 
     def __init__(self, root_subject="MemoryBrain 2.5.0: application only, clean start",
-                 counts=(120, 120), volume_exists=True, backup_written=True, fail_on=None):
+                 counts=(120, 120), volume_exists=True, backup_written=True, fail_on=None,
+                 backup_members=("./brain.db",)):
         self.root_subject = root_subject
         self.counts = list(counts)
         self.volume_exists = volume_exists
         self.backup_written = backup_written
+        self.backup_members = backup_members
         self.fail_on = fail_on
         self.calls: list[list[str]] = []
 
@@ -137,7 +151,7 @@ class FakeRun:
             # the tar container writes through the bind mount onto the host
             host_dir = next(a for a in cmd if a.endswith(":/backup"))[:-len(":/backup")]
             name = cmd[cmd.index("czf") + 1].split("/backup/", 1)[1]
-            (Path(host_dir) / name).write_bytes(b"backup")
+            _write_backup(Path(host_dir) / name, self.backup_members)
         if self.fail_on and self.fail_on in " ".join(cmd):
             code = 1
         return subprocess.CompletedProcess(cmd, code, stdout=text, stderr="")
@@ -322,7 +336,44 @@ def test_a_stopped_brain_is_counted_from_the_volume_read_only(tmp_path):
     assert _upgrade(tmp_path, fake) == 0
     counts = [" ".join(c) for c in fake.calls if "SELECT COUNT(*) FROM memories" in " ".join(c)]
     assert counts[0].startswith("docker compose exec")       # tried the running brain first
-    assert ":ro" in counts[1] and "immutable=1" in counts[1]   # a stopped WAL brain has no -shm
+    # a stopped WAL brain is copied out of the read-only volume and opened
+    # normally, so its WAL replays; immutable=1 would ignore it
+    assert ":ro" in counts[1] and "immutable" not in counts[1]
+
+
+def test_the_stopped_brain_count_replays_the_wal(tmp_path):
+    """A brain killed with rows still in its -wal: the count must include them."""
+    import os
+    import sqlite3
+    live = tmp_path / "live"
+    live.mkdir()
+    conn = sqlite3.connect(live / "brain.db")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute("CREATE TABLE memories (id INTEGER PRIMARY KEY)")
+    conn.executemany("INSERT INTO memories VALUES (NULL)", [()] * 10)
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    conn.executemany("INSERT INTO memories VALUES (NULL)", [()] * 5)
+    conn.commit()
+    volume = tmp_path / "volume"     # what a kill leaves: the db and its -wal, no -shm
+    volume.mkdir()
+    for name in ("brain.db", "brain.db-wal"):
+        (volume / name).write_bytes((live / name).read_bytes())
+    conn.close()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    code = cli.stopped_count_script(str(volume), str(scratch))
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+    assert r.stdout.strip() == "15", r.stderr
+    assert not (volume / "brain.db-shm").exists()   # the volume itself is never written
+
+
+def test_upgrade_stops_when_the_backup_holds_no_brain(tmp_path, capsys):
+    fake = FakeRun(backup_members=("./notes.txt",))
+    assert _upgrade(tmp_path, fake) == 1
+    assert "has no brain.db" in capsys.readouterr().out
+    assert not any("compose build" in c for c in _joined(fake))
 
 
 

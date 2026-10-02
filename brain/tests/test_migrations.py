@@ -305,3 +305,31 @@ def test_migration_011_repairs_2x_rows(tmp_path):
         chars = conn.execute("SELECT max_brief_chars FROM project_policy").fetchone()[0]
     assert old_valid_to == "2026-05-01T00:00:00+00:00"
     assert new_strength == 1.0 and chars == 6000
+
+
+def test_a_migration_that_manages_its_transaction_is_refused_before_it_runs(tmp_path):
+    """A COMMIT mid-file used to commit the first half before the runner
+    noticed, and the next start crash-looped on the half it left."""
+    db = tmp_path / "brain.db"
+    _make_minimal_db(db)
+    migs = _mig_dir(tmp_path, {"001_half.sql": (
+        "CREATE TABLE half (x INTEGER);\nCOMMIT;\nBEGIN;\nINSERT INTO nope VALUES (1);\n")})
+    with pytest.raises(RuntimeError, match="transaction"):
+        run_migrations(db_path=db, migrations_dir=migs)
+    with sqlite3.connect(db) as conn:
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
+    assert "half" not in names
+
+
+def test_a_trigger_body_and_comments_are_not_transaction_statements(tmp_path):
+    db = tmp_path / "brain.db"
+    _make_minimal_db(db)
+    migs = _mig_dir(tmp_path, {"001_trigger.sql": (
+        "-- COMMIT; in a comment is fine\n"
+        "CREATE TABLE log (msg TEXT DEFAULT 'BEGIN; COMMIT;');\n"
+        "CREATE TRIGGER t1 AFTER INSERT ON log BEGIN\n"
+        "  INSERT INTO log (msg) SELECT 'x' WHERE 0;\n"
+        "END;\n")})
+    run_migrations(db_path=db, migrations_dir=migs)
+    with sqlite3.connect(db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 't1'").fetchone()[0] == 1

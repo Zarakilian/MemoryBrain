@@ -669,6 +669,36 @@ _COUNT_SQL = ("import sqlite3; print(sqlite3.connect('file:{db}?mode=ro{extra}',
               ".execute('SELECT COUNT(*) FROM memories').fetchone()[0])")
 
 
+def stopped_count_script(src: str = "/data", scratch: str = "/tmp") -> str:
+    """Python that counts a stopped brain's memories exactly. The volume is
+    mounted read-only, so the database and its -wal are copied to scratch
+    first and opened normally there, which replays the WAL. (immutable=1
+    would read the main file alone and miss every row still in the -wal.)"""
+    return "\n".join([
+        "import glob, os, shutil, sqlite3",
+        f"src, dst = {src!r}, {scratch!r}",
+        "for p in glob.glob(os.path.join(src, 'brain.db*')):",
+        "    shutil.copy(p, dst)",
+        "c = sqlite3.connect(os.path.join(dst, 'brain.db'))",
+        "print(c.execute('SELECT COUNT(*) FROM memories').fetchone()[0])",
+    ])
+
+
+def backup_problem(archive: Path):
+    """Why a backup archive cannot be trusted, or None when it holds a brain."""
+    import tarfile
+    if not archive.is_file() or archive.stat().st_size == 0:
+        return "missing"
+    try:
+        with tarfile.open(archive, "r:gz") as tar:
+            for member in tar:
+                if member.name in ("./brain.db", "brain.db"):
+                    return None if member.size > 0 else "an empty brain.db"
+    except (tarfile.TarError, OSError, EOFError) as e:
+        return f"unreadable ({e.__class__.__name__})"
+    return "no brain.db"
+
+
 def _compose_project(repo: Path, run) -> str:
     """The compose project name, which prefixes the brain's volume name."""
     r = run(["docker", "compose", "config", "--format", "json"], cwd=repo,
@@ -734,9 +764,8 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
                     "from the folder of your live install (or set COMPOSE_PROJECT_NAME), so the "
                     "upgrade cannot start an empty brain next to your real one.")
     # Count through the running brain when it is up: it holds the WAL. A stopped
-    # brain is read from its volume instead; with no -shm file, which a read-only
-    # mount cannot create, a WAL database only opens as immutable (exact, since
-    # nothing is writing).
+    # brain is read from a copy of its volume, so a WAL left by a crash or a
+    # kill is replayed and counted.
     try:
         before = _count_memories(["docker", "compose", "exec", "-T", "brain", "python", "-c",
                                   _COUNT_SQL.format(db="/app/data/brain.db", extra="")],
@@ -745,8 +774,7 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
         try:
             before = _count_memories(["docker", "run", "--rm", "--entrypoint", "python",
                                       "-v", f"{volume}:/data:ro", image, "-c",
-                                      _COUNT_SQL.format(db="/data/brain.db",
-                                                        extra="&immutable=1")], run)
+                                      stopped_count_script()], run)
         except RuntimeError as e:
             return fail(str(e))
     print(f"✅ {before} memories in {volume}")
@@ -778,9 +806,13 @@ def cmd_upgrade(repo: Path = MEMORYBRAIN_DIR, backup_dir: Path = None, run=subpr
         if what == "backing up the volume":
             # tar can exit 0 while writing inside the Docker VM instead of onto this
             # machine (a path the engine cannot see, another WSL distro, a remote context)
-            if not archive.is_file() or archive.stat().st_size == 0:
+            problem = backup_problem(archive)
+            if problem == "missing":
                 return fail(f"The backup did not reach {archive} on this machine, so nothing "
                             f"was rebuilt.{restart[what]}")
+            if problem:
+                return fail(f"The backup {archive} has {problem} in it, so nothing was "
+                            f"rebuilt.{restart[what]}")
             print(f"✅ Backup: {archive}")
 
     # 4. Wait for readiness, then prove nothing was lost (count even if never ready).

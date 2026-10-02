@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,34 @@ BACKUP_KEEP = 5
 
 def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+_SQL_NOISE = re.compile(r"--[^\n]*|/\*.*?\*/|'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"", re.S)
+_TXN_WORDS = {"BEGIN", "COMMIT", "END", "ROLLBACK", "SAVEPOINT", "RELEASE"}
+
+
+def transaction_statements(sql: str) -> list[str]:
+    """The statements in a migration that would open or end a transaction.
+    Comments, quoted text and the BEGIN ... END of a trigger body do not count.
+    Checked before a file runs: executescript would already have committed
+    whatever came before a COMMIT."""
+    found, in_trigger = [], False
+    for stmt in _SQL_NOISE.sub(" ", sql).split(";"):
+        words = stmt.split()
+        if not words:
+            continue
+        first = words[0].upper()
+        if in_trigger:
+            if first == "END" and len(words) == 1:
+                in_trigger = False
+            continue
+        upper = [w.upper() for w in words]
+        if first == "CREATE" and "TRIGGER" in upper[:4] and "BEGIN" in upper:
+            in_trigger = True
+            continue
+        if first in _TXN_WORDS:
+            found.append(" ".join(words[:2]))
+    return found
 
 
 def _is_existing_brain(conn: sqlite3.Connection, applied: set[str]) -> bool:
@@ -78,6 +107,12 @@ def run_migrations(db_path: Path, migrations_dir: Path = MIGRATIONS_DIR) -> None
                    if mf.name not in applied]
         if not pending:
             return
+        for mf in pending:
+            bad = transaction_statements(mf.read_text(encoding="utf-8"))
+            if bad:
+                raise RuntimeError(
+                    f"{mf.name} manages its own transaction ({', '.join(bad)}). "
+                    "Migrations must not manage transactions; the runner does. Nothing was run.")
         if _is_existing_brain(conn, applied):
             _backup(conn, db_path, pending[0].stem)
 
