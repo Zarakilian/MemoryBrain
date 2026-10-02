@@ -422,3 +422,21 @@ async def test_the_judge_reads_the_content_when_a_summary_is_empty(tmp_db, model
     model.answers = ["NO"]
     await cons.consolidate(project="acme", mode="light", db_path=tmp_db)
     assert "port 8080" in model.prompts[0] and "port 9090" in model.prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_the_judge_is_not_asked_again_about_a_pair_it_cleared(tmp_db, model, monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_JUDGE", "on")
+    _two_facts_at(tmp_db, 0.90)
+    model.answers = ["NO", "NO"]
+    await cons.consolidate(project="acme", mode="light", db_path=tmp_db)
+    asked = len(model.prompts)
+    await cons.consolidate(project="acme", mode="light", db_path=tmp_db)
+    assert asked == 1 and len(model.prompts) == 1      # the second night asks nothing
+
+
+def test_only_one_process_can_hold_the_sleep_marker(tmp_db):
+    assert cons._claim_marker(tmp_db) is True
+    assert cons._claim_marker(tmp_db) is False         # another process got there first
+    cons._release_marker(tmp_db)
+    assert cons._claim_marker(tmp_db) is True

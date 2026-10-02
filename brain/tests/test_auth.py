@@ -1,11 +1,8 @@
 """Tests for API key authentication (A1).
 
 The gate is `PureASGIAuthMiddleware` in app/main.py, which calls
-`os.getenv("BRAIN_API_KEY")` on every request. It never reads the
-`app.auth._API_KEY` module global — that is an import-time snapshot belonging to
-the `require_api_key` helper, which is not wired to any route. So these tests
-drive the environment variable, not the global; assigning the global simulates
-nothing and lets a real middleware regression through.
+`os.getenv("BRAIN_API_KEY")` on every request, so these tests drive the
+environment variable.
 """
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient

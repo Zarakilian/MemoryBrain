@@ -199,7 +199,7 @@ def test_pages_carry_build_stamp(ui_client):
 
 def test_ui_bypasses_api_key_auth(ui_client, monkeypatch):
     # PureASGIAuthMiddleware (app/main.py) reads BRAIN_API_KEY from the
-    # environment on every request; it never reads app.auth._API_KEY.
+    # environment on every request.
     monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
     assert ui_client.get("/ui").status_code == 200
     assert ui_client.get("/ui/doctor").status_code == 200

@@ -99,3 +99,12 @@ def test_a_rule_is_redacted_before_it_is_stored(tmp_db):
     stored = get_memory(rule["id"], db_path=tmp_db)
     assert token not in stored.summary and token not in stored.content
     assert "[REDACTED:github-token]" in stored.summary
+
+
+def test_a_rule_the_user_rejected_is_not_proposed_again(tmp_db):
+    from app.procedures import proposed_procedures, record_correction, reject_procedure
+    first = record_correction("Use tabs, not spaces", evidence="use tabs", db_path=tmp_db)
+    assert reject_procedure(first["id"], actor="ui", db_path=tmp_db)
+    again = record_correction("Use tabs, not spaces", evidence="use tabs", db_path=tmp_db)
+    assert again["duplicate"] is True and again.get("rejected") is True
+    assert proposed_procedures(db_path=tmp_db) == []

@@ -8,6 +8,7 @@ from ..db import connect
 
 MIGRATIONS_DIR = Path(__file__).parent
 BACKUP_KEEP = 5
+SAME_STEM_KEEP = 2
 
 
 def _utc_stamp() -> str:
@@ -58,6 +59,8 @@ def _backup(conn: sqlite3.Connection, db_path: Path, stem: str) -> Path:
     the same second gets a -2, -3 suffix instead of failing."""
     folder = Path(db_path).parent / "backups"
     folder.mkdir(parents=True, exist_ok=True)
+    for stale in folder.glob("brain-pre-*.db.tmp"):     # a copy cut off by a hard kill
+        stale.unlink(missing_ok=True)
     base = f"brain-pre-{stem}-{_utc_stamp()}"
     target = folder / f"{base}.db"
     n = 1
@@ -71,8 +74,14 @@ def _backup(conn: sqlite3.Connection, db_path: Path, stem: str) -> Path:
     finally:
         if tmp.exists():
             tmp.unlink()
-    copies = sorted((p for p in folder.glob("brain-pre-*.db") if p != target),
-                    key=lambda p: (p.stat().st_mtime, p.name))
+    def by_age(p: Path):
+        return (p.stat().st_mtime, p.name)
+    # A crash loop takes a copy on every start, all of the same brain: keep the
+    # newest two per migration, so they never push out older generations.
+    same = sorted((p for p in folder.glob(f"brain-pre-{stem}-*.db") if p != target), key=by_age)
+    for old in same[:max(0, len(same) - (SAME_STEM_KEEP - 1))]:
+        old.unlink()
+    copies = sorted((p for p in folder.glob("brain-pre-*.db") if p != target), key=by_age)
     for old in copies[:max(0, len(copies) - (BACKUP_KEEP - 1))]:
         old.unlink()
     return target

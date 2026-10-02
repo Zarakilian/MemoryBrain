@@ -261,6 +261,16 @@ def _bump_tag_stats(tags: list[str], db_path: Path):
         conn.commit()
 
 
+def drop_tag_stats(tags: list[str], db_path: Path) -> None:
+    """Undo _bump_tag_stats for a memory whose tags are about to be recounted."""
+    if not tags:
+        return
+    with _conn(db_path) as conn:
+        for t in set(tags):
+            conn.execute("UPDATE tag_stats SET df = MAX(df - 1, 0) WHERE tag = ?", (t,))
+        conn.commit()
+
+
 # ---------------------------------------------------------------- public API
 
 def _link_workspace_files(entry, db_path: Path) -> None:

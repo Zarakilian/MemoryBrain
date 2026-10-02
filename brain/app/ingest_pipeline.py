@@ -238,11 +238,12 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
         existing.chunks = count_chunks(existing.id, db_path=DB_PATH)
         return existing
 
-    await _ensure_summary(entry, warnings)
-    await _ensure_importance(entry)
-
+    # None of the three model calls needs another, and none raises: run them
+    # side by side, so a slow model costs the slowest call, not the sum.
     chunks = chunk_text(entry.content)
-    model, parent, chunk_vectors = await _embed(entry, chunks, warnings)
+    _, _, (model, parent, chunk_vectors) = await asyncio.gather(
+        _ensure_summary(entry, warnings), _ensure_importance(entry),
+        _embed(entry, chunks, warnings))
     entry.embedded = parent is not None
     # A proposal (a belief awaiting approval) never retires anything.
     superseded, potential = ([], []) if parent is None or entry.status != "active" else \

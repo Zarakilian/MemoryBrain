@@ -135,7 +135,6 @@ def _open_loops(project: str, limit: int, db_path: Path) -> list[dict[str, Any]]
                  AND (
                    type = 'open_loop'
                    OR tags LIKE '%open_loop%'
-                   OR tags LIKE '%next_session%'
                  )
                ORDER BY timestamp DESC
                LIMIT ?""",

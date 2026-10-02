@@ -19,7 +19,6 @@ from .ingestion.session import router as session_router
 from .ingestion.manual import router as manual_router
 from .storage import init_db, list_projects, get_next_session_note, DB_PATH
 from .db import connect
-from .auth import require_api_key
 from .models import ValidationError
 from .security import HostCheckMiddleware, WriteGuardMiddleware, mcp_transport_security
 from .summarise import (_get_ollama_client, _get_embed_model, _get_summarise_model,
@@ -735,10 +734,14 @@ async def retrieval_log(limit: int = 500):
 
 
 @app.get("/timeline")
-async def timeline_endpoint(project: str = "", days: int = 30, limit: int = 100):
+async def timeline_endpoint(project: str = "", days: int = 30, limit: int = 100,
+                            as_of: str = ""):
     from .timeline import get_timeline
-    return get_timeline(project=project or None, days=days, limit=limit,
-                        db_path=DB_PATH)
+    try:
+        return get_timeline(project=project or None, days=days, limit=limit,
+                            as_of=as_of or None, db_path=DB_PATH)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
 
 
 @app.get("/entities")

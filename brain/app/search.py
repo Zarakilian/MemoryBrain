@@ -134,12 +134,14 @@ def _valid_at(row, as_of: datetime) -> bool:
 def _as_of_moment(as_of: str) -> Optional[datetime]:
     """An ISO datetime, or a bare date meaning the end of that day (UTC).
     Anything else is a ValueError: a typo must not quietly mean "now"."""
-    moment = _parse_time(as_of)
+    text = (as_of or "").strip()
+    moment = _parse_time(text)
     if moment is None:
         raise ValueError(f"as_of must be an ISO date or datetime (2026-09-30), got {as_of!r}")
-    if moment is not None and len(as_of.strip()) == 10:
+    if "T" not in text.upper() and " " not in text:      # 2026-09-30 or 20260930
         moment = moment.replace(hour=23, minute=59, second=59, microsecond=999999)
-    return moment
+    # stored times are UTC: compare in UTC (the timeline compares them as text)
+    return moment.astimezone(timezone.utc)
 
 
 def _rows(ids: list[str], db_path) -> dict:
@@ -148,7 +150,7 @@ def _rows(ids: list[str], db_path) -> dict:
     with _connect(db_path) as conn:
         rows = conn.execute(
             f"""SELECT m.id, m.summary, m.content, m.type, m.project, m.source, m.importance,
-                       m.timestamp, m.status, m.valid_from, m.valid_to, m.strength,
+                       m.timestamp, m.status, m.valid_from, m.valid_to, m.strength, m.trust, m.writer,
                        m.last_recalled,
                        EXISTS (SELECT 1 FROM project_pins p WHERE p.memory_id = m.id) AS pinned
                 FROM memories m WHERE m.id IN ({','.join('?' * len(ids))})""", ids).fetchall()
@@ -293,7 +295,7 @@ async def search_with_status(
             "id": i, "summary": row["summary"], "content_preview": row["content"][:200],
             "type": row["type"], "project": row["project"], "source": row["source"],
             "importance": row["importance"], "timestamp": row["timestamp"],
-            "status": row["status"],
+            "status": row["status"], "trust": row["trust"], "writer": row["writer"],
             "excerpt": " ".join(excerpt.split())[:EXCERPT_CHARS],
             "matched": "both" if (i in kw_rank and i in sem_rank)
                        else ("keyword" if i in kw_rank else "semantic"),

@@ -333,3 +333,30 @@ def test_a_trigger_body_and_comments_are_not_transaction_statements(tmp_path):
     run_migrations(db_path=db, migrations_dir=migs)
     with sqlite3.connect(db) as conn:
         assert conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 't1'").fetchone()[0] == 1
+
+
+def test_a_crash_loop_never_rotates_out_the_backups_of_earlier_migrations(tmp_path):
+    """Every failed start of the same migration takes a copy. Those copies are
+    all the same brain, so they must not push out the older generations."""
+    db = tmp_path / "brain.db"
+    _make_minimal_db(db)
+    migs = _mig_dir(tmp_path, {"001_first.sql": "CREATE TABLE a (x INTEGER);\n"})
+    run_migrations(db_path=db, migrations_dir=migs)
+    bdir = db.parent / "backups"
+    bdir.mkdir(exist_ok=True)
+    older = []
+    for i in range(3):
+        p = bdir / f"brain-pre-000_old{i}-20260101T00000{i}Z.db"
+        p.write_bytes(b"old")
+        stamp = time.time() - 3600 + i * 60
+        os.utime(p, (stamp, stamp))
+        older.append(p)
+    (bdir / "brain-pre-002_bad-20260101T000000Z.db.tmp").write_bytes(b"half")
+    (migs / "002_bad.sql").write_text("INSERT INTO nope VALUES (1);\n", encoding="utf-8")
+    for _ in range(8):
+        with pytest.raises(sqlite3.OperationalError):
+            run_migrations(db_path=db, migrations_dir=migs)
+    left = _backups(db)
+    assert all(p.exists() for p in older)
+    assert len([p for p in left if p.name.startswith("brain-pre-002_bad-")]) == 2
+    assert not list(bdir.glob("*.tmp"))

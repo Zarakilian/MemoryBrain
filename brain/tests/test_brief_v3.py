@@ -229,3 +229,50 @@ async def test_only_beliefs_the_brain_derived_reach_the_brief(tmp_db):
                 writer="consolidation")
     ids = [b["id"] for b in (await build_project_brief("acme", db_path=tmp_db))["beliefs"]]
     assert real in ids and planted not in ids
+
+
+# ------------------------------------------------------------- as_of, one way everywhere
+
+def test_as_of_with_an_offset_means_the_same_moment_in_search_and_timeline(tmp_db):
+    """A fact written at 09:00Z did not exist at 10:00+02:00 (08:00Z)."""
+    from datetime import datetime, timezone
+    from app.models import MemoryEntry
+    from app.storage import add_memory
+    from app.timeline import get_timeline
+    entry = MemoryEntry(content="The port is 7741.", type="fact", project="acme",
+                        timestamp=datetime(2026, 9, 30, 9, 0, tzinfo=timezone.utc))
+    add_memory(entry, db_path=tmp_db)
+    before = get_timeline(project="acme", as_of="2026-09-30T10:00:00+02:00", db_path=tmp_db)
+    after = get_timeline(project="acme", as_of="2026-09-30T12:00:00+02:00", db_path=tmp_db)
+    ids = lambda t: [e["id"] for e in (t["events"] if isinstance(t, dict) else t)]
+    assert entry.id not in ids(before) and entry.id in ids(after)
+
+
+def test_as_of_dates_mean_the_end_of_the_day_in_either_spelling():
+    from app.search import _as_of_moment
+    assert _as_of_moment("20260930") == _as_of_moment("2026-09-30")
+    assert _as_of_moment(" 2026-09-30 ") == _as_of_moment("2026-09-30")
+    assert _as_of_moment("2026-09-30T10:00:00+02:00").utcoffset().total_seconds() == 0
+
+
+@pytest.mark.asyncio
+async def test_a_bad_as_of_is_an_error_on_the_timeline_too(tmp_db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.mcp.tools import handle_get_timeline
+    monkeypatch.setattr("app.mcp.tools.DB_PATH", tmp_db)
+    monkeypatch.setattr("app.main.DB_PATH", tmp_db)
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    assert "error" in json.loads(await handle_get_timeline(as_of="last tuesday"))
+    client = TestClient(app, base_url="http://localhost:7741")
+    assert client.get("/timeline", params={"as_of": "last tuesday"}).status_code == 422
+    assert client.get("/timeline", params={"as_of": "2026-09-30"}).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_the_next_session_note_is_not_also_an_open_loop(tmp_db):
+    entry = MemoryEntry(content="Start with the runner check.", type="note", project="acme",
+                        tags=["next_session"])
+    add_memory(entry, db_path=tmp_db)
+    brief = await build_project_brief("acme", db_path=tmp_db)
+    assert entry.id not in [x["id"] for x in brief.get("open_loops", [])]

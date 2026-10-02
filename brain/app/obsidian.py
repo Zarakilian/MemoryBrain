@@ -93,9 +93,9 @@ def export_project_markdown(
 
 MAX_IMPORT_FILE_BYTES = 1_048_576
 # Front matter may choose an ordinary type. It may not make a file look like
-# brain-made knowledge (belief, procedure) or claim a writer, trust or source.
-IMPORTABLE_TYPES = {"note", "fact", "session", "handover", "file", "reference",
-                    "decision", "open_loop"}
+# brain-made knowledge (belief, procedure), or a current truth the brief puts
+# first (fact, decision), or claim a writer, trust, source or importance.
+IMPORTABLE_TYPES = {"note", "session", "handover", "file", "reference", "open_loop"}
 
 
 def import_root() -> Path:
@@ -155,6 +155,12 @@ async def import_markdown_dir(
         if path.name.upper() == "INDEX.MD":
             continue
         try:
+            # a link out of the folder (or to /proc, whose files report size 0)
+            # is not a note in the vault
+            real = path.resolve()
+            if (root not in real.parents) or not real.is_file() or path.is_symlink():
+                skipped.append(path.name)
+                continue
             if path.stat().st_size > MAX_IMPORT_FILE_BYTES:
                 too_large.append(path.name)
                 continue
@@ -188,8 +194,6 @@ async def import_markdown_dir(
             trust="imported",
             writer="obsidian-import",
         )
-        if meta.get("importance"):
-            entry.importance = int(meta["importance"])
         try:
             result = await ingest(entry)
             imported.append({"file": path.name, "id": result.id})

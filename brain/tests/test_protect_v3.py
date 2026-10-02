@@ -391,3 +391,89 @@ def test_an_edit_cut_off_before_its_reindex_still_queues_a_re_embed(
         conn.close()
     assert row["content"] == "the car is blue" and row["embedded"] == 0
     assert pending_count(db_path=tmp_db) >= 1
+
+
+@pytest.mark.asyncio
+async def test_search_hits_and_get_memory_say_who_wrote_them(tmp_db, fake_provider, monkeypatch):
+    """AGENTS.md: every item in a brief or search result carries trust and writer."""
+    from app.ingest_pipeline import ingest
+    from app.mcp.tools import handle_get_memory, handle_search_memory
+
+    monkeypatch.setattr("app.mcp.tools.DB_PATH", tmp_db)
+    monkeypatch.setattr("app.ingest_pipeline.DB_PATH", tmp_db)
+    monkeypatch.setattr("app.search.DB_PATH", tmp_db, raising=False)
+    mid = (await ingest(MemoryEntry(content="the invoice export runs nightly", type="note",
+                                    project="acme", writer="grok"))).id
+    hits = json.loads(await handle_search_memory("invoice export", project="acme"))
+    hits = hits["results"] if isinstance(hits, dict) else hits
+    hit = next(h for h in hits if h["id"] == mid)
+    assert hit["trust"] == "agent" and hit["writer"] == "grok"
+    got = json.loads(await handle_get_memory(mid))
+    assert got["trust"] == "agent" and got["writer"] == "grok"
+
+
+# ------------------------------------------------------------- Atlas edits (W8 rest)
+
+def _atlas(tmp_db, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.delenv("BRAIN_API_KEY", raising=False)
+    monkeypatch.setattr("app.ui.editor.DB_PATH", tmp_db)
+    return TestClient(app)
+
+
+def test_an_atlas_edit_meets_the_same_limits_as_a_write(tmp_db, fake_provider, monkeypatch):
+    client = _atlas(tmp_db, monkeypatch)
+    fact = _mem(tmp_db, "The port is 7741.", type_="fact")
+    other = _mem(tmp_db, "Something else entirely.")
+    patch = lambda body: client.patch(f"/api/ui/edit/memories/{fact}", json=body)
+    assert patch({"content": "x" * 5000}).status_code == 422          # a fact is short
+    assert patch({"tags": [f"t{i}" for i in range(21)]}).status_code == 422
+    assert patch({"tags": ["t" * 101]}).status_code == 422
+    assert patch({"content": "Something else entirely."}).status_code == 409
+    assert get_memory(fact, db_path=tmp_db).content == "The port is 7741."
+    assert patch({"content": "The port is 7742."}).status_code == 200
+
+
+def test_atlas_tag_edits_do_not_inflate_tag_counts(tmp_db, fake_provider, monkeypatch):
+    client = _atlas(tmp_db, monkeypatch)
+    a = _mem(tmp_db, "first note", tags=["alpha"], vector=[1.0, 0.0, 0.0, 0.0])
+    _mem(tmp_db, "second note", tags=["alpha"], vector=[0.9, 0.1, 0.0, 0.0])
+    rebuild_graph(tmp_db)
+    for tags in (["alpha", "beta"], ["alpha"], ["alpha", "gamma"]):
+        assert client.patch(f"/api/ui/edit/memories/{a}", json={"tags": tags}).status_code == 200
+    conn = connect(tmp_db)
+    try:
+        df = dict(conn.execute("SELECT tag, df FROM tag_stats").fetchall())
+    finally:
+        conn.close()
+    assert df["alpha"] == 2 and df.get("beta", 0) == 0 and df["gamma"] == 1
+
+
+def test_a_hard_delete_leaves_no_row_pointing_at_the_deleted_memory(tmp_db):
+    """Deleting the newer of two memories left the older one archived with
+    superseded_by naming a row that no longer exists."""
+    old = _mem(tmp_db, "The port is 7741.", type_="fact")
+    new = _mem(tmp_db, "The port is 7742.", type_="fact")
+    conn = connect(tmp_db)
+    try:
+        conn.execute("UPDATE memories SET status = 'archived', superseded_by = ?, "
+                     "invalidated_by = ?, valid_to = '2026-09-30T00:00:00+00:00' WHERE id = ?",
+                     (new, new, old))
+        conn.execute("UPDATE memories SET supersedes = ? WHERE id = ?", (old, new))
+        conn.commit()
+    finally:
+        conn.close()
+    assert hard_delete_memory(new, actor="ui", db_path=tmp_db)
+    left = get_memory(old, db_path=tmp_db)
+    assert left.superseded_by is None
+    conn = connect(tmp_db)
+    try:
+        dangling = conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE superseded_by = ? OR invalidated_by = ? "
+            "OR supersedes = ?", (new, new, new)).fetchone()[0]
+        detail = conn.execute("SELECT detail FROM memory_audit WHERE memory_id = ? AND "
+                              "action = 'hard_delete'", (new,)).fetchone()[0]
+    finally:
+        conn.close()
+    assert dangling == 0 and old in json.loads(detail)["had_superseded"]

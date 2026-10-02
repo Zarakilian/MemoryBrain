@@ -147,7 +147,7 @@ def test_next_session_without_a_project_returns_no_note(tmp_db):
 def test_readiness_is_public_when_auth_enabled(monkeypatch):
     """GET /readiness must work without API key even when auth is enabled."""
     # PureASGIAuthMiddleware (app/main.py) reads BRAIN_API_KEY from the
-    # environment on every request; it never reads app.auth._API_KEY.
+    # environment on every request.
     monkeypatch.setenv("BRAIN_API_KEY", "secret")
     resp = client.get("/readiness")
     assert resp.status_code == 200

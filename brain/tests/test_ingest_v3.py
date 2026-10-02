@@ -340,3 +340,34 @@ async def test_an_agent_write_never_retires_the_users_own_fact(ing_db, fake_prov
     assert result.superseded == []
     assert [p["id"] for p in result.potential_supersessions] == [mine]
     assert get_memory(mine, db_path=ing_db).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_the_summary_importance_and_embedding_calls_run_side_by_side(ing_db, fake_provider):
+    """O3: none of the three model calls needs another, so a slow model costs
+    the slowest call, not the sum of all three."""
+    import asyncio
+    import time
+
+    real_embed_many = fake_provider.embed_many
+
+    async def slow_summary(content, max_sentences=3):
+        await asyncio.sleep(0.6)
+        return "a summary"
+
+    async def slow_importance(content):
+        await asyncio.sleep(0.6)
+        return 4
+
+    async def slow_embed_many(texts):
+        await asyncio.sleep(0.6)
+        return await real_embed_many(texts)
+
+    fake_provider.summarise = slow_summary
+    fake_provider.score_importance = slow_importance
+    fake_provider.embed_many = slow_embed_many
+    start = time.monotonic()
+    result = await ingest(MemoryEntry(content="word " * 200, type="note", project="acme"))
+    took = time.monotonic() - start
+    assert result.summary == "a summary" and result.importance == 4 and result.embedded
+    assert took < 1.4, f"took {took:.2f}s"

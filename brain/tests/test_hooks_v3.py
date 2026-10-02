@@ -485,3 +485,56 @@ def test_an_empty_brief_with_a_note_does_not_claim_there_are_no_notes(tmp_path):
                         brief_body={"project": "acme", "truncated": []})
     assert "check the runner" in out
     assert "no stored notes" not in out
+
+
+# ------------------------------------------------- small hook bugs (28)
+
+@needs_bash
+def test_a_broken_python3_on_path_falls_back_to_python(tmp_path):
+    """The Windows Store alias answers to python3 and exits 9009."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = bin_dir / "python3"
+    stub.write_text("#!/usr/bin/env bash\nexit 9009\n", encoding="utf-8")
+    stub.chmod(0o755)
+    if shutil.which("python") is None:
+        pytest.skip("no python on PATH")
+    r, out = _keyed_run(tmp_path, _installed_hook(tmp_path), _project(tmp_path),
+                        {"BRAIN_API_KEY": KEY})
+    assert "KEYED PIN" in out
+
+
+@needs_bash
+def test_the_session_stamp_keeps_the_files_line_endings(tmp_path):
+    folder = _project(tmp_path)
+    cwd_hash = "".join(c if c.isalnum() else "-" for c in str(folder))
+    mem = tmp_path / "home" / ".claude" / "projects" / cwd_hash / "memory" / "MEMORY.md"
+    mem.parent.mkdir(parents=True)
+    mem.write_bytes(b"**MemoryBrain Last Active:** 2026-01-01T00:00:00Z\r\n\r\n- a line\r\n")
+    _keyed_run(tmp_path, _installed_hook(tmp_path), folder, {"BRAIN_API_KEY": KEY})
+    data = mem.read_bytes()
+    assert b"2026-01-01" not in data and b"**MemoryBrain Last Active:** 20" in data
+    assert data.count(b"\r\n") == 3 and data.count(b"\n") == 3
+
+
+def test_the_pre_compact_stamp_keeps_the_files_line_endings(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    cwd = tmp_path / "proj"
+    cwd_hash = "".join(c if c.isalnum() else "-" for c in str(cwd))
+    mem = tmp_path / ".claude" / "projects" / cwd_hash / "memory" / "MEMORY.md"
+    mem.parent.mkdir(parents=True)
+    mem.write_bytes(b"**MemoryBrain Last Active:** 2026-01-01T00:00:00Z\r\n\r\n- a line\r\n")
+    pre_compact.update_memory_timestamp(cwd)
+    data = mem.read_bytes()
+    assert b"2026-01-01" not in data and data.count(b"\r\n") == 3 and data.count(b"\n") == 3
+
+
+@needs_bash
+def test_a_long_folder_name_gives_the_same_slug_in_both_hooks(tmp_path):
+    folder = tmp_path / ("a-very-long-project-folder-name-" * 3)
+    folder.mkdir()
+    r, _ = _keyed_run(tmp_path, _installed_hook(tmp_path), folder,
+                      {"BRAIN_API_KEY": KEY, "MEMORYBRAIN_DEBUG": "1"})
+    slug = r.stderr.decode().split("slug=", 1)[1].split()[0]
+    assert slug == pre_compact.detect_project(folder) and len(slug) <= 64

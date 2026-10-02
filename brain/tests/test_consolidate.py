@@ -376,7 +376,7 @@ def test_admin_consolidate_endpoint(api_client):
 
 def test_admin_consolidate_requires_key_when_set(api_client, monkeypatch):
     # PureASGIAuthMiddleware (app/main.py) reads BRAIN_API_KEY from the
-    # environment on every request; it never reads app.auth._API_KEY.
+    # environment on every request.
     monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
     assert api_client.post("/admin/consolidate").status_code == 401
 
@@ -410,7 +410,7 @@ def test_ui_sleep_endpoint(api_client, cdb):
 
 def test_ui_sleep_endpoint_requires_key_when_set(api_client, monkeypatch):
     # PureASGIAuthMiddleware (app/main.py) reads BRAIN_API_KEY from the
-    # environment on every request; it never reads app.auth._API_KEY.
+    # environment on every request.
     monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
     assert api_client.post("/api/ui/edit/consolidate",
                            json={}).status_code == 401

@@ -90,7 +90,7 @@ def detect_project(cwd: Path) -> str:
             if slug:
                 return slug
     slug = re.sub(r"[^a-z0-9]+", "-", cwd.name.lower()).strip("-")
-    return slug[:64] or "unknown"
+    return slug[:64].strip("-") or "unknown"     # the session hook cuts the same way
 
 
 def recent_handover(cwd: Path, now: float) -> str:
@@ -188,13 +188,23 @@ def update_memory_timestamp(cwd: Path) -> None:
     if not mem_file.exists():
         return
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stamp_memory_file(mem_file, ts)
+
+
+def stamp_memory_file(mem_file: Path, ts: str) -> None:
+    """Set the Last Active line, keeping the file's own line endings (the two
+    hooks used to flip a Windows file between CRLF and LF)."""
     marker = "**MemoryBrain Last Active:**"
-    text = mem_file.read_text(encoding="utf-8")
-    if marker in text:
-        text = re.sub(r"\*\*MemoryBrain Last Active:\*\*.*", f"{marker} {ts}", text)
+    with open(mem_file, encoding="utf-8", newline="") as f:
+        text = f.read()
+    nl = "\r\n" if "\r\n" in text else "\n"
+    line = re.compile(r"^\*\*MemoryBrain Last Active:\*\*[^\r\n]*", re.M)
+    if line.search(text):
+        text = line.sub(lambda m: f"{marker} {ts}", text, count=1)
     else:
-        text = f"{marker} {ts}\n\n" + text
-    mem_file.write_text(text, encoding="utf-8")
+        text = f"{marker} {ts}{nl}{nl}" + text
+    with open(mem_file, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
 
 
 def main(stdin=None) -> int:

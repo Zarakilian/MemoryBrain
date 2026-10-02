@@ -234,6 +234,7 @@ async def handle_get_memory(memory_id: str, max_chars: Optional[int] = None,
         "id": entry.id, "content": entry.content, "summary": entry.summary,
         "type": entry.type, "project": entry.project, "tags": entry.tags,
         "source": entry.source, "importance": entry.importance,
+        "trust": entry.trust, "writer": entry.writer,
         "timestamp": entry.timestamp.isoformat(),
         "status": entry.status, "superseded_by": entry.superseded_by,
         "supersedes": entry.supersedes,
@@ -568,8 +569,11 @@ async def handle_record_correction(rule: str, evidence: str = "",
 async def handle_get_timeline(project: Optional[str] = None,
                               days: int = 30, limit: int = 100, as_of: Optional[str] = None) -> str:
     from ..timeline import get_timeline
-    return json.dumps(get_timeline(project=project, days=days, limit=limit, as_of=as_of,
-                                   db_path=DB_PATH), default=str)
+    try:
+        return json.dumps(get_timeline(project=project, days=days, limit=limit, as_of=as_of,
+                                       db_path=DB_PATH), default=str)
+    except ValueError as e:
+        return json.dumps({"error": str(e)})
 
 
 async def handle_get_entities(project: Optional[str] = None,

@@ -530,15 +530,24 @@ def hard_delete_memory(memory_id: str, actor: str, reason: str = "",
                      (memory_id,))
         conn.execute("DELETE FROM vec_chunks WHERE memory_id = ?", (memory_id,))
         conn.execute("DELETE FROM vec_memories WHERE memory_id = ?", (memory_id,))
+        # rows this one closed stay archived (restore them if they were right),
+        # but nothing may keep pointing at a row that no longer exists
+        had_superseded = [r[0] for r in conn.execute(
+            "SELECT id FROM memories WHERE superseded_by = ? OR invalidated_by = ?",
+            (memory_id, memory_id))]
+        for col in ("superseded_by", "invalidated_by", "supersedes"):
+            conn.execute(f"UPDATE memories SET {col} = NULL WHERE {col} = ?", (memory_id,))
         conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         _audit(conn, memory_id, "hard_delete", actor, reason,
-               {"project": row["project"], "type": row["type"]})
+               {"project": row["project"], "type": row["type"],
+                "had_superseded": had_superseded})
         conn.commit()
     return True
 
 
 def delete_memory(memory_id: str, db_path: Path = DB_PATH):
-    """Hard delete. Used for: ChromaDB rollback, or explicit MCP delete_memory calls."""
+    """Bare row delete, for tests and repairs. The app deletes for good only
+    through hard_delete_memory (Atlas), and agents only archive."""
     with _connect(db_path) as conn:
         conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         conn.commit()

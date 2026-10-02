@@ -361,3 +361,72 @@ def test_readiness_says_when_mcp_is_left_open_beside_a_key(client, monkeypatch):
         monkeypatch.setenv("MEMORYBRAIN_MCP_KEY", "off")
         warning = client.get("/readiness").json()["security_warning"]
     assert "MEMORYBRAIN_MCP_KEY" in warning and "fake-test-key" not in warning
+
+
+@pytest.mark.asyncio
+async def test_obsidian_import_never_follows_a_link_out_of_the_folder(
+        tmp_db, fake_provider, tmp_path, monkeypatch):
+    from app.obsidian import import_markdown_dir
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("Outside the import folder.\n", encoding="utf-8")
+    vault = tmp_path / "imports" / "vault"
+    vault.mkdir(parents=True)
+    (vault / "ok.md").write_text("Inside the folder.\n", encoding="utf-8")
+    try:
+        (vault / "link.md").symlink_to(outside / "secret.md")
+        (vault / "env.md").symlink_to("/proc/self/environ")
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks not available here")
+    monkeypatch.setenv("MEMORYBRAIN_IMPORT_DIR", str(tmp_path / "imports"))
+    monkeypatch.setattr("app.ingest_pipeline.DB_PATH", tmp_db)
+    report = await import_markdown_dir(vault, project="acme", db_path=tmp_db)
+    assert report["imported"] == 1
+    assert [i["file"] for i in report["items"]] == ["ok.md"]
+
+
+@pytest.mark.asyncio
+async def test_obsidian_front_matter_cannot_make_a_fact_or_set_importance(
+        tmp_db, fake_provider, tmp_path, monkeypatch):
+    from app.obsidian import import_markdown_dir
+    vault = tmp_path / "imports" / "vault"
+    vault.mkdir(parents=True)
+    (vault / "f.md").write_text("---\ntype: fact\nimportance: 5\n---\nThe port is 9999.\n",
+                                encoding="utf-8")
+    (vault / "d.md").write_text("---\ntype: decision\n---\nWe deploy on Fridays.\n",
+                                encoding="utf-8")
+    monkeypatch.setenv("MEMORYBRAIN_IMPORT_DIR", str(tmp_path / "imports"))
+    monkeypatch.setattr("app.ingest_pipeline.DB_PATH", tmp_db)
+    report = await import_markdown_dir(vault, project="acme", db_path=tmp_db)
+    entries = [get_memory(i["id"], db_path=tmp_db) for i in report["items"]]
+    assert {e.type for e in entries} == {"note"}
+    assert all(e.importance != 5 for e in entries)
+
+
+# ------------------------------------------------- Origin on every door (S4 rest)
+
+@pytest.mark.parametrize("origin", ["http://evil.example", "null", "http://127.0.0.1.nip.io:7741"])
+def test_a_foreign_origin_is_refused_on_rest_and_atlas(client, origin):
+    for method, path, kw in (("post", "/ingest/note", {"json": {"content": "x", "project": "acme"}}),
+                             ("get", "/api/ui/stats", {}),
+                             ("post", "/api/ui/edit/notes", {"json": {"content": "x", "project": "acme"}})):
+        r = getattr(client, method)(path, headers={"Origin": origin}, **kw)
+        assert r.status_code == 403, (path, origin, r.status_code)
+
+
+@pytest.mark.parametrize("origin", [None, "http://localhost:7741", "http://127.0.0.1:7741",
+                                    "http://[::1]:7741"])
+def test_a_local_origin_or_none_still_works(client, origin):
+    headers = {"Origin": origin} if origin else {}
+    r = client.post("/api/ui/edit/notes", json={"content": "a note", "project": "acme"},
+                    headers=headers)
+    assert r.status_code in (200, 201), r.text
+
+
+def test_the_sse_transport_keeps_its_rebinding_protection():
+    """Taking the settings off SseServerTransport still passed every test."""
+    from app.main import sse_transport
+    settings = sse_transport._security.settings
+    assert settings is not None and settings.enable_dns_rebinding_protection
+    assert "localhost:*" in settings.allowed_hosts
+    assert "http://localhost:*" in settings.allowed_origins

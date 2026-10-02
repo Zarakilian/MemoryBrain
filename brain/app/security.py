@@ -88,11 +88,29 @@ class HostCheckMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "http":
-            if host_name(_headers(scope).get("host", "")) not in allowed_hosts():
+            headers = _headers(scope)
+            if host_name(headers.get("host", "")) not in allowed_hosts():
                 await _reply(send, 421, "MemoryBrain answers only on localhost "
                                         "(add the name to MEMORYBRAIN_ALLOWED_HOSTS)")
                 return
+            # A browser names the page that sent a request in Origin. The hooks
+            # and the CLI send none; Atlas sends its own loopback origin.
+            if "origin" in headers and not origin_allowed(headers["origin"]):
+                await _reply(send, 403, "MemoryBrain refuses requests from other sites")
+                return
         await self.app(scope, receive, send)
+
+
+def origin_allowed(origin: str) -> bool:
+    """An Origin of http(s)://<allowed host>[:port]; 'null' and others are refused."""
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(origin.strip())
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not parts.netloc or parts.path not in ("", "/"):
+        return False
+    return host_name(parts.netloc) in allowed_hosts()
 
 
 class WriteGuardMiddleware:

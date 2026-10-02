@@ -49,6 +49,14 @@ def record_correction(rule: str, evidence: str = "", project: Optional[str] = No
                      (project, rule), path)
     if existing:
         return {**existing[0], "duplicate": True}
+    # the user already said no to this exact rule: an agent may not queue it again
+    turned_down = _rows(f"""SELECT {_FIELDS} FROM memories m WHERE type = 'procedure'
+                            AND project = ? AND summary = ? AND status = 'archived'
+                            AND EXISTS (SELECT 1 FROM memory_audit a
+                                        WHERE a.memory_id = m.id AND a.action = 'reject')""",
+                        (project, rule), path)
+    if turned_down:
+        return {**turned_down[0], "duplicate": True, "rejected": True}
     content = rule + (f"\n\nWhat the user said: {evidence}" if evidence else "")
     entry = MemoryEntry(content=content, summary=rule, type="procedure", project=project,
                         tags=["procedure"], source="record_correction", importance=4,

@@ -238,7 +238,8 @@ def _remote_url(folder: Path) -> str:
 
 def strip_url_userinfo(url: str) -> str:
     """Drop 'user:token@' from a URL. SSH remotes (git@host:owner/repo) are kept."""
-    return re.sub(r"^([A-Za-z][A-Za-z0-9+.-]{0,30}://)[^/?#@\s]*@", r"\1", (url or "").strip())
+    # up to the LAST @ before the host: a password may hold an @ of its own
+    return re.sub(r"^([A-Za-z][A-Za-z0-9+.-]{0,30}://)[^/?#\s]*@", r"\1", (url or "").strip())
 
 
 def discover_folders(abs_path: Path, extra_globs: list[str] | None = None) -> list[dict]:

@@ -40,7 +40,7 @@ import asyncio
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -284,13 +284,23 @@ def cited_sentences(text: str, tags: set[str]) -> list[str]:
     return kept
 
 
-async def _judge_conflicts(pairs: list[dict], summaries: dict) -> list[dict]:
+def _judge_key(pair: dict) -> str:
+    lo, hi = sorted((pair["src"], pair["dst"]))
+    return f"judged_no:{lo}:{hi}"
+
+
+async def _judge_conflicts(pairs: list[dict], summaries: dict,
+                           db_path: Optional[Path] = None) -> list[dict]:
     """With MEMORYBRAIN_JUDGE=on, keep only pairs the model calls a real
-    contradiction (similar wording alone is not a conflict)."""
+    contradiction (similar wording alone is not a conflict). A pair the model
+    cleared is remembered and not sent to it again every night."""
     if os.getenv("MEMORYBRAIN_JUDGE", "").strip().lower() not in ("on", "1", "true", "yes"):
         return pairs
+    db_path = db_path or DB_PATH
     kept = []
     for pair in pairs:
+        if get_meta(_judge_key(pair), db_path=db_path):
+            continue
         prompt = ("Do these two statements contradict each other? Answer YES or NO only.\n\n"
                   f"A: {summaries.get(pair['src'], '')}\nB: {summaries.get(pair['dst'], '')}")
         try:
@@ -300,6 +310,8 @@ async def _judge_conflicts(pairs: list[dict], summaries: dict) -> list[dict]:
             continue
         if answer.strip().upper().startswith("YES"):
             kept.append({**pair, "meta": {**pair.get("meta", {}), "judged": True}})
+        else:
+            set_meta(_judge_key(pair), _now(), db_path=db_path)
     return kept
 
 
@@ -474,6 +486,31 @@ def _repair_summaries(db_path: Path) -> int:
 
 # --------------------------------------------------------------- the cycle
 
+def _claim_marker(db_path: Path) -> bool:
+    """Take the cross-process sleep marker in one statement: it is claimed only
+    when it is empty or stale, and rowcount says who won. A check followed by
+    a separate write let two processes both start."""
+    from .db import connect
+    now = datetime.now(timezone.utc)
+    stale = (now - timedelta(seconds=RUN_STALE_S)).isoformat()
+    conn = connect(db_path)
+    try:
+        cur = conn.execute(
+            """INSERT INTO brain_meta (key, value, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                              updated_at = excluded.updated_at
+               WHERE brain_meta.value = '' OR brain_meta.value < ?""",
+            (META_RUNNING, now.isoformat(), now.isoformat(), stale))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def _release_marker(db_path: Path) -> None:
+    set_meta(META_RUNNING, "", db_path=db_path)
+
+
 def _marker_is_fresh(db_path: Path) -> bool:
     since = get_meta(META_RUNNING, db_path=db_path)
     if not since:
@@ -500,14 +537,15 @@ async def consolidate(project: Optional[str] = None,
                   distillation (cheap enough for nightly auto-sleep)
     """
     db_path = db_path or DB_PATH
-    if RUN_LOCK.locked() or _marker_is_fresh(db_path):
+    if RUN_LOCK.locked():
         return {"skipped": "already running"}
     async with RUN_LOCK:
-        set_meta(META_RUNNING, _now(), db_path=db_path)
+        if not _claim_marker(db_path):
+            return {"skipped": "already running"}
         try:
             return await _consolidate(project, idle_days, db_path, mode)
         finally:
-            set_meta(META_RUNNING, "", db_path=db_path)
+            _release_marker(db_path)
 
 
 async def _consolidate(project: Optional[str], idle_days: int, db_path: Path,
@@ -551,7 +589,7 @@ async def _consolidate(project: Optional[str], idle_days: int, db_path: Path,
                                   for r in conn.execute(
                 "SELECT id, summary, content FROM memories WHERE project = ? AND status = 'active'",
                 (proj,))} if conflicts else {}
-        conflicts = await _judge_conflicts(conflicts, conflict_summaries)
+        conflicts = await _judge_conflicts(conflicts, conflict_summaries, db_path)
 
         # 1. beliefs — full mode only (light auto-sleep skips LLM cost)
         if mode == "light":

@@ -75,3 +75,9 @@ def test_remote_urls_are_recorded_without_credentials(tmp_path):
         '[remote "origin"]\n\turl = https://user:tok3n@git.example.com/acme/app.git\n',
         encoding="utf-8")
     assert bs._remote_url(repo) == "https://git.example.com/acme/app.git"
+
+
+def test_a_password_with_an_at_sign_is_stripped_whole():
+    from brain_scan import strip_url_userinfo as cli_strip
+    url = "https://u:p" + "@" + "ss" + "@" + "host.example/x.git"
+    assert cli_strip(url) == "https://host.example/x.git"

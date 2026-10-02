@@ -22,7 +22,19 @@ if [ -z "$BRAIN_KEY" ] && [ -n "$MEMORYBRAIN_DIR" ] && [ -f "${MEMORYBRAIN_DIR}/
         | sed -n 's/^[[:space:]]*BRAIN_API_KEY[[:space:]]*=[[:space:]]*//p' | tail -n 1 \
         | sed "s/[[:space:]]*\$//; s/^[\"']//; s/[\"']\$//")"
 fi
-PY="$(command -v python3 || command -v python || echo python3)"
+# The first Python that actually runs: on Windows "python3" can be the Store
+# alias, which is on PATH and exits 9009 without running anything.
+PY=""
+for _py in python3 python py; do
+    if command -v "$_py" >/dev/null 2>&1 && "$_py" -c 'import sys' >/dev/null 2>&1; then
+        PY="$_py"
+        break
+    fi
+done
+if [ -z "$PY" ]; then
+    echo "[memorybrain] no working Python found: the brief and notes are skipped" >&2
+    PY=python3
+fi
 # Windows Python reads and writes pipes as cp1252 unless told otherwise, which
 # garbles every non-ASCII note. The brain speaks UTF-8, so the hook does too.
 export PYTHONIOENCODING=utf-8
@@ -63,7 +75,8 @@ for _ in 0 1 2 3 4; do
 done
 BIND_CONF=""
 if [ -z "$PROJECT_SLUG" ]; then
-    PROJECT_SLUG=$(basename "$SEARCH_DIR" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//; s/-*$//; s/--*/-/g') || PROJECT_SLUG=""
+    # cut at 64 like the pre-compact hook, so both file this folder under one slug
+    PROJECT_SLUG=$(basename "$SEARCH_DIR" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9\n' '-' | sed 's/^-*//; s/-*$//; s/--*/-/g' | cut -c1-64 | sed 's/-*$//') || PROJECT_SLUG=""
     BIND_CONF=',"confidence":0.5'
 fi
 
@@ -129,11 +142,22 @@ _mb_stamp_memory() {
     hash=$(printf '%s' "$cwd" | tr -c '[:alnum:]' '-')
     local mem_file="$HOME/.claude/projects/${hash}/memory/MEMORY.md"
     if [ -f "$mem_file" ]; then
-        if grep -q '^\*\*MemoryBrain Last Active' "$mem_file"; then
-            sed -i "s|^\*\*MemoryBrain Last Active:.*|**MemoryBrain Last Active:** ${ts}|" "$mem_file"
-        else
-            sed -i "1s|^|**MemoryBrain Last Active:** ${ts}\n\n|" "$mem_file"
-        fi
+        # in Python, not sed -i: sed rewrote a Windows file's CRLF endings as LF
+        "$PY" -c '
+import re, sys
+path, ts = sys.argv[1], sys.argv[2]
+marker = "**MemoryBrain Last Active:**"
+with open(path, encoding="utf-8", newline="") as f:
+    text = f.read()
+nl = "\r\n" if "\r\n" in text else "\n"
+line = re.compile(r"^\*\*MemoryBrain Last Active:\*\*[^\r\n]*", re.M)
+if line.search(text):
+    text = line.sub(lambda m: marker + " " + ts, text, count=1)
+else:
+    text = marker + " " + ts + nl + nl + text
+with open(path, "w", encoding="utf-8", newline="") as f:
+    f.write(text)
+' "$mem_file" "$ts" 2>/dev/null || true
     fi
 }
 _mb_stamp_memory "$CWD"

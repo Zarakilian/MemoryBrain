@@ -265,6 +265,8 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
                                  "Confirm button, not restored")
     if body.project is not None and get_project(body.project, db_path=DB_PATH) is None:
         raise HTTPException(422, f"Unknown project: {body.project}")
+    _check_edit_limits(entry, body)
+    old_tags = list(entry.tags or [])
 
     warnings: list[str] = []
     if body.content is not None:
@@ -316,12 +318,39 @@ async def patch_memory(memory_id: str, body: MemoryPatch):
 
     relinked = False
     if body.content is not None or body.tags is not None:
-        relinked = await _reindex_after_edit(memory_id, content_changed=body.content is not None)
+        relinked = await _reindex_after_edit(memory_id, content_changed=body.content is not None,
+                                             old_tags=old_tags)
     return {"id": memory_id, "updated": sorted(updated_cols), "relinked": relinked,
             "warnings": warnings}
 
 
-async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
+def _check_edit_limits(entry, body: "MemoryPatch") -> None:
+    """An edit meets the limits a write meets: the type's size cap, the tag
+    caps, and no second active copy of another memory's text."""
+    from ..models import MAX_TAG_LENGTH, MAX_TAGS
+    from ..storage import get_memory_by_content_hash
+    from ..write_policy import FACT_DECISION_MAX, OPEN_LOOP_MAX
+    new_type = body.type or entry.type
+    new_content = body.content if body.content is not None else entry.content
+    if new_type in ("fact", "decision") and len(new_content) > FACT_DECISION_MAX:
+        raise HTTPException(422, f"a {new_type} holds at most {FACT_DECISION_MAX} characters; "
+                                 "keep long narrative as a session or note")
+    if new_type == "open_loop" and len(new_content) > OPEN_LOOP_MAX:
+        raise HTTPException(422, f"an open loop holds at most {OPEN_LOOP_MAX} characters")
+    if body.tags is not None:
+        if len(body.tags) > MAX_TAGS:
+            raise HTTPException(422, f"too many tags (max {MAX_TAGS})")
+        if any(len(t) > MAX_TAG_LENGTH for t in body.tags):
+            raise HTTPException(422, f"a tag holds at most {MAX_TAG_LENGTH} characters")
+    if body.content is not None or body.project is not None:
+        twin = get_memory_by_content_hash(new_content, body.project or entry.project,
+                                          db_path=DB_PATH, active_only=True)
+        if twin is not None and twin.id != entry.id:
+            raise HTTPException(409, f"memory {twin.id} already holds this text")
+
+
+async def _reindex_after_edit(memory_id: str, content_changed: bool,
+                              old_tags: list | None = None) -> bool:
     """Re-embed (when the text changed) and re-derive this memory's edges.
     Only derived edge kinds are replaced: belief citations and conflict
     verdicts, dismissed ones included, stay. Best effort: a downed provider
@@ -357,6 +386,10 @@ async def _reindex_after_edit(memory_id: str, content_changed: bool) -> bool:
         embedding = vec_get(memory_id, db_path=DB_PATH)
         if embedding is None:
             return False
+        if old_tags:
+            # relinking counts the new tags; take the old ones off first
+            from ..linker import drop_tag_stats
+            drop_tag_stats(old_tags, DB_PATH)
         await asyncio.to_thread(link_new_memory, updated, embedding, db_path=DB_PATH)
         return True
     except Exception:

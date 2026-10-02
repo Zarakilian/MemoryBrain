@@ -344,6 +344,16 @@ def scan_push(repo: Path, stdin_text: str, private: Sequence = ()) -> tuple:
     return findings, len(items)
 
 
+def private_patterns_note(pfile: Path, private: Sequence):
+    """A warning when no private pattern loaded: the generic rules still ran,
+    but machine names, domains and project names were never checked."""
+    if private:
+        return None
+    return (f"hygiene: WARNING no private patterns loaded (looked for {pfile}). Machine "
+            "names and work details were not checked. Copy your hygiene-patterns.txt "
+            "into .local/ or set MEMORYBRAIN_HYGIENE_PATTERNS.")
+
+
 def main(argv: Sequence | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--staged", action="store_true",
@@ -370,6 +380,9 @@ def main(argv: Sequence | None = None) -> int:
         return 2
 
     emit(format_report(findings, scanned=scanned, private_count=len(private)))
+    note = private_patterns_note(pfile, private)
+    if note:
+        print(note, file=sys.stderr)
     return 1 if findings else 0
 
 

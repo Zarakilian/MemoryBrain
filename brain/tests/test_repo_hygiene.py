@@ -207,3 +207,12 @@ def test_format_report_names_file_line_and_rule_without_the_value():
     assert "docs/a.md:1" in report and "secret:github-token" in report
     assert token not in report
     assert re.search(r"1 finding", report)
+
+
+def test_a_push_with_no_private_patterns_says_so(tmp_path):
+    """A clone without .local used to report "clean" with 0 private patterns
+    and no hint that machine names were never checked."""
+    missing = tmp_path / ".local" / "hygiene-patterns.txt"
+    note = hy.private_patterns_note(missing, [])
+    assert note and "no private patterns" in note and "MEMORYBRAIN_HYGIENE_PATTERNS" in note
+    assert hy.private_patterns_note(missing, [object()]) is None
