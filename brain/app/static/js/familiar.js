@@ -31,8 +31,9 @@
 
 (function () {
   function reduced() {
-    return window.matchMedia
-      && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    return (window.matchMedia
+      && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+      || /[?&]motion=still/.test(location.search);
   }
   if (reduced()) return;
 

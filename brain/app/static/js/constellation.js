@@ -4,7 +4,8 @@
    grants it the pointer and brings it to full luminosity. 2D fallback (user
    toggle, remembered; automatic when WebGL is missing) uses the vendored
    force-graph canvas build inside a glass pane — its bundled three never
-   touches the world's (design rule 5).
+   touches the world's (design rule 5). Both draw the same shapes: layouts.js
+   decides where every star is, and when.
    Interaction contract in both modes: click selects → inspector + orb,
    drag moves, scroll zooms, hover shows details. */
 "use strict";
@@ -61,16 +62,6 @@
   }
 
   var SELECT_COL = "#ffd98a";
-  function nodeCol(n) {
-    if (n.id === selectedId) return SELECT_COL;
-    if (n.kind === "file") return FILE_COL;
-    if (n.kind === "folder") return FOLDER_COL;
-    return "hsl(" + Atlas.hue(n.project) + " 70% 66%)";
-  }
-  function nodeShade(n) { return "hsl(" + Atlas.hue(n.project) + " 68% 38%)"; }
-  function nodeSize(n) {
-    return 3 + Math.sqrt(n.degree || 0) * 2.6 + (n.importance || 3) * 0.8;
-  }
   function idOf(x) { return typeof x === "object" && x ? x.id : x; }
   function nodeOnSelection(l) {
     return selectedId
@@ -117,7 +108,17 @@
     return true;
   }
   function collapseFolders() { expanded = []; load(); }
-  window.Constellation = { expandFolder: expandFolder, collapseFolders: collapseFolders };
+  window.Constellation = {
+    expandFolder: expandFolder, collapseFolders: collapseFolders,
+    /* one honest answer for "what is the 2D picture doing": paste
+       Constellation.debug() into the console */
+    debug: function () {
+      return { mode: mode, layout: savedLayout(), shape: shape2d ? shape2d.mode : null,
+               nodes: nodes2d.length, morphing: morphing2d, paused: paused2d,
+               frames: draw2d.frames, msPerFrame: Math.round(draw2d.ms * 100) / 100,
+               life: Math.round(life2d * 10) / 10 };
+    },
+  };
 
   function deselect() {
     if (!selectedId) return;
@@ -127,134 +128,426 @@
     if (graph2d) repaint2d();
   }
 
-  /* ------------------------------------------------------------ 2D engine */
-  /* flat, the Brain is seen from above: two hemispheres side by side,
-     their medial walls almost touching, a few sulci for shape. Drawn under
-     the graph each frame while the 2D layout is the Brain. */
-  var brain2d = null;                  // { R } while the 2D layout is the Brain
-  function drawBrain2d(ctx, scale) {
-    var L = window.NebulaLayouts, B = L && L.BRAIN;
-    if (!B || !brain2d) return;
-    var R = brain2d.R, ey = B.rz * 0.7 * R;
+  /* ------------------------------------------------------------ 2D engine
+     The same shapes as the 3D world, flat. layouts.js gives every node a
+     track (a place that is a function of time); here that place is simply
+     projected onto the page (x, -y) and painted on force-graph's canvas,
+     which now only draws: its physics is switched off. So the 2D picture
+     is the 3D shape seen from the front, it moves the same way, and a
+     change of layout glides instead of jumping. */
+  var shape2d = null, nodes2d = [], life2d = 0, last2d = 0, morphing2d = false;
+  var motes2d = [], paused2d = null;
+  var LEVEL_COLS = ["#ffe3a1", "#ff9d5c", "#4fd6c5", "#8b93ec"];
+  var _o = { x: 0, y: 0, z: 0 };
+  var LINK_BUDGET_2D = 700;
+
+  function alive2d() {
+    if (Atlas.reducedMotion) return false;
+    try { return localStorage.getItem("nebula-ambience") !== "off"; } catch (e) { return true; }
+  }
+  function starCol(n) {
+    if (n.kind === "file") return FILE_COL;
+    if (n.kind === "folder") return FOLDER_COL;
+    return LEVEL_COLS[Math.min(n._level == null ? 2 : n._level, 3)];
+  }
+  function radius2d(n) {
+    return n._r2 || (n._r2 = window.NebulaLayouts ? window.NebulaLayouts.starRadius(n) : 5);
+  }
+
+  /* a star is two stamped pictures (a soft halo, a lit ball), painted once
+     per colour and reused: a canvas shadow per star per frame is far too
+     slow for a picture that never stops moving */
+  var stamps = {};
+  function stamp(col, kind) {
+    var key = kind + col;
+    if (stamps[key]) return stamps[key];
+    var S = 64, c = document.createElement("canvas");
+    c.width = c.height = S;
+    var g = c.getContext("2d"), grad;
+    if (kind === "halo") {
+      grad = g.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+      grad.addColorStop(0, col); grad.addColorStop(0.3, col); grad.addColorStop(1, "rgba(0,0,0,0)");
+      g.globalAlpha = 0.55;
+    } else {
+      grad = g.createRadialGradient(S * 0.36, S * 0.32, S * 0.04, S / 2, S / 2, S / 2);
+      grad.addColorStop(0, "rgba(255,252,240,1)");
+      grad.addColorStop(0.42, col);
+      grad.addColorStop(1, "rgba(10,14,28,1)");
+    }
+    g.fillStyle = grad;
+    g.beginPath();
+    g.arc(S / 2, S / 2, S / 2 - 0.5, 0, 2 * Math.PI);
+    g.fill();
+    return (stamps[key] = c);
+  }
+
+  function drawStar(n, ctx, scale) {
+    var r = radius2d(n), sel = n.id === selectedId, col = starCol(n), a = 1;
+    /* on the globe the far side shows through faintly */
+    if (shape2d && shape2d.mode === "orb" && n._z < 0) a = 0.3;
+    var st = n.standing, t = life2d;
+    if (st === "stale" || st === "superseded" || st === "archived" || st === "done") a *= 0.42;
+    else if (st === "disputed" && alive2d()) {
+      a *= 0.6 + 0.4 * (Math.sin(t * 7 + r * 9) * Math.sin(t * 17 + r * 3) > -0.25 ? 1 : 0.2);
+    }
+    ctx.save();
+    ctx.globalAlpha = a;
+    if (n.kind === "file" || n.kind === "folder") {
+      ctx.strokeStyle = sel ? SELECT_COL : col;
+      ctx.fillStyle = sel ? SELECT_COL : col;
+      ctx.lineWidth = sel ? 2 : 1.2;
+      ctx.beginPath();
+      if (n.kind === "file") {            // a rotated square: the crystal
+        var rr = r * 1.25;
+        ctx.moveTo(n.x, n.y - rr); ctx.lineTo(n.x + rr, n.y); ctx.lineTo(n.x, n.y + rr); ctx.lineTo(n.x - rr, n.y);
+        ctx.closePath(); ctx.fill();
+      } else {                            // a ring: the planet
+        ctx.arc(n.x, n.y, r, 0, 2 * Math.PI); ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+    var halo = r * (st === "changed" ? 3.6 + 0.5 * Math.sin(t * 1.6 + r) : 2.5);
+    ctx.globalCompositeOperation = "lighter";
+    ctx.globalAlpha = a * (st === "changed" ? 0.8 : 0.5);
+    ctx.drawImage(stamp(col, "halo"), n.x - halo, n.y - halo, halo * 2, halo * 2);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = a;
+    ctx.drawImage(stamp(col, "ball"), n.x - r, n.y - r, r * 2, r * 2);
+    if (sel || st === "disputed" || st === "proven" || st === "verified") {
+      ctx.strokeStyle = sel ? SELECT_COL : st === "disputed" ? "rgba(255, 92, 108, .9)"
+                      : "rgba(255, 246, 214, .7)";
+      ctx.lineWidth = (sel ? 2 : 1) / Math.max(scale, 0.4);
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + (sel ? 2.2 : 1.2), 0, 2 * Math.PI);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /* ---- what each shape stands on, painted under the stars ---- */
+  function decoBrain(ctx, scale, d) {
     ctx.save();
     [-1, 1].forEach(function (side) {
-      var ex = (1 + B.medial) * B.rx / 2 * R;
-      var cx = (L.hemiCentre(side) + side * (1 - B.medial) * B.rx / 2) * R;
+      var cx = d.hx(side), ex = d.ex, ey = d.ey;
       var g = ctx.createRadialGradient(cx, 0, 0, cx, 0, Math.max(ex, ey));
-      g.addColorStop(0, "rgba(120, 140, 255, .07)");
+      g.addColorStop(0, "rgba(120, 140, 255, .08)");
       g.addColorStop(1, "rgba(120, 140, 255, .015)");
       ctx.fillStyle = g;
-      ctx.strokeStyle = "rgba(165, 178, 255, .34)";
+      ctx.strokeStyle = "rgba(165, 178, 255, .38)";
       ctx.lineWidth = 1.3 / scale;
       ctx.beginPath();
       ctx.ellipse(cx, 0, ex, ey, 0, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      /* sulci: the central one, and two either side of it */
-      ctx.strokeStyle = "rgba(165, 178, 255, .14)";
-      [[-0.05, 0.5], [-0.42, 0.62], [0.36, 0.55]].forEach(function (s) {
-        var y0 = s[0] * ey, reach = s[1] * ex;
-        var x0 = cx - side * ex * 0.82, x1 = x0 + side * reach * 1.6;
+      /* the folds: wavy lines across each hemisphere, like sulci from above */
+      ctx.strokeStyle = "rgba(165, 178, 255, .15)";
+      [-0.68, -0.42, -0.14, 0.14, 0.4, 0.66].forEach(function (f, i) {
+        var y0 = f * ey, half = ex * Math.sqrt(Math.max(0, 1 - f * f)) * 0.88;
         ctx.beginPath();
-        ctx.moveTo(x0, y0);
-        ctx.quadraticCurveTo((x0 + x1) / 2, y0 - ey * 0.16, x1, y0 + ey * 0.09);
+        for (var k = 0; k <= 16; k++) {
+          var u = k / 16, x = cx - side * half + side * 2 * half * u;
+          var y = y0 + ey * 0.045 * Math.sin(u * 9 + i * 1.7) + ey * 0.02 * Math.sin(u * 23 + i);
+          if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        }
         ctx.stroke();
       });
     });
     ctx.restore();
   }
-  /* a stable side for a node of a project that spans both hemispheres */
-  function sideOf(id) {
-    var h = 2166136261;
-    for (var i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
-    return (h >>> 0) % 2 ? 1 : -1;
+  function decoGlobe(ctx, scale, d, t) {
+    var R = d.R, tilt = Math.atan2(d.axis[0], d.axis[1]);
+    ctx.save();
+    var g = ctx.createRadialGradient(-R * 0.3, -R * 0.35, R * 0.1, 0, 0, R);
+    g.addColorStop(0, "rgba(34, 52, 104, .55)");
+    g.addColorStop(1, "rgba(6, 10, 24, .7)");
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, R * 0.985, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(143, 184, 232, .5)";
+    ctx.lineWidth = 1.4 / scale;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.stroke();
+    ctx.rotate(tilt);                       // the axis leans, as in 3D
+    ctx.strokeStyle = "rgba(143, 184, 232, .17)";
+    ctx.lineWidth = 1 / scale;
+    /* meridians: ellipses that open and close as the globe turns */
+    for (var k = 0; k < 9; k++) {
+      var w = Math.abs(Math.cos(d.omega * t + k * Math.PI / 9)) * R;
+      ctx.beginPath(); ctx.ellipse(0, 0, Math.max(w, 0.01), R, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    /* parallels are seen edge on: chords across the disc */
+    for (var la = -75; la <= 75; la += 15) {
+      var y = Math.sin(la * Math.PI / 180) * R, x = Math.cos(la * Math.PI / 180) * R;
+      ctx.beginPath(); ctx.moveTo(-x, y); ctx.lineTo(x, y); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function decoRiver(ctx, scale, d, t) {
+    var p = _o;
+    ctx.save();
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    d.lanes.forEach(function (lane) {
+      if (!lane.g.mem.length) return;
+      ctx.beginPath();
+      for (var i = 0; i <= 40; i++) {
+        var u = lane.u0 - 0.03 + (lane.u1 - lane.u0 + 0.06) * i / 40;
+        d.xyz(u * d.Len, d.mid(lane, u), 0, p);
+        if (i) ctx.lineTo(p.x, -p.y); else ctx.moveTo(p.x, -p.y);
+      }
+      ctx.strokeStyle = "rgba(74, 122, 240, .13)";
+      ctx.lineWidth = Math.max(14, lane.hw * 0.92);
+      ctx.stroke();
+      ctx.strokeStyle = "rgba(110, 200, 235, .12)";
+      ctx.lineWidth = Math.max(4, lane.hw * 0.3);
+      ctx.stroke();
+    });
+    /* motes carried downstream */
+    ctx.fillStyle = "rgba(160, 220, 255, .8)";
+    motes2d.forEach(function (m) {
+      var f = (m.seed + t * m.speed) % 1, u = m.lane.u0 + (m.lane.u1 - m.lane.u0) * f;
+      d.xyz(u * d.Len, d.mid(m.lane, u) + m.off, 0, p);
+      ctx.globalAlpha = 0.75 * Math.sin(Math.PI * f);
+      ctx.beginPath(); ctx.arc(p.x, -p.y, m.size, 0, 2 * Math.PI); ctx.fill();
+    });
+    /* the time axis and its notches */
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "rgba(143, 184, 232, .4)";
+    ctx.lineWidth = 1 / scale;
+    var side = d.down ? -(d.edge - 12) : d.edge - 12, end = d.down ? -(d.edge - 4) : d.edge - 4;
+    ctx.beginPath();
+    d.xyz(0, side, 0, p); ctx.moveTo(p.x, -p.y);
+    d.xyz(d.Len, side, 0, p); ctx.lineTo(p.x, -p.y);
+    d.ticks.forEach(function (tk) {
+      d.xyz(tk.u * d.Len, side, 0, p); ctx.moveTo(p.x, -p.y);
+      d.xyz(tk.u * d.Len, end, 0, p); ctx.lineTo(p.x, -p.y);
+    });
+    ctx.stroke();
+    ctx.restore();
+  }
+  function decoWeb(ctx, scale, d) {
+    var n = d.radials.length, RF = d.RF;
+    ctx.save();
+    ctx.lineWidth = 1 / scale;
+    ctx.beginPath();
+    d.radials.forEach(function (rd) {
+      var cs = Math.cos(rd.a), sn = -Math.sin(rd.a);
+      ctx.moveTo(cs * d.r0 * 0.3, sn * d.r0 * 0.3);
+      ctx.lineTo(cs * RF * (rd.main ? 1.5 : 1), sn * RF * (rd.main ? 1.5 : 1));
+    });
+    ctx.strokeStyle = "rgba(207, 224, 255, .2)";
+    ctx.stroke();
+    function ring(r, sag) {
+      for (var i = 0; i < n; i++) {
+        var a0 = d.radials[i].a, a1 = i + 1 < n ? d.radials[i + 1].a : d.radials[0].a + Math.PI * 2;
+        for (var k = 0; k <= 6; k++) {
+          var u = k / 6, a = a0 + (a1 - a0) * u, rr = r * (1 - sag * Math.sin(Math.PI * u));
+          if (k) ctx.lineTo(Math.cos(a) * rr, -Math.sin(a) * rr);
+          else ctx.moveTo(Math.cos(a) * rr, -Math.sin(a) * rr);
+        }
+      }
+    }
+    if (n > 1) {
+      ctx.beginPath();
+      d.rings.forEach(function (r) { ring(r, d.sag); });
+      ring(RF, d.sag * 0.6);
+      [0.34, 0.52, 0.72].forEach(function (f) { ring(d.r0 * f, 0); });
+      ctx.strokeStyle = "rgba(207, 224, 255, .26)";
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function decoTree(ctx, scale, d, t) {
+    function sway(q) {                    // the same wind as layouts.js
+      var hh = Math.max(0, Math.min((q[1] - d.ground) / d.tall, 1.3)), s = hh * hh;
+      return [q[0] + d.amp * s * (Math.sin(t * 0.5 + q[0] * 0.006 + q[2] * 0.004) + 0.35 * Math.sin(t * 1.13 + q[1] * 0.02)), -q[1]];
+    }
+    ctx.save();
+    ctx.lineCap = "round";
+    d.wood.forEach(function (w) {
+      var a = sway(w.p0), c = sway(w.c), b = sway(w.p2);
+      if (w.r0 < 0.9) {
+        ctx.strokeStyle = "rgba(233, 199, 154, .34)";
+        ctx.lineWidth = Math.max(0.6, w.r0 * 1.4);
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.quadraticCurveTo(c[0], c[1], b[0], b[1]); ctx.stroke();
+        return;
+      }
+      /* a limb tapers: paint it in pieces, each a little thinner */
+      var px = a[0], py = a[1];
+      for (var i = 1; i <= 6; i++) {
+        var u = i / 6, v = 1 - u;
+        var x = v * v * a[0] + 2 * v * u * c[0] + u * u * b[0], y = v * v * a[1] + 2 * v * u * c[1] + u * u * b[1];
+        ctx.strokeStyle = "rgba(96, 66, 48, .95)";
+        ctx.lineWidth = 2 * (w.r0 + (w.r1 - w.r0) * (u - 1 / 12));
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x, y); ctx.stroke();
+        px = x; py = y;
+      }
+    });
+    ctx.restore();
+  }
+  function decoGalaxies(ctx, scale, d, t) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    d.clusters.forEach(function (c) {
+      d.centre(c, t, _o);
+      var R = c.R * 1.5, hue = Atlas.hue(c.slug);
+      var g = ctx.createRadialGradient(_o.x, -_o.y, 0, _o.x, -_o.y, R);
+      g.addColorStop(0, "hsla(" + hue + ", 60%, 66%, .16)");
+      g.addColorStop(0.5, "hsla(" + hue + ", 60%, 60%, .05)");
+      g.addColorStop(1, "hsla(" + hue + ", 60%, 60%, 0)");
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(_o.x, -_o.y, R, 0, 2 * Math.PI); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  /* one frame: move every star along its track, then paint the structure */
+  var draw2d = { t0: 0, ms: 0, frames: 0 };
+  function frame2d(ctx, scale) {
+    var now = performance.now();
+    draw2d.t0 = now;
+    var dt = Math.min((now - last2d) / 1000 || 0.016, 0.05);
+    last2d = now;
+    var alive = alive2d();
+    if (alive) life2d += dt;
+    if (!shape2d) return;
+    var t = life2d, any = false;
+    for (var i = 0; i < nodes2d.length; i++) {
+      var n = nodes2d[i];
+      if (n._held) continue;
+      shape2d.track(n, t, _o);
+      n._z = _o.z;
+      var x = _o.x, y = -_o.y, m = n._m;
+      if (m) {
+        var u = (now - m.t0 - m.d) / m.dur;
+        if (u >= 1) n._m = null;
+        else {
+          any = true;
+          if (u < 0) u = 0;
+          var e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+          x = m.x0 + (x - m.x0) * e; y = m.y0 + (y - m.y0) * e;
+        }
+      }
+      n.x = x; n.y = y;
+    }
+    morphing2d = any;
+    /* keep painting only while something moves; a stilled picture rests */
+    var pause = !(alive || any);
+    if (pause !== paused2d) { paused2d = pause; graph2d.autoPauseRedraw(pause); }
+    var d = shape2d.deco;
+    if (d.kind === "brain2d") decoBrain(ctx, scale, d);
+    else if (d.kind === "globe") decoGlobe(ctx, scale, d, t);
+    else if (d.kind === "river") decoRiver(ctx, scale, d, t);
+    else if (d.kind === "web") decoWeb(ctx, scale, d);
+    else if (d.kind === "tree") decoTree(ctx, scale, d, t);
+    else if (d.kind === "galaxies") decoGalaxies(ctx, scale, d, t);
+  }
+  /* names and date marks, at a constant size whatever the zoom */
+  function labels2d(ctx, scale) {
+    if (!shape2d) return;
+    ctx.save();
+    ctx.textBaseline = "middle";
+    ctx.lineJoin = "round";
+    shape2d.labels.forEach(function (lb) {
+      lb.pos(life2d, _o);
+      var tick = lb.cls.indexOf("tick") >= 0, pad = 8 / scale;
+      var x = _o.x, y = -_o.y, text = tick ? lb.text : lb.text.toUpperCase();
+      ctx.font = (tick ? "" : "600 ") + ((tick ? 10 : 11) / scale) + "px "
+        + (tick ? "ui-monospace, Consolas, monospace" : "system-ui, 'Segoe UI', sans-serif");
+      if (lb.cls.indexOf("left") >= 0) { ctx.textAlign = "right"; x -= pad; }
+      else if (lb.cls.indexOf("right") >= 0) { ctx.textAlign = "left"; x += pad; }
+      else {
+        ctx.textAlign = "center";
+        if (lb.cls.indexOf("above") >= 0) y -= pad * 1.4;
+        else if (lb.cls.indexOf("below") >= 0) y += pad * 1.4;
+      }
+      ctx.globalAlpha = lb.globe && _o.z < 0 ? 0.18 : 1;
+      ctx.lineWidth = 3 / scale;
+      ctx.strokeStyle = "rgba(4, 6, 12, .85)";
+      ctx.strokeText(text, x, y);
+      ctx.fillStyle = tick ? "rgba(151, 160, 186, .9)" : "rgba(220, 227, 244, .82)";
+      ctx.fillText(text, x, y);
+    });
+    ctx.restore();
+    /* what one painted frame cost (a running average), for Constellation.debug() */
+    draw2d.ms += (performance.now() - draw2d.t0 - draw2d.ms) * 0.1;
+    draw2d.frames++;
+  }
+
+  function linkShown(l) { return !l._far2 || nodeOnSelection(l); }
+  function linkAlpha(l) {
+    var isFold = l.kinds && l.kinds.indexOf("in_folder") >= 0;
+    if (nodeOnSelection(l)) return 0.9;
+    var a = (isFold ? 0.18 : Math.min(0.7, 0.1 + (l.w || 0) * 0.55)) * (l._lk == null ? 1 : l._lk);
+    if (shape2d && shape2d.mode === "orb"
+        && ((l.source && l.source._z < 0) || (l.target && l.target._z < 0))) a *= 0.25;
+    return Math.min(0.85, a);
   }
 
   function build2d() {
     el.innerHTML = "";
     el.classList.add("flat");
+    paused2d = null;
     graph2d = ForceGraph()(el)
       .backgroundColor("rgba(0,0,0,0)")
-      .onRenderFramePre(function (ctx, scale) { if (brain2d) drawBrain2d(ctx, scale); })
+      .onRenderFramePre(frame2d)
+      .onRenderFramePost(labels2d)
       .nodeId("id")
-      .nodeVal(nodeSize)
-      .nodeColor(nodeCol)
+      .nodeVal(function (n) { return radius2d(n); })
       .nodeLabel(function (n) {
         var sub = n.kind === "file" ? Atlas.esc(n.path || "") + " · heat " + (n.degree != null ? Number(n.degree).toFixed(1) : "0")
                 : n.kind === "folder" ? Atlas.esc(n.path || "(root)") + " · " + Atlas.esc(n.file_count || 0) + " files"
-                : Atlas.esc(n.project || "") + " · " + Atlas.esc(n.type || "") + " · importance " + (n.importance || "?")
+                : Atlas.esc(n.project || "") + " · " + Atlas.esc(n.type || "")
+                  + (n.standing && n.standing !== "current" && n.standing !== "open" ? " · " + Atlas.esc(n.standing) : "")
+                  + " · importance " + (n.importance || "?")
                   + " · gravity " + (n.degree != null ? n.degree.toFixed(1) : "?");
-        return '<div class="cst-tip"><strong>' + Atlas.esc(n.label || n.id)
+        return '<div class="cst-tip"><strong>' + Atlas.esc(Atlas.cleanSummary(n.label || n.id))
           + '</strong><p class="quiet">' + sub + "</p></div>";
       })
+      .linkVisibility(linkShown)
+      .linkCurvature(function (l) { return shape2d && shape2d.mode === "tree" ? 0 : 0.14; })
       .linkColor(function (l) {
         var isFile = l.kinds && l.kinds.indexOf("file_ref") >= 0;
         var isFold = l.kinds && l.kinds.indexOf("in_folder") >= 0;
-        var rgb = isFile ? FILELINK_COL : isFold ? FOLDLINK_COL : "214, 190, 148";
-        var a = nodeOnSelection(l) ? 0.9 : isFold ? 0.18 : Math.min(0.7, 0.1 + (l.w || 0) * 0.55);
-        return "rgba(" + rgb + "," + a + ")";
+        var rgb = l._thread || nodeOnSelection(l) ? "255, 217, 138"
+                : isFile ? FILELINK_COL : isFold ? FOLDLINK_COL : "214, 190, 148";
+        return "rgba(" + rgb + "," + linkAlpha(l).toFixed(3) + ")";
       })
-      .linkWidth(function (l) { return 0.4 + (l.w || 0) * 2.2; })
+      .linkWidth(function (l) { return l._thread ? 1.6 : 0.4 + (l.w || 0) * 1.4; })
+      /* a bead of light on a chosen star's links, and at rest on a few of
+         the others: the pulse that says this is alive */
       .linkDirectionalParticles(function (l) {
-        return (!Atlas.reducedMotion && nodeOnSelection(l)) ? 2 : 0;
+        if (Atlas.reducedMotion) return 0;
+        if (nodeOnSelection(l)) return 2;
+        return l._bead && alive2d() ? 1 : 0;
       })
-      .linkDirectionalParticleWidth(2.2)
-      .linkDirectionalParticleSpeed(0.006)
+      .linkDirectionalParticleWidth(function (l) { return nodeOnSelection(l) ? 2.2 : 1.5; })
+      .linkDirectionalParticleSpeed(function (l) { return nodeOnSelection(l) ? 0.006 : 0.0022; })
+      .linkDirectionalParticleColor(function () { return "rgba(255, 233, 180, .85)"; })
       .enableNodeDrag(true)
+      .onNodeDrag(function (n) { n._held = true; })
+      .onNodeDragEnd(function (n) {
+        /* let go, and the star glides back to its place in the shape */
+        n._held = false; n.fx = n.fy = undefined;
+        n._m = { x0: n.x, y0: n.y, t0: performance.now(), d: 0, dur: 650 };
+        morphing2d = true;
+        if (paused2d) { paused2d = false; graph2d.autoPauseRedraw(false); }
+      })
       .onNodeClick(function (n) { selectAny(n); })
       .onBackgroundClick(function () { deselect(); Atlas.closeInspector(); })
-      .cooldownTime(Atlas.reducedMotion ? 0 : 3000)
-      .warmupTicks(Atlas.reducedMotion ? 60 : 0)
+      .cooldownTicks(0)
+      .warmupTicks(0)
       .nodeCanvasObjectMode(function () { return "replace"; })
-      .nodeCanvasObject(function (n, ctx) {
-        if (n.kind === "file" || n.kind === "folder") {
-          var rr = n.kind === "file" ? 3 + Math.sqrt(n.degree || 0) * 1.6 : 6 + Math.sqrt(n.file_count || 0) * 0.9;
-          var selc = n.id === selectedId;
-          ctx.save();
-          ctx.strokeStyle = selc ? SELECT_COL : nodeCol(n);
-          ctx.fillStyle = selc ? SELECT_COL : nodeCol(n);
-          ctx.lineWidth = selc ? 2 : 1.2;
-          ctx.beginPath();
-          if (n.kind === "file") {           // a rotated square: the crystal
-            ctx.moveTo(n.x, n.y - rr); ctx.lineTo(n.x + rr, n.y); ctx.lineTo(n.x, n.y + rr); ctx.lineTo(n.x - rr, n.y);
-            ctx.closePath(); ctx.fill();
-          } else {                           // a ring: the planet
-            ctx.arc(n.x, n.y, rr, 0, 2 * Math.PI); ctx.stroke();
-          }
-          ctx.restore();
-          return;
-        }
-        var r = 4 * Math.sqrt(nodeSize(n));           // nodeRelSize default = 4
-        var sel = n.id === selectedId;
-        var col = nodeCol(n);
-        ctx.save();
-        ctx.shadowColor = sel ? SELECT_COL : col;
-        ctx.shadowBlur = sel ? 24 : (n.importance >= 4 ? 15 : 8);
-        var grad = ctx.createRadialGradient(
-          n.x - r * 0.35, n.y - r * 0.4, r * 0.1, n.x, n.y, r);
-        grad.addColorStop(0, "rgba(255,252,240,.95)");
-        grad.addColorStop(0.35, col);
-        grad.addColorStop(1, nodeShade(n));
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.shadowBlur = 0;
-        if (n.type === "fact" || n.type === "reference") ctx.setLineDash([2.5, 2.5]);
-        ctx.strokeStyle = sel ? SELECT_COL : "rgba(230, 238, 255, .4)";
-        ctx.lineWidth = sel ? 1.8 : 0.8;
-        ctx.beginPath();
-        ctx.arc(n.x, n.y, r + 1.4, 0, 2 * Math.PI);
-        ctx.stroke();
-        ctx.restore();
-      })
+      .nodeCanvasObject(drawStar)
       .nodePointerAreaPaint(function (n, color, ctx) {
-        var r = 4 * Math.sqrt(nodeSize(n)) + 2;
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, r, 0, 2 * Math.PI);
+        ctx.arc(n.x, n.y, radius2d(n) + 2, 0, 2 * Math.PI);
         ctx.fill();
       });
+    /* no physics here: the shapes place every star */
+    graph2d.d3Force("charge", null);
+    graph2d.d3Force("center", null);
+    var lf = graph2d.d3Force("link");
+    if (lf && lf.strength) lf.strength(0);
     fit2d();
   }
 
@@ -262,6 +555,7 @@
     if (!graph2d) return;
     graph2d.nodeColor(graph2d.nodeColor());
     graph2d.linkColor(graph2d.linkColor());
+    graph2d.linkVisibility(graph2d.linkVisibility());
     graph2d.linkDirectionalParticles(graph2d.linkDirectionalParticles());
   }
 
@@ -273,77 +567,71 @@
 
   function destroy2d() {
     if (graph2d && graph2d._destructor) { try { graph2d._destructor(); } catch (e) {} }
-    graph2d = null;
+    graph2d = null; shape2d = null; nodes2d = [];
     if (el) { el.innerHTML = ""; el.classList.remove("flat"); }
   }
 
-  /* ------------------------------------------------------------ 2D shapes
-     The same six shapes as the 3D world, through force-graph's own custom
-     force slots. Tree needs no force at all: fx/fy pin every node. */
+  /* put the 2D picture into a shape. Every star glides from where it is to
+     its new track; the view glides to hold the whole shape. */
   function apply2dLayout(m) {
     if (!graph2d || !window.NebulaLayouts) return;
     var L = window.NebulaLayouts;
     var data = graph2d.graphData();
-    var nodes = data.nodes, links = data.links;
-    nodes.forEach(function (n) { n.fx = n.fy = undefined; });
-    ["flow", "web", "orb"].forEach(function (name) { graph2d.d3Force(name, null); });
-    brain2d = null;
-    /* in the Brain, synapses are weak springs and the lobes hold the shape
-       (as in 3D); every other layout keeps the engine's own link strength */
-    var lf = graph2d.d3Force("link");
-    if (lf && lf.strength) {
-      if (!lf._mbDefault) lf._mbDefault = lf.strength();
-      lf.strength(m === "brain" ? function (l) {
-        return l.kinds && l.kinds.indexOf("file_ref") >= 0 ? 0.12 : 0.03;
-      } : lf._mbDefault);
+    nodes2d = data.nodes;
+    var links = data.links;
+    nodes2d.forEach(function (n) { n.fx = n.fy = undefined; n.vx = n.vy = 0; });
+    try {
+      shape2d = L.compute(m, nodes2d, links, { flat: true, names: Atlas.projectNames() });
+    } catch (e) {
+      shape2d = null;
+      status("layout failed: " + e.message);
+      return;
     }
-    var planeR = Math.max(140, 34 * Math.sqrt(nodes.length));
-    var centres = L.projectCentres(nodes, planeR);
-    if (m === "tree") {
-      var tp = L.treePositions(nodes, links, 60);
-      nodes.forEach(function (n) {
-        var p = tp[n.id];
-        if (p) { n.x = n.fx = p.x; n.y = n.fy = p.y; }
-      });
-    } else if (m === "flow_down" || m === "flow_right") {
-      var gap = Math.max(46, planeR * 0.28), top = 3 * gap;
-      graph2d.d3Force("flow", function (alpha) {
-        var k = 0.22 * alpha;
-        nodes.forEach(function (n) {
-          var t = top - L.ringOf(n) * gap, c = centres[n.project || ""] || { x: 0, y: 0 };
-          if (m === "flow_down") { n.vy += (-t - n.y) * k; n.vx += (c.x * 0.9 - n.x) * 0.02 * alpha; }
-          else { n.vx += (-t - n.x) * k; n.vy += (c.y * 0.9 - n.y) * 0.02 * alpha; }
-        });
-      });
-    } else if (m === "web" || m === "orb" || m === "brain") {
-      /* flat, the brain is its two hemispheres: lobes left and right */
-      var own = {};                    // the Brain: a node's own lobe centre
-      if (m === "brain") {
-        var lobes = L.brainLobes(nodes, planeR * 1.4);
-        brain2d = { R: planeR * 1.4 };
-        Object.keys(lobes).forEach(function (p) {
-          var lb = lobes[p].side === 0 ? lobes[p].left : lobes[p];
-          centres[p] = { x: lb.x, y: lb.z * 0.7 };
-        });
-        /* a project spanning both hemispheres fills both, not just the left */
-        nodes.forEach(function (n) {
-          var lb = lobes[n.project || ""];
-          if (!lb || lb.side !== 0) return;
-          var c = sideOf(String(n.id)) < 0 ? lb.left : lb.right;
-          own[n.id] = { x: c.x, y: c.z * 0.7 };
-        });
-      }
-      graph2d.d3Force("web", function (alpha) {
-        var k = (m === "brain" ? 0.32 : 0.2) * alpha;
-        nodes.forEach(function (n) {
-          var c = own[n.id] || centres[n.project || ""] || { x: 0, y: 0 };
-          var ring = 22 + L.ringOf(n) * 42, dx = n.x - c.x, dy = n.y - c.y;
-          var d = Math.sqrt(dx * dx + dy * dy) || 1, f = (ring - d) / d * k;
-          n.vx += dx * f; n.vy += dy * f;
-        });
+    if (!shape2d) return;
+    /* draw only the strongest links at rest, and put a bead on a few */
+    var order = links.map(function (l, i) {
+      var isFold = l.kinds && l.kinds.indexOf("in_folder") >= 0;
+      return [(isFold ? 0.18 : 0.1 + (l.w || 0) * 0.55) * (l._lk == null ? 1 : l._lk), i];
+    }).sort(function (a, b) { return b[0] - a[0] || a[1] - b[1]; });
+    order.forEach(function (it, rank) {
+      var l = links[it[1]];
+      l._far2 = rank >= LINK_BUDGET_2D;
+      l._bead = !l._far2 && (l._thread || rank % 9 === 0) && rank < 360;
+    });
+    /* the river's motes: a few per channel, seeded once */
+    motes2d = [];
+    if (shape2d.deco.kind === "river") {
+      shape2d.deco.lanes.forEach(function (lane) {
+        if (!lane.g.mem.length) return;
+        var count = Math.round(5 + 22 * (lane.u1 - lane.u0) * Math.min(1.6, lane.hw / 26));
+        for (var i = 0; i < count; i++) {
+          motes2d.push({ lane: lane, seed: Math.random(), off: (Math.random() - 0.5) * lane.hw * 0.7,
+                         speed: (0.012 + Math.random() * 0.016) / Math.max(0.15, lane.u1 - lane.u0),
+                         size: 0.9 + Math.random() * 1.2 });
+        }
       });
     }
-    graph2d.d3ReheatSimulation();
+    var now = performance.now(), still = Atlas.reducedMotion;
+    nodes2d.forEach(function (n, i) {
+      if (!isFinite(n.x) || !isFinite(n.y)) { n.x = 0; n.y = 0; }
+      /* a ragged start: the stars leave like a flock, not like a slab */
+      n._m = still ? null : { x0: n.x, y0: n.y, t0: now, d: 380 * ((i * 0.61803) % 1), dur: 1400 };
+      if (still) { shape2d.track(n, 0, _o); n.x = _o.x; n.y = -_o.y; n._z = _o.z; }
+    });
+    morphing2d = !still;
+    /* frame the whole shape */
+    var x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    shape2d.bounds.forEach(function (b) {
+      x0 = Math.min(x0, b[0]); x1 = Math.max(x1, b[0]);
+      y0 = Math.min(y0, -b[1]); y1 = Math.max(y1, -b[1]);
+    });
+    var box = el.getBoundingClientRect();
+    if (box.width && box.height && isFinite(x0)) {
+      var k = Math.min(box.width / Math.max(x1 - x0, 1), box.height / Math.max(y1 - y0, 1)) * 0.9;
+      graph2d.centerAt((x0 + x1) / 2, (y0 + y1) / 2, still ? 0 : 900).zoom(k, still ? 0 : 900);
+    }
+    paused2d = null;
+    repaint2d();
   }
 
   /* Switching shape must never rebuild the graph: in 2D a rebuild would
@@ -379,9 +667,13 @@
       if (neb.getLayout && neb.getLayout() !== savedLayout()) neb.setLayout(savedLayout());
       neb.setGraphVisible(true);
     } else if (mode === "2d" && graph2d) {
-      var byId = {};
+      var byId = {}, was = {};
+      /* a star that was already on the page starts from where it stood */
+      nodes2d.forEach(function (n) { was[n.id] = n; });
       var nodes = data.nodes.map(function (n) {
-        var c = Object.assign({}, n); byId[c.id] = true; return c;
+        var c = Object.assign({}, n); byId[c.id] = true;
+        if (was[c.id]) { c.x = was[c.id].x; c.y = was[c.id].y; }
+        return c;
       });
       var links = data.edges
         .filter(function (e) { return byId[e.src] && byId[e.dst]; })
@@ -559,6 +851,13 @@
     }
 
     document.addEventListener("atlas:deselect", deselect);
+    /* the ambience switch stills or wakes the 2D picture too */
+    document.addEventListener("atlas:ambience", function () {
+      if (!graph2d) return;
+      paused2d = false;
+      graph2d.autoPauseRedraw(false);
+      repaint2d();
+    });
     document.addEventListener("atlas:lens", function (ev) {
       syncFocus();
       if (ev.detail.lens === "constellation" && mode === "2d") fit2d();
@@ -587,9 +886,12 @@
     var cap = document.getElementById("cst-cap");
     if (cap) cap.addEventListener("change", load);
     var box = document.getElementById("cst-3d");
-    if (box) box.addEventListener("change", function () {
-      setMode(box.checked ? "3d" : "2d");
-    });
+    if (box) {
+      box.checked = mode === "3d";       // the box must say what is on screen
+      box.addEventListener("change", function () {
+        setMode(box.checked ? "3d" : "2d");
+      });
+    }
     var fbox = document.getElementById("cst-files");
     if (fbox) {
       fbox.checked = filesOn();

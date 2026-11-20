@@ -331,6 +331,28 @@ body[data-lens="constellation"] #world { pointer-events: auto; }
 .cst-tip .tip-crown { color: var(--star); }
 .cst-tip .badge { font-size: 9px; padding: 0 6px; vertical-align: 1px; }
 
+/* names and date marks written over the 3D world (nebula.js places them
+   every frame). Under the glass, over the stars, never in the way. */
+#cst-labels {
+  position: fixed; inset: 0; z-index: 1; overflow: hidden;
+  pointer-events: none !important;
+}
+.cst-label { position: absolute; left: 0; top: 0; white-space: nowrap; will-change: transform; }
+.cst-label > span {
+  display: block; transform: translate(-50%, -50%);
+  font: 600 11px var(--sans); letter-spacing: .09em; text-transform: uppercase;
+  color: rgba(220, 227, 244, .78);
+  text-shadow: 0 0 8px rgba(4, 6, 12, .95), 0 0 2px rgba(4, 6, 12, .9);
+}
+.cst-label.left > span { transform: translate(-100%, -50%); padding-right: 8px; }
+.cst-label.right > span { transform: translate(0, -50%); padding-left: 8px; }
+.cst-label.above > span { transform: translate(-50%, -100%); padding-bottom: 6px; }
+.cst-label.below > span { transform: translate(-50%, 0); padding-top: 6px; }
+.cst-label.tick > span {
+  font: 10px var(--mono); letter-spacing: .02em; text-transform: none;
+  color: rgba(151, 160, 186, .85);
+}
+
 /* ------------------------------------------------------------ inspector
    The same glass as everything else — darker, closer, never a foreign
    surface. Always above the orb veil; nothing may trap it (rule 6). */
@@ -753,6 +775,8 @@ body:has(#inspector.open) .orb-veil { padding-right: min(var(--insp-w), 60vw); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+/* the same, asked for on the address (?motion=still): atlas.js sets the class */
+.still *, .still *::before, .still *::after { transition: none !important; animation: none !important; }
 
 /* ------------------------------------------------ v2.5 files: badges, page */
 .t-filenode { background: #bfe9ff; }

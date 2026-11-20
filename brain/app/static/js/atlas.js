@@ -41,8 +41,25 @@ Atlas.getJSON = async function (url) {
   if (!r.ok) throw new Error("HTTP " + r.status + " " + url);
   return r.json();
 };
-Atlas.reducedMotion = window.matchMedia
-  && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* Still mode: the system's reduced-motion setting, or ?motion=still on the
+   address (a way to get the still picture, and to test it, without changing
+   the system). Everything that moves asks this one flag. */
+Atlas.reducedMotion = (window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+  || /[?&]motion=still/.test(location.search);
+if (Atlas.reducedMotion) document.documentElement.classList.add("still");
+
+/* slug -> the project's display name, read from the rail (the one place
+   every page already lists them). The Constellation labels use it. */
+Atlas.projectNames = function () {
+  var out = {};
+  document.querySelectorAll(".rail-projects a").forEach(function (a) {
+    var m = /[?&]project=([^&]+)/.exec(a.getAttribute("href") || "");
+    var name = a.querySelector(".pname");
+    if (m && name) out[decodeURIComponent(m[1])] = name.textContent.trim();
+  });
+  return out;
+};
 
 document.querySelectorAll("[data-js]").forEach(function (el) {
   el.removeAttribute("hidden");
@@ -123,6 +140,7 @@ window.addEventListener("DOMContentLoaded", function () {
     if (window.Nebula && window.Nebula.available) window.Nebula.setAmbience(v);
     document.body.classList.toggle("no-ambience", !v);
     updateBtn();
+    document.dispatchEvent(new CustomEvent("atlas:ambience", { detail: { on: !!v } }));
   }
   var btn = document.getElementById("ambience-toggle");
   if (btn) btn.addEventListener("click", function () { setAmbience(!on()); });
