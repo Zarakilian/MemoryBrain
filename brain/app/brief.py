@@ -67,6 +67,12 @@ SECTION_FLOORS = {"open_loops": 5, "changes": 3, "howtos": 3, "facts_and_decisio
 _KEEP_ALL = 10 ** 6
 _FLOOR_PASS = {**SECTION_FLOORS, "pins": _KEEP_ALL, "procedures": _KEEP_ALL,
                "next_session": _KEEP_ALL, "where_we_left_off": _KEEP_ALL}
+# When even the floors do not fit (many pins, a long next-session note), the
+# working sections shrink to this before any of them is emptied. Without it a
+# project with heavy pins showed four facts and none of its open loops.
+SECTION_MINIMUMS = {"open_loops": 2, "changes": 1, "facts_and_decisions": 2}
+_MINIMUM_PASS = {**_FLOOR_PASS, **SECTION_MINIMUMS, "howtos": 0}
+_TRIM_PASSES = (_FLOOR_PASS, _MINIMUM_PASS, {})
 
 
 def _now() -> str:
@@ -429,10 +435,11 @@ def _content_size(pack: dict[str, Any]) -> int:
 def _trim_to_budget(pack: dict[str, Any], budget: int) -> list[str]:
     """Cap agent-written text at AGENT_SHARE of the budget plus the room the
     user's own items leave unused, then fit the sections into the budget,
-    dropping from the lowest-priority sections first. Each pass runs twice:
-    first no section goes below its floor (SECTION_FLOORS), and only when that
-    is not enough are the floors given up. Returns the names of the sections
-    that lost items."""
+    dropping from the lowest-priority sections first. Each pass runs three
+    times: first no section goes below its floor (SECTION_FLOORS), then none
+    below its minimum (SECTION_MINIMUMS), and only when that is still not
+    enough is any section emptied. Returns the names of the sections that
+    lost items."""
     dropped: list[str] = []
 
     def note(key: str) -> None:
@@ -442,7 +449,7 @@ def _trim_to_budget(pack: dict[str, Any], budget: int) -> list[str]:
     user = sum(_size(i) for key in SECTIONS for i in pack.get(key) or []
                if isinstance(i, dict) and not _is_agent(i))
     cap = budget - min(user, (1 - AGENT_SHARE) * budget)
-    for floors in (_FLOOR_PASS, {}):
+    for floors in _TRIM_PASSES:
         for key in DROP_ORDER:
             items = pack.get(key) or []
             while (_agent_chars(pack) > cap and len(items) > floors.get(key, 0)
@@ -453,7 +460,7 @@ def _trim_to_budget(pack: dict[str, Any], budget: int) -> list[str]:
                 break
         if _agent_chars(pack) <= cap:
             break
-    for floors in (_FLOOR_PASS, {}):
+    for floors in _TRIM_PASSES:
         for key in DROP_ORDER:
             items = pack.get(key) or []
             while len(items) > floors.get(key, 0) and _content_size(pack) > budget:

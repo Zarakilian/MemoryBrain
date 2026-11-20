@@ -11,6 +11,12 @@ the read endpoints behind it, and nine write endpoints for the user. The one
 exception is a fix to how a bad name pattern is refused (last section).
 Upgrade with `brain upgrade`. There is no migration.
 
+### The brief
+
+- A project whose pins and next-session note use most of the brief still
+  shows at least two open loops, two facts and one change. Before, such a
+  brief showed a few facts and none of its open loops.
+
 ### The Constellation
 
 - **Every layout looks like its name.** Organic is a field of galaxies, one

@@ -199,7 +199,8 @@ RULES
 2. The only commands in this upgrade that change anything are: renaming a
    folder, git clone, git pull, copying .env, git config core.hooksPath,
    copying a .local folder, and python3 cli/brain.py upgrade. Everything
-   else only reads.
+   else only reads. Step 8 is the one exception: it changes stored notes,
+   and only the items I say yes to, one at a time.
 3. Never run or suggest: docker compose down -v, docker compose down,
    docker volume rm, docker system prune, deleting any folder, git push,
    git reset, git checkout of an old tag, or python3 cli/brain.py update
@@ -278,6 +279,35 @@ STEPS
    EXPECT: git log --max-parents=0 --format=%s in <dev> prints the
    clean-start line. Never push from <dev>-old.
 
+8. Only when the version after the upgrade is 3.3.0 or newer, and only if
+   I say I want it now: bring the old notes up to standard. Open a NEW
+   session first (yours kept the old tool list). Every action below is a
+   brain_admin action. Run each LIST, show me what it returned, and WAIT.
+   Apply nothing I have not said yes to.
+     a. reindex_entities
+        EXPECT: {"memories": <n>, "entities": <n>}. It changes no note.
+     b. LIST: resummarise   (a dry run by default)
+        EXPECT: would_change and ten examples, old beside new. Show me the
+        examples. Only on my yes: resummarise with {"dry_run": false}.
+        EXPECT: changed equals would_change.
+     c. LIST: list_stated_corrections
+        EXPECT: pairs of new_id and old_id. For each pair read BOTH notes
+        (get_memory), tell me in one line what each says, and propose one
+        of: supersede (the new one replaces the old as a whole),
+        correct_memory (it fixes one point, the rest stands), close_loop
+        (it reports an open loop finished), or nothing (it only complains
+        about a wrong summary). Apply a pair only on my yes for that pair.
+        If you cannot tell, propose nothing.
+     d. LIST: list_open_loops with {"stale_only": true}
+        EXPECT: the open loops over 30 days old. Close none unless I name
+        it. Never guess that work was finished.
+     e. Tell me how many rules wait for my confirmation (the session brief
+        says). Only I can confirm them, in Atlas or with
+        python3 cli/brain.py procedures. Do not try to.
+   Do NOT run python3 cli/brain.py scan as part of this: a first scan
+   after a long gap can read tens of thousands of files. Tell me it is
+   waiting, and that ~/.memorybrain/scan-ignore lists folders to leave out.
+
 FINAL REPORT. Print exactly this, filled in:
    MemoryBrain upgrade: SUCCESS or FAILED-AT-STEP-<n>
    live folder: <path>   compose project: <name>
@@ -286,6 +316,8 @@ FINAL REPORT. Print exactly this, filled in:
    backup: <path of the .tar.gz>
    readiness: ready=<true|false>   reembed_pending=<n>
    kept skills to merge by hand: <names, or none>
+   clean-up (step 8): not run, or per item: listed <n>, applied <n>,
+   left for me <n>
    old folders kept for rollback: <paths, or none> (delete them only when
    I say, after the new version has run for a while)
 ~~~

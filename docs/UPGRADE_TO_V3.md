@@ -3,7 +3,7 @@
 **Purpose:** move a running MemoryBrain (2.5 or any 3.x) to the newest 3.x release without losing a memory.
 **Audience:** you at a terminal, or an AI assistant. For an AI, paste [Prompt 3](AI_INSTALL_PROMPTS.md#prompt-3-upgrade-an-existing-install-to-3x): it holds these steps plus the rules an AI must keep.
 **Done when:** the running brain reports the new version, `/readiness` says `"ready": true`, and the count printed after the upgrade is at least the count before it.
-**Last verified:** 2026-10-01, on a real 3.0.0 to 3.1.0 upgrade.
+**Last verified:** 2026-11-20, on real 3.2.1 to 3.3.0 and 3.3.0 to 3.4.0 upgrades.
 **Time:** 10 to 15 minutes. From 2.x, a background re-embed follows (about a minute per 25 memories). Search keeps working while it runs.
 **You need:** Docker running, Git, Python 3 on the host, and the folder of your live install.
 **Out of scope:** first installs ([GETTING_STARTED.md](GETTING_STARTED.md)), upgrades from 0.5.x ([MIGRATION.md](../MIGRATION.md) first).
@@ -132,7 +132,7 @@ Only if you also keep a clone for development, apart from the live install:
 
 | Assistant | What to do |
 |---|---|
-| Claude Code | Start a new session. The hooks were reinstalled; the session start shows this project's brief only. Agents see 15 core tools, `brain_admin` among them, which runs the rest. |
+| Claude Code | Start a new session. The hooks were reinstalled; the session start shows this project's brief only. Agents see 15 core tools, `brain_admin` among them, which runs the rest. A session that was open during the upgrade keeps the old tool list, so the new `add_memory` arguments (`summary`, `supersedes`, `corrects`, `closes`) only appear in a new one. |
 | Grok | Streamable HTTP carries no client name, so pass `source="grok"`, or send an `X-Brain-Agent: grok` header if your config can. Copy `skills/log-everything/SKILL_GROK.md` over your Grok copy only if you never edited it. |
 | Codex | Restart Codex so stdio MCP reloads. Point `~/.codex/AGENTS.md` at `brain_admin` for the less common tools. |
 | Gemini | Restart it. The stdio entry is unchanged. |
@@ -154,6 +154,7 @@ Merge any `SKILL.md.new` soon: a kept skill may call a tool the core profile hid
 | `The backup did not reach …` | Is Docker running, and can it see the backup folder? | Fix the path, `docker compose start brain`, run again |
 | `The backup … has no brain.db in it` (or an empty or unreadable one) | `tar tzf` the file it names | Do not rebuild. `docker compose start brain`, find out why the volume holds no database, run again |
 | `Failed while building the new image` | `docker compose build brain` output | Fix it, then `docker compose up -d brain` starts the old image again |
+| The build output says `No matching distribution found for google-genai` | `git log -1` in the live folder | The code is older than 3.3.0, which fixed that requirement. `git pull`, then run the upgrade again |
 | `Failed while starting the brain` | `docker compose logs brain` | Fix it, then `docker compose up -d brain`. The backup it names is your way back |
 | `Memory count fell from …` | Nothing else. Stop here | Rollback, below |
 | `running but not ready` | `curl -s localhost:7741/readiness` | Usually `docker compose exec ollama ollama pull embeddinggemma` |
@@ -164,6 +165,68 @@ Merge any `SKILL.md.new` soon: a kept skill may call a tool the core profile hid
 - **The first start scrubs stored secrets.** Secrets written before 3.0 are redacted once, after a copy of the database lands in `/app/data/backups/` inside the volume (only when something changes). The brain log names the rows' tables and the copy: `docker compose logs brain | grep "Redaction scan"`.
 - **A key now covers MCP.** With `BRAIN_API_KEY` set, `/sse`, `/messages/` and `/mcp` need it. Register Claude Code again with the key header and add it to other HTTP clients ([GETTING_STARTED.md](GETTING_STARTED.md#optional-api-key)). No key set: nothing changes.
 - **The hooks find the key themselves.** `brain upgrade` reinstalls them and records the install folder beside them, so they read `BRAIN_API_KEY` from its `.env`.
+
+## From 3.2 to 3.3 and 3.4
+
+The upgrade itself changes none of your notes. Migration `012` adds four columns and one table. What changes is how notes are written from now on, and what Atlas shows.
+
+| Changed | What you will notice |
+|---|---|
+| Summaries | The writing assistant gives the one-line summary. No model rewrites it. Old summaries stay as they are until you clean them (below) |
+| Corrections | An assistant passes `supersedes`, `corrects` or `closes` when it writes, so an old note stops standing beside the one that replaced it |
+| Importance | Read with a standing: an old uncorrected fact keeps its place, a disputed one drops a step, a fresh fix leads for 30 days |
+| The brief | Opens with where the last session stopped and who wrote it, then what changed, then what is open |
+| File index | The session hook refreshes it in the background when it is over a day old. It only reads, and it gives up above 2,000 new files |
+| Atlas (3.4) | The Constellation layouts, standing badges, a project brief card, and buttons to verify, close, replace and correct a note. The Doctor page lists what to clean up |
+
+### After the upgrade: bring the old notes up to standard
+
+Optional, and each step lists before it changes anything. Do them from the Atlas Doctor page (`/ui/doctor`), or ask an assistant in a **new** session to run the `brain_admin` action named. Stop after any step whose list looks wrong.
+
+1. Rebuild the name index so ticket ids and pull requests are found: `reindex_entities`.
+
+   **Expect:** `{"memories": <n>, "entities": <n>}`. No note is changed.
+
+2. List summaries that read like the small model wrote them: `resummarise` (a dry run by default).
+
+   **Expect:** `would_change` and ten examples, old beside new. Read them. A good line you wrote yourself should not be in the list.
+   **If wrong:** the list holds summaries you want to keep. Do not apply. Report it.
+
+3. Apply it only when the examples look right: `resummarise` with `{"dry_run": false}`.
+
+   **Expect:** `changed` equals the `would_change` you saw. The note text is untouched and each old summary is kept in the audit row.
+
+4. List notes that say in words they replace or correct another note that is still active: `list_stated_corrections`.
+
+   **Expect:** pairs of `new_id` and `old_id`. Read both notes of a pair before settling it.
+
+5. Settle each pair by what the newer note says:
+
+   | The newer note | Action |
+   |---|---|
+   | Replaces the old one as a whole | `supersede` with `old_id` and `new_id` |
+   | Fixes one point and the rest stands | `correct_memory` with `old_id` and `new_id` |
+   | Reports an open loop finished | `close_loop` with `memory_id` |
+   | Only complains about a wrong summary | Nothing. Step 3 fixed it |
+
+   **Expect:** the pair leaves the list. `restore_memory` undoes any of them.
+
+6. List open loops over 30 days old: `list_open_loops` with `{"stale_only": true}`.
+
+   **Expect:** the loops, oldest first. Close only the ones you know are finished. There is no rule that decides this for you.
+
+7. Refresh the file index once: `python3 cli/brain.py scan` on the host.
+
+   **Expect:** a line per root with the files added. A first scan after a long gap reads every new file and can take many minutes.
+   **If wrong:** it lists tens of thousands of new files. Add the bulk folders to `~/.memorybrain/scan-ignore` (one pattern per line), then scan again.
+
+8. Confirm the rules waiting for you: Atlas (review), or `python3 cli/brain.py procedures`.
+
+   **Expect:** each confirmed rule leads every brief under "How you want things done". No tool can confirm one for you.
+
+9. Optional: capture a session that ends without a log. Add a `SessionEnd` hook entry beside your `PreCompact` one, as [HOW_IT_WORKS.md](../HOW_IT_WORKS.md#the-hooks) shows.
+
+To teach the brain the names only your place uses (servers, ticket prefixes, page ids), add patterns with `entity_patterns`, then run step 1 again. They are stored in this brain, not in the repo.
 
 ## Rollback
 
@@ -200,6 +263,8 @@ A faster source than the tar, if the brain itself is fine: before each migration
 
 ## What I have not verified
 
+- The "From 3.2 to 3.3 and 3.4" steps were run on one brain of about 900 notes. Step 7 was started there and stopped: its first scan was still reading after 15 minutes.
+- The `SessionEnd` hook was tested with a simulated event, not inside a real session.
 - The Grok and Codex config keys for custom headers. Check your client's own MCP docs before adding `X-Brain-Agent`.
 - Timings come from one machine. A large brain takes longer to back up and to re-embed.
 - The rollback was written from the backup format `brain upgrade` produces, not rehearsed on a real brain.

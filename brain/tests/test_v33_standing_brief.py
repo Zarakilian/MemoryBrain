@@ -293,6 +293,26 @@ async def test_a_long_list_of_facts_does_not_push_out_the_open_loops(tmp_db):
     assert len(pack["howtos"]) >= 3 and pack["chars_used"] <= pack["char_budget"]
 
 
+async def test_heavy_pins_never_leave_a_brief_with_no_open_loops(tmp_db):
+    """Six long pins and a long next-session note used to take the space, and
+    the brief then showed a few facts and none of the open loops."""
+    for i in range(6):
+        pinned = _mem(tmp_db, f"Pinned truth {i}: " + "something the user pinned " * 10, days=40)
+        pin_memory(project="acme", memory_id=pinned, db_path=tmp_db)
+    _mem(tmp_db, "Next time: " + "check the export retries. " * 60, type="note",
+         tags=["next_session"], importance=3)
+    _mem(tmp_db, "Session: " + "what we did last time " * 12, type="session", importance=3, days=1)
+    for i in range(12):
+        _mem(tmp_db, f"Agent fact number {i}: " + "detail " * 40, days=2)
+    loops = [_mem(tmp_db, f"Loop {i}: " + "something still to do " * 8, type="open_loop",
+                  importance=3, days=i) for i in range(8)]
+    pack = await build_project_brief("acme", db_path=tmp_db)
+    assert len(pack["pins"]) == 6 and pack["where_we_left_off"] and pack["next_session"]
+    assert [i["id"] for i in pack["open_loops"]][:2] == loops[:2]
+    assert len(pack["facts_and_decisions"]) >= 2
+    assert pack["chars_used"] <= pack["char_budget"]
+
+
 async def test_floors_give_way_when_the_budget_is_very_small(tmp_db):
     for i in range(12):
         _mem(tmp_db, f"Agent fact number {i}: " + "detail " * 40)
