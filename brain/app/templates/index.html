@@ -46,6 +46,76 @@
   <section id="pane-stream" class="pane {{ 'on' if lens == 'stream' else '' }}"
            role="tabpanel" {{ 'hidden' if lens != 'stream' else '' }}>
     <div class="stream-glass">
+    {# 3.3: a project page opens with its handover, the way a brief does for
+       an agent: where the last session stopped, what changed, what is still
+       open, and what only you can settle. Server-rendered: no JS needed. #}
+    {% if brief %}
+    {% set w = brief.waiting_on_you %}
+    <section class="brief" aria-label="Where this project stands">
+      <header class="brief-head">
+        <h2>Where {{ current.name or current.slug }} stands</h2>
+        {% if brief.last_activity %}
+        <span class="brief-when">last written
+          {% if brief.last_activity.days_ago == 0 %}today{% elif brief.last_activity.days_ago == 1 %}yesterday{% else %}{{ brief.last_activity.days_ago }} days ago{% endif %}{% if brief.last_activity.writer %} by {{ brief.last_activity.writer }}{% endif %}</span>
+        {% endif %}
+        {% if brief.dormant %}<span class="standing s-stale" title="Nobody has written here for 30 days: read the facts before changing anything">dormant</span>{% endif %}
+      </header>
+
+      {% if w.rules or w.beliefs or w.conflicts or w.stale_loops %}
+      <div class="brief-waiting">
+        <span class="brief-label">Waiting on you</span>
+        {% if w.rules %}<button type="button" class="chip" data-waiting="review">{{ w.rules }} rule{{ '' if w.rules == 1 else 's' }} to confirm</button>{% endif %}
+        {% if w.beliefs %}<button type="button" class="chip" data-waiting="review">{{ w.beliefs }} belief{{ '' if w.beliefs == 1 else 's' }} to approve</button>{% endif %}
+        {% if w.conflicts %}<button type="button" class="chip" data-waiting="conflicts">{{ w.conflicts }} contradiction{{ '' if w.conflicts == 1 else 's' }}</button>{% endif %}
+        {% if w.stale_loops %}<a class="chip" href="#brief-loops">{{ w.stale_loops }} stale loop{{ '' if w.stale_loops == 1 else 's' }}</a>{% endif %}
+      </div>
+      {% endif %}
+
+      <div class="brief-block">
+        <h3>Where we left off</h3>
+        {% for m in brief.where_we_left_off %}{{ mem_row(m, show_project=false, when='date') }}
+        {% else %}<p class="quiet">No session log yet.</p>{% endfor %}
+      </div>
+
+      <div class="brief-grid">
+        <div class="brief-block">
+          <h3>What changed</h3>
+          {% for c in brief.changes %}
+          <div class="change">
+            <a class="mem dated" href="/ui/memory/{{ c.id }}" data-id="{{ c.id }}">
+              <time datetime="{{ c.at }}">{{ (c.at or '')[:10] }}</time>
+              <span class="standing s-{{ 'changed' if c.kind == 'replaced' else 'disputed' if c.kind == 'corrected' else 'done' }}">{{ c.kind }}</span>
+              <span class="sum">{{ c.summary or '(no summary)' }}</span>
+            </a>
+            {% if c.replaced %}<p class="change-old">replaced: <a href="/ui/memory/{{ c.replaced.id }}">{{ c.replaced.summary or c.replaced.id[:8] }}</a></p>{% endif %}
+            {% if c.disputes %}<p class="change-old">corrects part of: <a href="/ui/memory/{{ c.disputes.id }}">{{ c.disputes.summary or c.disputes.id[:8] }}</a></p>{% endif %}
+          </div>
+          {% else %}<p class="quiet">Nothing was replaced, corrected or finished yet.</p>{% endfor %}
+        </div>
+
+        <div class="brief-block" id="brief-loops">
+          <h3>Open loops <span class="count">{{ brief.open_loop_count }}</span></h3>
+          {% for m in brief.open_loops %}{{ mem_row(m, show_project=false, when='date') }}
+          {% else %}<p class="quiet">No open loops.</p>{% endfor %}
+          {% if brief.open_loop_count > brief.open_loops|length %}
+          <a class="brief-more" href="/ui?project={{ current.slug }}&type=open_loop">all {{ brief.open_loop_count }} open loops</a>
+          {% endif %}
+        </div>
+
+        <div class="brief-block">
+          <h3>Facts and decisions</h3>
+          {% for m in brief.facts_and_decisions %}{{ mem_row(m, show_project=false, when='date') }}
+          {% else %}<p class="quiet">No facts or decisions stored yet.</p>{% endfor %}
+        </div>
+
+        <div class="brief-block">
+          <h3>How-tos</h3>
+          {% for m in brief.howtos %}{{ mem_row(m, show_project=false, when='date') }}
+          {% else %}<p class="quiet">Tag a memory <code>howto</code> or <code>runbook</code> and it is listed here.</p>{% endfor %}
+        </div>
+      </div>
+    </section>
+    {% endif %}
     {% if stream.days %}
     <div id="stream-feed">
       {% for d in stream.days %}
@@ -98,6 +168,10 @@
         <i style="--lc:#8b93ec"></i>3+
         <i class="sq" style="--lc:#bfe9ff"></i>file
         <i class="ring" style="--lc:#8ea0c8"></i>folder
+        <span class="sep" aria-hidden="true"></span>
+        <i class="st-disputed" title="A disputed memory flickers, with a red edge"></i>disputed
+        <i class="st-changed" title="A memory that replaced an older one in the last 30 days glows"></i>fresh fix
+        <i class="st-stale" title="An open loop untouched for 30 days burns low"></i>stale
       </span>
       <span id="cst-status" class="lens-status" aria-live="polite"></span>
     </div>

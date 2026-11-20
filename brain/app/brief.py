@@ -486,6 +486,33 @@ def _provenance(pack: dict[str, Any], db_path: Path) -> None:
             item.setdefault("writer", writer or "")
 
 
+def handover_view(project: str, days: int = 14, db_path: Path = DB_PATH) -> dict[str, Any]:
+    """The handover sections of the brief, whole and unbudgeted, for a person
+    to read in Atlas: where the last session stopped, what changed, the open
+    loops (stale ones last and marked), the how-tos, the facts and decisions
+    as they stand, and what only the user can settle. The same queries the
+    agents' brief is built from; read-only, no model and no search."""
+    loops, loop_count, stale_loops = _open_loops(project, 12, db_path)
+    activity = _last_activity(project, db_path)
+    conflicts = list_conflicts(project=project, limit=10, db_path=db_path)
+    return {
+        "project": project,
+        "days": days,
+        "where_we_left_off": _last_session(project, db_path),
+        "changes": _changes(project, days=days, limit=8, db_path=db_path),
+        "open_loops": loops,
+        "open_loop_count": loop_count,
+        "howtos": _howtos(project, 8, db_path),
+        "facts_and_decisions": _memories_by_types(project, ("fact", "decision"), 8, db_path,
+                                                  current_only=True, by_standing=True),
+        "last_activity": activity,
+        "dormant": bool(activity and activity["days_ago"] >= DORMANT_DAYS),
+        "waiting_on_you": {**_waiting(project, db_path),
+                           "conflicts": conflicts.get("total", 0),
+                           "stale_loops": stale_loops},
+    }
+
+
 async def build_project_brief(
     project: str,
     intent: Optional[str] = None,

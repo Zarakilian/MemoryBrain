@@ -1,15 +1,40 @@
 {# Shared fragments. mem_row renders one memory as a link row: fully usable
-   without JS; atlas.js intercepts clicks to open the inspector instead. #}
-{% macro mem_row(m, show_project=true) -%}
-<a class="mem" href="/ui/memory/{{ m.id }}" data-id="{{ m.id }}"
-   data-project="{{ m.project }}">
-  <time datetime="{{ m.timestamp }}">{{ (m.timestamp or '')[11:16] or '·' }}</time>
-  <span class="badge t-{{ m.type }}">{{ m.type }}</span>
+   without JS; atlas.js intercepts clicks to open the inspector instead.
+   atlas.js builds the same row for load-more (Atlas.memRow): keep them alike. #}
+
+{# 3.3 standing: a small badge when the standing says something. "current"
+   and "open" are the ordinary case and get none. #}
+{% macro standing_badge(m) -%}
+{% if m.standing and m.standing not in ('current', 'open') -%}
+<span class="standing s-{{ m.standing }}" title="{{ standing_help.get(m.standing, m.standing) }}">{{ m.standing }}</span>
+{%- endif %}
+{%- endmacro %}
+
+{# importance as it stands today, with the stored one named when it moved #}
+{% macro imp_bars(m) -%}
+{% set base = m.importance or 1 %}{% set now = m.importance_now or base %}
+<span class="imp{{ ' up' if now > base else ' down' if now < base else '' }}" data-imp="{{ now }}"
+      title="importance {{ now }}/5{% if now != base %} today, stored as {{ base }}{% endif %}"></span>
+{%- endmacro %}
+
+{# a summary the brain made itself must not pass for the writer's own #}
+{% macro auto_summary(m) -%}
+{% if m.summary_source in ('extract', 'model') -%}
+<span class="auto-sum" title="This summary was made by the brain ({{ 'the opening of the text' if m.summary_source == 'extract' else 'the summary model' }}), not written by the author">≈</span>
+{%- endif %}
+{%- endmacro %}
+
+{% macro mem_row(m, show_project=true, when='time') -%}
+<a class="mem{{ ' dated' if when != 'time' else '' }}{{ ' is-' ~ m.standing if m.standing in ('disputed', 'stale', 'superseded', 'done') else '' }}"
+   href="/ui/memory/{{ m.id }}" data-id="{{ m.id }}"
+   data-project="{{ m.project or '' }}">
+  <time datetime="{{ m.timestamp }}">{% if when == 'time' %}{{ (m.timestamp or '')[11:16] or '·' }}{% else %}{{ (m.timestamp or '')[:10] or '·' }}{% endif %}</time>
+  <span class="badge t-{{ m.type }}">{{ (m.type or '')|replace('_', ' ') }}</span>
   {% if show_project %}<span class="pdot" style="--ph:{{ m.project|phue }}"
         title="{{ m.project }}"></span>{% endif %}
-  <span class="sum">{{ m.summary or '(no summary)' }}</span>
-  <span class="imp" data-imp="{{ m.importance or 1 }}"
-        title="importance {{ m.importance or 1 }}/5"></span>
+  {{ auto_summary(m) }}<span class="sum">{{ m.summary or '(no summary)' }}</span>
+  {{ standing_badge(m) }}
+  {{ imp_bars(m) }}
 </a>
 {%- endmacro %}
 

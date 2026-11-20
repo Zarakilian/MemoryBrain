@@ -11,7 +11,7 @@
   <p class="quiet">{{ results | length }} result{{ '' if results|length == 1 else 's' }}
     &middot; {{ search_mode }} mode{% if search_mode == 'keyword' %} (embedding provider down — keyword only){% endif %}</p>
   <div class="day-rows">
-    {% for m in results %}{{ mem_row(m) }}{% else %}
+    {% for m in results %}{{ mem_row(m, when='date') }}{% else %}
     {{ empty_state('No results for “' ~ q ~ '”', 'Try fewer or different words.') }}
     {% endfor %}
   </div>

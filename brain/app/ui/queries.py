@@ -45,6 +45,75 @@ def parse_tags(raw) -> list[str]:
         return []
 
 
+# ----------------------------------------------------------------- standing
+
+# standings that say nothing a reader needs a badge for
+PLAIN_STANDING = frozenset({"current", "open"})
+
+
+def with_standing(items: list[dict[str, Any]], id_key: str = "id") -> list[dict[str, Any]]:
+    """Give each row what 3.3 knows about it, in place: `standing`, and
+    `importance_now` (the importance as it stands today) beside `importance`
+    (the stored one, as the UI has always shown and edits). Worked out when
+    read, nothing stored. A row whose id is unknown is left alone; if the
+    standing cannot be worked out the rows are returned as they came."""
+    try:
+        from ..standing import standings
+        found = standings([i.get(id_key) for i in items if isinstance(i, dict)], DB_PATH)
+    except Exception:
+        return items
+    for item in items:
+        info = found.get(item.get(id_key)) if isinstance(item, dict) else None
+        if not info:
+            continue
+        item["standing"] = info["standing"]
+        item["importance"] = info["base_importance"]
+        item["importance_now"] = info["importance"]
+        for key in ("corrected_by", "superseded_by", "verified_at"):
+            if info.get(key):
+                item[key] = info[key]
+    return items
+
+
+def _short_rows(conn, ids: list) -> dict[str, dict[str, Any]]:
+    ids = [i for i in dict.fromkeys(ids) if i]
+    if not ids:
+        return {}
+    rows = _rows(conn, f"""SELECT id, summary, type, status FROM memories
+                           WHERE id IN ({','.join('?' * len(ids))})""", tuple(ids))
+    return {r["id"]: r for r in rows}
+
+
+def lineage(conn, m: dict[str, Any]) -> dict[str, Any]:
+    """Who replaced, corrected or was replaced by this memory, each as a
+    short row (id, summary, type, status) the page can link to."""
+    by_id = _short_rows(conn, [m.get("superseded_by"), m.get("corrected_by"), m.get("supersedes")])
+    out: dict[str, Any] = {}
+    for key in ("superseded_by", "corrected_by", "supersedes"):
+        if m.get(key) and m[key] in by_id:
+            out[key] = by_id[m[key]]
+    out["corrects"] = _rows(conn, """SELECT id, summary, type, status FROM memories
+                                     WHERE corrected_by = ? ORDER BY timestamp DESC LIMIT 20""",
+                            (m["id"],))
+    out["replaces"] = _rows(conn, """SELECT id, summary, type, status FROM memories
+                                     WHERE superseded_by = ? ORDER BY timestamp DESC LIMIT 20""",
+                            (m["id"],))
+    return out
+
+
+def project_brief(slug: str) -> Optional[dict[str, Any]]:
+    """The 3.3 handover for one project, for the project page: the same
+    sections an agent's brief opens with, every row carrying its standing."""
+    try:
+        from ..brief import handover_view
+        view = handover_view(slug, db_path=DB_PATH)
+    except Exception:
+        return None
+    for key in ("where_we_left_off", "open_loops", "howtos", "facts_and_decisions"):
+        with_standing(view.get(key) or [])
+    return view
+
+
 # ---------------------------------------------------------------- dashboard
 
 def _count(conn, sql: str) -> int:
@@ -127,6 +196,8 @@ def get_memory_row(conn, memory_id: str) -> Optional[dict[str, Any]]:
         return None
     m = rows[0]
     m["tags"] = parse_tags(m["tags"])
+    with_standing([m])
+    m["lineage"] = lineage(conn, m)
     return m
 
 
@@ -170,7 +241,8 @@ def stream(conn, project: Optional[str] = None, mtype: Optional[str] = None,
     lexicographic comparison.
     """
     sql = """SELECT id, summary, type, project, tags, importance, timestamp,
-                    COALESCE(link_degree, 0) AS link_degree
+                    COALESCE(link_degree, 0) AS link_degree,
+                    COALESCE(summary_source, '') AS summary_source
              FROM memories WHERE status = 'active' AND importance >= ?"""
     params: list[Any] = [min_importance]
     if project:
@@ -187,6 +259,7 @@ def stream(conn, project: Optional[str] = None, mtype: Optional[str] = None,
     rows = _rows(conn, sql, tuple(params))
     has_more = len(rows) > limit
     rows = rows[:limit]
+    with_standing(rows)
     days: list[dict[str, Any]] = []
     for m in rows:
         m["tags"] = parse_tags(m["tags"])

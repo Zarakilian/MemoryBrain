@@ -36,13 +36,83 @@ Atlas.esc = function (s) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
 };
+/* ---- 3.3: what the brain knows about a memory since it was written.
+   The same fragments _macros.html renders on the server: keep them alike. */
+var STANDING_HELP = {            // the same words as STANDING_HELP in routes.py
+  proven: "Old and never corrected: it has held",
+  verified: "Someone checked it and it was still true",
+  changed: "It replaced an older memory in the last 30 days",
+  disputed: "Another memory corrects part of it, or it sits in a contradiction",
+  stale: "An open loop nobody has touched for 30 days",
+  superseded: "Replaced by a newer memory",
+  archived: "Archived",
+  done: "A finished loop",
+  proposed: "Waiting for your approval",
+};
+Atlas.standingHelp = function (s) { return STANDING_HELP[s] || ""; };
+Atlas.standingBadge = function (m) {
+  var s = m && m.standing;
+  if (!s || s === "current" || s === "open") return "";
+  return '<span class="standing s-' + Atlas.esc(s) + '" title="'
+    + Atlas.esc(STANDING_HELP[s] || s) + '">' + Atlas.esc(s) + "</span>";
+};
+Atlas.impBars = function (m) {
+  var base = m.importance || 1, now = m.importance_now || base;
+  return '<span class="imp' + (now > base ? " up" : now < base ? " down" : "") + '" data-imp="'
+    + Atlas.esc(now) + '" title="importance ' + Atlas.esc(now) + "/5"
+    + (now !== base ? " today, stored as " + Atlas.esc(base) : "") + '"></span>';
+};
+function summaryMaker(m) {
+  return m.summary_source === "extract" ? "the opening of the text"
+       : m.summary_source === "model" ? "the summary model" : "";
+}
+Atlas.autoSummary = function (m) {
+  var who = summaryMaker(m || {});
+  return who ? '<span class="auto-sum" title="This summary was made by the brain (' + who
+    + '), not written by the author">≈</span>' : "";
+};
+Atlas.when = function (ts) { return String(ts || "").slice(0, 16).replace("T", " "); };
+Atlas.typeLabel = function (t) { return String(t || "").replace(/_/g, " "); };
+/* one memory as a row: the twin of the mem_row macro */
+Atlas.memRow = function (m, showProject, when) {
+  var esc = Atlas.esc, st = m.standing;
+  var flag = st === "disputed" || st === "stale" || st === "superseded" || st === "done" ? " is-" + st : "";
+  var ts = m.timestamp || "";
+  return '<a class="mem' + (when === "date" ? " dated" : "") + flag + '" href="/ui/memory/' + esc(m.id)
+    + '" data-id="' + esc(m.id) + '" data-project="' + esc(m.project || "") + '">'
+    + '<time datetime="' + esc(ts) + '">' + esc((when === "date" ? ts.slice(0, 10) : ts.slice(11, 16)) || "·") + "</time>"
+    + '<span class="badge t-' + esc(m.type) + '">' + esc(Atlas.typeLabel(m.type)) + "</span>"
+    + (showProject ? '<span class="pdot" style="--ph:' + Atlas.hue(m.project)
+       + '" title="' + esc(m.project) + '"></span>' : "")
+    + Atlas.autoSummary(m)
+    + '<span class="sum">' + esc(Atlas.cleanSummary(m.summary) || "(no summary)") + "</span>"
+    + Atlas.standingBadge(m) + Atlas.impBars(m) + "</a>";
+};
+
 Atlas.getJSON = async function (url) {
   var r = await fetch(url, { cache: "no-store" });
   if (!r.ok) throw new Error("HTTP " + r.status + " " + url);
   return r.json();
 };
-Atlas.reducedMotion = window.matchMedia
-  && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/* Still mode: the system's reduced-motion setting, or ?motion=still on the
+   address (a way to get the still picture, and to test it, without changing
+   the system). Everything that moves asks this one flag. */
+Atlas.reducedMotion = (window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+  || /[?&]motion=still/.test(location.search);
+if (Atlas.reducedMotion) document.documentElement.classList.add("still");
+
+/* slug -> the project's display name, read from the rail (the one place
+   every page already lists them). The Constellation labels use it. */
+Atlas.projectNames = function () {
+  var out = {};
+  document.querySelectorAll(".rail-projects a").forEach(function (a) {
+    var m = /[?&]project=([^&]+)/.exec(a.getAttribute("href") || "");
+    var name = a.querySelector(".pname");
+    if (m && name) out[decodeURIComponent(m[1])] = name.textContent.trim();
+  });
+  return out;
+};
 
 document.querySelectorAll("[data-js]").forEach(function (el) {
   el.removeAttribute("hidden");
@@ -123,6 +193,7 @@ window.addEventListener("DOMContentLoaded", function () {
     if (window.Nebula && window.Nebula.available) window.Nebula.setAmbience(v);
     document.body.classList.toggle("no-ambience", !v);
     updateBtn();
+    document.dispatchEvent(new CustomEvent("atlas:ambience", { detail: { on: !!v } }));
   }
   var btn = document.getElementById("ambience-toggle");
   if (btn) btn.addEventListener("click", function () { setAmbience(!on()); });
@@ -299,13 +370,39 @@ function renderInspector(m, related) {
   var esc = Atlas.esc;
   var h = ['<button class="insp-close" aria-label="Close">×</button>'];
   h.push('<div class="mem-meta">',
-    '<span class="badge t-' + esc(m.type) + '">' + esc(m.type) + "</span>",
+    '<span class="badge t-' + esc(m.type) + '">' + esc(Atlas.typeLabel(m.type)) + "</span>",
     m.project ? '<span class="pdot" style="--ph:' + Atlas.hue(m.project) + '"></span> '
       + esc(m.project) : "",
-    "<time>" + esc(m.timestamp) + "</time>",
-    '<span class="imp" data-imp="' + (m.importance || 1) + '"></span>',
+    "<time>" + esc(Atlas.when(m.timestamp)) + "</time>",
+    Atlas.standingBadge(m), Atlas.impBars(m),
+    m.status && m.status !== "active" && m.status !== m.standing
+      ? '<span class="badge archived">' + esc(m.status) + "</span>" : "",
     "</div>");
   h.push("<h1>" + esc(Atlas.cleanSummary(m.summary) || "(no summary)") + "</h1>");
+  if (summaryMaker(m)) {
+    h.push('<p class="sum-source">≈ This summary was made by the brain (' + summaryMaker(m)
+      + "), not written by the author.</p>");
+  }
+  /* 3.3: what has happened to this memory since it was written */
+  var lin = m.lineage || {}, lines = [];
+  function linked(o) {
+    return '<a class="insp-jump" href="/ui/memory/' + esc(o.id) + '" data-id="' + esc(o.id) + '">'
+      + esc(Atlas.cleanSummary(o.summary) || o.id.slice(0, 8)) + "</a>";
+  }
+  if (m.standing && m.standing !== "current" && m.standing !== "open") {
+    lines.push("<p><strong>" + esc(m.standing.charAt(0).toUpperCase() + m.standing.slice(1)) + ".</strong> "
+      + esc(Atlas.standingHelp(m.standing)) + "."
+      + (m.importance_now && m.importance_now !== m.importance
+         ? " Importance today is " + esc(m.importance_now) + ", stored as " + esc(m.importance) + "." : "")
+      + "</p>");
+  }
+  if (lin.corrected_by) lines.push('<p class="lin-warn">Corrected by ' + linked(lin.corrected_by) + "</p>");
+  if (lin.superseded_by) lines.push('<p class="lin-warn">Replaced by ' + linked(lin.superseded_by) + "</p>");
+  (lin.replaces || []).forEach(function (o) { lines.push("<p>Replaces " + linked(o) + "</p>"); });
+  (lin.corrects || []).forEach(function (o) { lines.push("<p>Corrects part of " + linked(o) + "</p>"); });
+  if (lines.length) h.push('<div class="lineage">' + lines.join("") + "</div>");
+  /* editor.js puts the verdict buttons here: next to the standing they change */
+  h.push('<div id="insp-verdict"></div>');
   if (m.tags && m.tags.length) {
     h.push('<div class="tags">' + m.tags.map(function (t) {
       return '<span class="tag">' + esc(t) + "</span>";
@@ -321,8 +418,8 @@ function renderInspector(m, related) {
           + (e.weight != null ? e.weight.toFixed(2) : "");
       }).join(" · ");
       h.push('<a class="insp-rel" href="/ui/memory/' + esc(r.id) + '" data-id="' + esc(r.id) + '">',
-        '<span class="sum">' + esc(r.summary || r.id) + "</span>",
-        '<span class="why-line">' + why + "</span>", "</a>");
+        '<span class="sum">' + esc(Atlas.cleanSummary(r.summary) || r.id) + " " + Atlas.standingBadge(r) + "</span>",
+        '<span class="why-line">' + esc(Atlas.typeLabel(r.type)) + (why ? " · " + why : "") + "</span>", "</a>");
     });
   } else {
     h.push('<h2>Related</h2><p class="quiet">No links above the weight floor.</p>');
@@ -334,6 +431,8 @@ function renderInspector(m, related) {
 inspector && inspector.addEventListener("click", function (ev) {
   var closeBtn = ev.target.closest(".insp-close");
   if (closeBtn) { closeInspector(); return; }
+  var jump = ev.target.closest(".insp-jump");
+  if (jump) { ev.preventDefault(); Atlas.inspect(jump.dataset.id, null); return; }
   var fileRel = ev.target.closest(".insp-file");
   if (fileRel) { ev.preventDefault(); Atlas.inspectFile(fileRel.dataset.file); return; }
   var rel = ev.target.closest(".insp-rel");
@@ -392,20 +491,22 @@ function appendStream(data) {
       container = sec.querySelector(".day-rows");
     }
     d.items.forEach(function (m) {
-      var a = document.createElement("a");
-      a.className = "mem";
-      a.href = "/ui/memory/" + m.id;
-      a.dataset.id = m.id;
-      a.innerHTML = "<time>" + esc((m.timestamp || "").slice(11, 16) || "·") + "</time>"
-        + '<span class="badge t-' + esc(m.type) + '">' + esc(m.type) + "</span>"
-        + (showProject ? '<span class="pdot" style="--ph:' + Atlas.hue(m.project)
-           + '" title="' + esc(m.project) + '"></span>' : "")
-        + '<span class="sum">' + esc(Atlas.cleanSummary(m.summary) || "(no summary)") + "</span>"
-        + '<span class="imp" data-imp="' + (m.importance || 1) + '"></span>';
-      container.appendChild(a);
+      container.insertAdjacentHTML("beforeend", Atlas.memRow(m, showProject));
     });
   });
 }
+
+/* the brief's "waiting on you" chips open what they count */
+document.addEventListener("click", function (ev) {
+  var chip = ev.target.closest("[data-waiting]");
+  if (!chip) return;
+  if (chip.dataset.waiting === "conflicts") {
+    document.dispatchEvent(new CustomEvent("atlas:conflicts-open"));
+  } else {
+    var review = document.getElementById("review-btn");
+    if (review) review.click();
+  }
+});
 
 /* filters auto-apply (no-JS path is the noscript submit button) */
 var filterForm = document.getElementById("stream-filters");

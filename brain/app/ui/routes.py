@@ -52,6 +52,21 @@ def _project_hue(slug) -> int:
 
 templates.env.filters["phue"] = _project_hue
 
+# What each standing means, in a line (the badge's tooltip). The same words
+# live in atlas.js (STANDING_HELP): keep the two alike.
+STANDING_HELP = {
+    "proven": "Old and never corrected: it has held",
+    "verified": "Someone checked it and it was still true",
+    "changed": "It replaced an older memory in the last 30 days",
+    "disputed": "Another memory corrects part of it, or it sits in a contradiction",
+    "stale": "An open loop nobody has touched for 30 days",
+    "superseded": "Replaced by a newer memory",
+    "archived": "Archived",
+    "done": "A finished loop",
+    "proposed": "Waiting for your approval",
+}
+templates.env.globals["standing_help"] = STANDING_HELP
+
 # HTML pages and the version endpoint must never be cached: the build stamp
 # comparison on /ui/doctor relies on both being live. Static assets are the
 # opposite — they carry the stamp in their URL, so caching them is safe.
@@ -117,6 +132,8 @@ def atlas(request: Request,
     if project and proj is None:
         raise HTTPException(404, f"Unknown project: {project}")
     return templates.TemplateResponse(request, "index.html", {
+        # 3.3: a project page opens with its handover, the way an agent's brief does
+        "brief": q.project_brief(project) if proj and not before else None,
         "stats": q.stats(conn),
         "stream": q.stream(conn, project=project, mtype=type,
                            min_importance=min_importance, before=before),
@@ -141,6 +158,7 @@ def memory_page(request: Request, memory_id: str,
     rel = related["related"] if related else []
     backlinks = [r for r in rel
                  if any(e.get("direction") == "in" for e in r["explanations"])]
+    q.with_standing(rel)
     return templates.TemplateResponse(request, "memory.html", {
         "m": mem, "related": rel, "backlinks": backlinks,
         "projects": q.all_projects(conn),
@@ -184,6 +202,7 @@ async def search_page(request: Request, q_: str = Query("", alias="q"),
                       conn: sqlite3.Connection = Depends(db)):
     """Server-rendered search results: the no-JS fallback for the palette."""
     results, mode = (await _search(conn, q_, project, type)) if q_ else ([], "none")
+    q.with_standing(results)
     return templates.TemplateResponse(request, "search.html", {
         "q": q_, "results": results, "search_mode": mode,
         "projects": q.all_projects(conn),
@@ -221,7 +240,7 @@ async def api_search(q_: str = Query(..., alias="q", min_length=1),
                      limit: int = Query(10, ge=1, le=50),
                      conn: sqlite3.Connection = Depends(db)):
     results, mode = await _search(conn, q_, project, type, limit=limit)
-    return {"results": results, "mode": mode}
+    return {"results": q.with_standing(results), "mode": mode}
 
 
 @router.get("/api/ui/graph")
@@ -231,9 +250,15 @@ def api_graph(project: str | None = None,
               include_archived: bool = False,
               include_files: bool = False,
               folder: list[str] | None = Query(None)):
-    return get_graph(project=project or None, min_weight=min_weight,
-                     max_nodes=max_nodes, include_archived=include_archived,
-                     include_files=include_files, folders=folder or [])
+    graph = get_graph(project=project or None, min_weight=min_weight,
+                      max_nodes=max_nodes, include_archived=include_archived,
+                      include_files=include_files, folders=folder or [])
+    # 3.3: every star carries its standing, so the Constellation can show it
+    # (a disputed star flickers, a fresh fix glows). Added here, not in
+    # get_graph: the MCP graph tool keeps its shape and its size.
+    q.with_standing([n for n in graph.get("nodes", [])
+                     if n.get("kind", "memory") == "memory"])
+    return graph
 
 
 @router.get("/api/ui/memories/{memory_id}/related")
@@ -243,6 +268,7 @@ def api_related(memory_id: str,
     result = get_related(memory_id, limit=limit, min_weight=min_weight)
     if result is None:
         raise HTTPException(404, "Memory not found")
+    q.with_standing(result.get("related") or [])
     return result
 
 
@@ -274,6 +300,18 @@ def api_memory(memory_id: str, conn: sqlite3.Connection = Depends(db)):
     if mem is None:
         raise HTTPException(404, "Memory not found")
     return mem
+
+
+@router.get("/api/ui/brief")
+def api_brief(project: str, conn: sqlite3.Connection = Depends(db)):
+    """The 3.3 handover for one project (where we left off, what changed,
+    open loops, how-tos, what waits on the user). Read-only."""
+    if not any(p["slug"] == project for p in q.all_projects(conn)):
+        raise HTTPException(404, f"Unknown project: {project}")
+    view = q.project_brief(project)
+    if view is None:
+        raise HTTPException(503, "The brief could not be built")
+    return view
 
 
 @router.get("/api/ui/conflicts")

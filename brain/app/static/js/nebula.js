@@ -29,8 +29,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "orbitcontrols";
 
-var reduced = window.matchMedia
-  && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+var reduced = (window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+  || /[?&]motion=still/.test(location.search);   // the same flag as Atlas.reducedMotion
 
 function ambienceOn() {
   try { return localStorage.getItem("nebula-ambience") !== "off"; }
@@ -129,6 +130,17 @@ if (renderer) {
   controls.enabled = false;               // granted in focus mode only
 
   var clockTime = 0;                      // world time, seconds
+  var lifeTime = 0;                       // the shapes' own clock: stops when the world is stilled
+  /* the world's clock. It is the real clock, plus whatever N.advance has
+     wound it forward by (a hidden page never animates by itself, so a
+     check has to turn the hands). Everything that animates reads this. */
+  var clockSkew = 0;
+  function nowMs() { return performance.now() + clockSkew; }
+  var lastInput = nowMs(), IDLE_MS = 7000;
+  function touched() { lastInput = nowMs(); }
+  window.addEventListener("wheel", touched, { passive: true });
+  window.addEventListener("keydown", touched);
+  window.addEventListener("pointerdown", touched, { passive: true });
 
   /* =========================================================== textures
      Every canvas that feeds a texture is kept in CPU memory
@@ -161,11 +173,15 @@ if (renderer) {
       uniforms: { uAlpha: { value: alpha }, uTime: { value: 0 } },
       vertexShader:
         "attribute float psize; varying vec3 vC; uniform float uTime;" +
-        (breathe ? "attribute float aSeed;" : "") +
+        (breathe ? "attribute float aSeed; attribute float aGlow;" : "") +
         "void main(){ vC = color;" +
         " vec4 mv = modelViewMatrix * vec4(position,1.0);" +
+        /* aGlow: a star that just replaced an older memory keeps a wider,
+           slowly pulsing halo (the fresh fix glows) */
         (breathe
-          ? " float br = 1.0 + 0.11 * sin(uTime * (0.9 + aSeed) + aSeed * 31.0);"
+          ? " float br = (1.0 + 0.11 * sin(uTime * (0.9 + aSeed) + aSeed * 31.0))"
+            + " * (1.0 + aGlow * (0.55 + 0.25 * sin(uTime * 1.6 + aSeed * 9.0)));"
+            + " vC *= 1.0 + aGlow * 0.9;"
           : " float br = 1.0;") +
         " gl_PointSize = min(psize * br * (320.0 / -mv.z), 80.0);" +
         " gl_Position = projectionMatrix * mv; }",
@@ -319,21 +335,24 @@ if (renderer) {
     ].join("\n"),
     vertexColors: true,
   });
-  var stars = (function () {
-    var n = 2600, c = new THREE.Color();
+  /* three shells of stars at three depths. The far one rides with the
+     camera exactly; the nearer two lag behind it (ride < 1), so they slide
+     against the far field as the view turns: the sky has depth. */
+  function starShell(n, r0, r1, dim, heroes) {
+    var c = new THREE.Color();
     var pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
     var size = new Float32Array(n), phase = new Float32Array(n), rate = new Float32Array(n);
     for (var i = 0; i < n; i++) {
       var u = Math.random() * 2 - 1, th = Math.random() * Math.PI * 2;
-      var sn = Math.sqrt(1 - u * u), r = 3600 + Math.random() * 2600;
+      var sn = Math.sqrt(1 - u * u), r = r0 + Math.random() * (r1 - r0);
       pos[i * 3] = r * sn * Math.cos(th);
       pos[i * 3 + 1] = r * u;
       pos[i * 3 + 2] = r * sn * Math.sin(th);
       var temp = Math.random();
       c.setStyle(temp < 0.12 ? "#ffd9a8" : temp < 0.3 ? "#a9c6ff" : "#e8eeff",
                  THREE.SRGBColorSpace);
-      var hero = Math.random() < 0.025;
-      var bright = hero ? 1.0 : 0.3 + Math.random() * 0.45;
+      var hero = Math.random() < heroes;
+      var bright = (hero ? 1.0 : 0.3 + Math.random() * 0.45) * dim;
       col[i * 3] = c.r * bright; col[i * 3 + 1] = c.g * bright; col[i * 3 + 2] = c.b * bright;
       size[i] = hero ? 5 + Math.random() * 3 : 1.1 + Math.pow(Math.random(), 3) * 2.4;
       phase[i] = Math.random() * Math.PI * 2;
@@ -348,9 +367,14 @@ if (renderer) {
     var pts = new THREE.Points(geo, starsMat);
     pts.frustumCulled = false;
     pts.renderOrder = -9;
+    ambient.add(pts);
     return pts;
-  })();
-  ambient.add(stars);
+  }
+  var starLayers = [
+    { pts: starShell(2100, 3600, 6200, 1, 0.025), ride: 1 },
+    { pts: starShell(620, 2300, 3300, 0.8, 0.012), ride: 0.9 },
+    { pts: starShell(240, 1400, 1900, 0.62, 0.02), ride: 0.74 },
+  ];
 
   /* ============================ the cursor field: physics you can stir
      Not stars, not specks: soft fog-wisps — large, blurred, barely-there
@@ -480,26 +504,34 @@ if (renderer) {
     uniforms: {
       uTime: { value: 0 },
       uAura: { value: AURA.clone() },
+      uLife: { value: reduced ? 0 : 1 },
+      uPx: { value: 800 },             // pixels per world unit at distance 1
     },
     vertexShader: [
       "attribute float aSeed; attribute float aHeat; attribute float aChurn;",
-      "attribute float aHov;",
+      "attribute float aHov; attribute float aState;",
       "varying vec3 vN; varying vec3 vW; varying vec3 vP; varying vec3 vC;",
       "varying float vSeed; varying float vHeat; varying float vChurn;",
-      "varying float vHov;",
+      "varying float vHov; varying float vState; varying float vPx;",
+      "uniform float uPx;",
       "void main(){",
-      "  vC = instanceColor;",
+      "  vC = instanceColor; vState = aState;",
       "  vSeed = aSeed; vHeat = aHeat; vChurn = aChurn; vHov = aHov;",
       "  vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);",
       "  vN = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);",
       "  vW = wp.xyz; vP = position;",
-      "  gl_Position = projectionMatrix * viewMatrix * wp; }",
+      "  vec4 vp = viewMatrix * wp;",
+      "  /* how many pixels wide this star's radius is on screen: the",
+      "     fragment shader spends its effort only where it can be seen */",
+      "  vPx = length(instanceMatrix[0].xyz) * uPx / max(1.0, -vp.z);",
+      "  gl_Position = projectionMatrix * vp; }",
     ].join("\n"),
     fragmentShader: [
       "uniform float uTime; uniform vec3 uAura;",
       "varying vec3 vN; varying vec3 vW; varying vec3 vP; varying vec3 vC;",
       "varying float vSeed; varying float vHeat; varying float vChurn;",
-      "varying float vHov;",
+      "varying float vHov; varying float vState; varying float vPx;",
+      "uniform float uLife;",
       GLSL_NOISE,
       "void main(){",
       "  vec3 n = normalize(vN);",
@@ -512,10 +544,22 @@ if (renderer) {
       "  float ca = cos(t * 0.35), sa = sin(t * 0.35);",
       "  vec3 rp = vec3(vP.x * ca - vP.z * sa, vP.y, vP.x * sa + vP.z * ca);",
       "  vec3 p = rp * 2.4 + vSeed * 7.0;",
-      "  vec3 q = vec3(fbm(p + vec3(t, 0.0, 0.0)),",
-      "                fbm(p + vec3(5.2, t * 0.8, 1.3)),",
-      "                fbm(p + vec3(1.7, 9.2, -t * 0.6)));",
-      "  float sw = fbm(p + 1.9 * q + 0.5 * vec3(0.0, sin(t * 0.7), 0.0));",
+      "  /* three levels of detail by size on screen. The full molten",
+      "     surface (four layered noises) is only worth it on a star you",
+      "     can actually see into; a mid one gets one layered noise; a",
+      "     point of light gets a single smooth one. This is what lets",
+      "     700 stars stay smooth on a laptop's graphics chip. */",
+      "  float sw;",
+      "  if (vPx > 15.0) {",
+      "    vec3 q = vec3(fbm(p + vec3(t, 0.0, 0.0)),",
+      "                  fbm(p + vec3(5.2, t * 0.8, 1.3)),",
+      "                  fbm(p + vec3(1.7, 9.2, -t * 0.6)));",
+      "    sw = fbm(p + 1.9 * q + 0.5 * vec3(0.0, sin(t * 0.7), 0.0));",
+      "  } else if (vPx > 6.0) {",
+      "    sw = fbm(p * 1.3 + vec3(t, t * 0.6, 0.0));",
+      "  } else {",
+      "    sw = 0.25 + 0.5 * vnoise(p * 1.1 + vec3(t, 0.0, t * 0.7));",
+      "  }",
       "  /* palette: shadowed body -> project colour -> white-hot */",
       "  vec3 deep = vC * 0.22;",
       "  vec3 hot = mix(vC, vec3(1.0, 0.97, 0.9), 0.8);",
@@ -527,6 +571,25 @@ if (renderer) {
       "  float rim = pow(1.0 - ndv, 2.6);",
       "  col += mix(vC, uAura, 0.3) * rim * (1.7 + vHov * 0.9);",
       "  col *= 1.0 + vHov * 0.28;",
+      "  /* STANDING (3.3), one float per star: 1 disputed, 2 changed,",
+      "     3 stale, 4 proven or verified, 5 retired */",
+      "  if (vState > 0.5 && vState < 1.5) {",
+      "    /* disputed: an unsteady light, and a red edge */",
+      "    float fl = sin(uTime * 7.0 + vSeed * 50.0) * sin(uTime * 17.0 + vSeed * 17.0);",
+      "    col *= 0.62 + 0.38 * mix(1.0, smoothstep(-0.25, 0.15, fl), uLife);",
+      "    col = mix(col, vec3(1.0, 0.36, 0.42), rim * 0.8);",
+      "  } else if (vState > 1.5 && vState < 2.5) {",
+      "    /* the fresh fix: brighter, breathing */",
+      "    col *= 1.18 + 0.14 * uLife * sin(uTime * 1.6 + vSeed * 9.0);",
+      "    col += vec3(0.5, 1.0, 0.86) * rim * 0.7;",
+      "  } else if (vState > 2.5 && vState < 3.5) {",
+      "    /* stale: the fire is going out */",
+      "    col = mix(vec3(dot(col, vec3(0.3, 0.55, 0.15))), col, 0.35) * 0.5;",
+      "  } else if (vState > 3.5 && vState < 4.5) {",
+      "    col += vec3(1.0, 0.95, 0.8) * pow(1.0 - ndv, 5.0) * 0.9;",
+      "  } else if (vState > 4.5) {",
+      "    col = vec3(dot(col, vec3(0.3, 0.55, 0.15))) * 0.34;",
+      "  }",
       "  gl_FragColor = vec4(col, 1.0); }",
     ].join("\n"),
   });
@@ -569,10 +632,9 @@ if (renderer) {
      GPU: aT is the distance along the link, aPhase staggers the pulses,
      aLit lights a link and its sign says which way the pulse runs. */
   var SEG = 10;
-  var FLAT_MODES = ["flow_down", "flow_right", "web", "tree"];
   var synapseMat = new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    uniforms: { uTime: { value: 0 }, uFlow: { value: reduced ? 0 : 1 } },
+    uniforms: { uTime: { value: 0 }, uFlow: { value: reduced ? 0 : 1 }, uLife: { value: 1 } },
     vertexShader: [
       "attribute float aT; attribute float aPhase; attribute float aLit;",
       "varying vec3 vC; varying float vT; varying float vPhase; varying float vLit;",
@@ -581,14 +643,15 @@ if (renderer) {
       "  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
     ].join("\n"),
     fragmentShader: [
-      "uniform float uTime; uniform float uFlow;",
+      "uniform float uTime; uniform float uFlow; uniform float uLife;",
       "varying vec3 vC; varying float vT; varying float vPhase; varying float vLit;",
       "void main(){",
       "  float lit = abs(vLit);",
       "  float t = vLit < 0.0 ? 1.0 - vT : vT;",
       "  float x = fract(t - uTime * (0.07 + 0.5 * lit) + vPhase);",
       "  float pulse = exp(-pow((x - 0.5) * (14.0 - 4.0 * lit), 2.0));",
-      "  float k = 1.0 + pulse * (0.9 + 2.6 * lit) * uFlow;",
+      "  /* at rest: a small bright bead travelling each link, slowly */",
+      "  float k = 1.0 + pulse * (0.9 + 2.4 * uLife + 2.6 * lit) * uFlow;",
       "  gl_FragColor = vec4(vC * k, 1.0); }",
     ].join("\n"),
     vertexColors: true,
@@ -631,7 +694,7 @@ if (renderer) {
     sp.renderOrder = 3;
     graph.group.add(sp);
     var r = n._r || 4;
-    ripples.push({ s: sp, t0: performance.now(), dur: dur, a: strength,
+    ripples.push({ s: sp, t0: nowMs(), dur: dur, a: strength,
                    r0: r * 2, r1: r * (strength >= 1 ? 16 : 7) });
     N.requestRender();
   }
@@ -787,6 +850,490 @@ if (renderer) {
     scene.add(cortexGroup);
   }
 
+  /* ====================================================== THE STRUCTURES
+     What a shape stands on, drawn behind its stars (layouts.js says what,
+     this draws it): the globe's graticule and its regions, the river's
+     channels and the motes drifting down them, the web's silk, the tree's
+     wood, the glow at the heart of each galaxy. One structure at a time;
+     the old one fades out while the new one fades in. Everything that
+     moves here moves by the same clock and the same formula as the stars
+     (lifeTime), so a leaf never leaves its twig. */
+  var deco = null, decoOld = [];
+  var GLSL_SWAY = [
+    "uniform float uGround; uniform float uTall; uniform float uAmp; uniform float uFlat;",
+    "vec3 sway(vec3 p, float t){",
+    "  float hh = clamp((p.y - uGround) / uTall, 0.0, 1.3); float s = hh * hh;",
+    "  vec3 q = p;",
+    "  q.x += uAmp * s * (sin(t * 0.5 + p.x * 0.006 + p.z * 0.004) + 0.35 * sin(t * 1.13 + p.y * 0.02));",
+    "  q.z += (1.0 - uFlat) * uAmp * 0.6 * s * sin(t * 0.43 + p.x * 0.005 + 1.7);",
+    "  return q; }",
+  ].join("\n");
+  var GLSL_TREMBLE = [
+    "uniform float uRF;",
+    "vec3 sway(vec3 p, float t){",
+    "  float r = length(p.xy); float f = r / uRF;",
+    "  return vec3(p.x + 1.6 * f * sin(t * 0.37 + 1.0), p.y + 1.2 * f * sin(t * 0.29),",
+    "              3.0 * f * sin(t * 1.1 - r * 0.018)); }",
+  ].join("\n");
+  var GLSL_STILL = "vec3 sway(vec3 p, float t){ return p; }";
+
+  /* thin lines of light. aB is each vertex's own brightness; uGlobe dims
+     the far side of a sphere so the globe reads as round. */
+  function lineMat(color, motion, extra) {
+    var u = { uTime: { value: 0 }, uAlpha: { value: 0 }, uGlobe: { value: 0 },
+              uColor: { value: new THREE.Color().setStyle(color, THREE.SRGBColorSpace) } };
+    Object.keys(extra || {}).forEach(function (k) { u[k] = { value: extra[k] }; });
+    return new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, uniforms: u,
+      vertexShader: [
+        "attribute float aB; uniform float uTime; varying float vB; varying float vFace;",
+        motion,
+        "void main(){",
+        "  vB = aB;",
+        "  vec4 wp = modelMatrix * vec4(sway(position, uTime), 1.0);",
+        "  vFace = dot(normalize(wp.xyz), normalize(cameraPosition - wp.xyz));",
+        "  gl_Position = projectionMatrix * viewMatrix * wp; }",
+      ].join("\n"),
+      fragmentShader: [
+        "uniform float uAlpha; uniform float uGlobe; uniform vec3 uColor;",
+        "varying float vB; varying float vFace;",
+        "void main(){",
+        "  float a = uAlpha * vB * mix(1.0, mix(0.16, 1.0, smoothstep(-0.15, 0.45, vFace)), uGlobe);",
+        "  gl_FragColor = vec4(uColor * a, a); }",
+      ].join("\n"),
+    });
+  }
+  function lineObject(seg, bright, mat) {
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(seg), 3));
+    geo.setAttribute("aB", new THREE.BufferAttribute(new Float32Array(bright), 1));
+    var obj = new THREE.LineSegments(geo, mat);
+    obj.frustumCulled = false;
+    obj.renderOrder = 1;
+    return obj;
+  }
+  /* a polyline through fn(0..1) as line segments */
+  function strokeInto(seg, bright, fn, steps, b) {
+    var p = fn(0);
+    for (var i = 1; i <= steps; i++) {
+      var q = fn(i / steps);
+      seg.push(p[0], p[1], p[2], q[0], q[1], q[2]);
+      bright.push(b, b);
+      p = q;
+    }
+  }
+
+  function buildGlobe(d, out) {
+    var R = d.R, seg = [], bright = [];
+    for (var lat = -75; lat <= 75; lat += 15) {
+      (function (la) {
+        var y = Math.sin(la) * R, r = Math.cos(la) * R;
+        strokeInto(seg, bright, function (t) {
+          return [Math.cos(t * 6.2832) * r, y, Math.sin(t * 6.2832) * r];
+        }, 72, lat === 0 ? 0.75 : 0.36);
+      })(lat * Math.PI / 180);
+    }
+    for (var lon = 0; lon < 360; lon += 20) {
+      (function (lo) {
+        strokeInto(seg, bright, function (t) {
+          var la = (t - 0.5) * Math.PI * 0.94;
+          return [Math.cos(la) * Math.cos(lo) * R, Math.sin(la) * R, Math.cos(la) * Math.sin(lo) * R];
+        }, 40, 0.3);
+      })(lon * Math.PI / 180);
+    }
+    /* the body of the globe: dark, nearly solid, lit at its edge. It
+       writes depth, so the far side's links and halos are hidden and its
+       stars only show through dimly: you see a ball, not a bird cage. */
+    var bodyMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: true,
+      uniforms: { uTime: { value: 0 }, uAlpha: { value: 0 } },
+      vertexShader: "varying vec3 vN; varying vec3 vW;" +
+        "void main(){ vN = normalize(mat3(modelMatrix) * normal);" +
+        " vec4 wp = modelMatrix * vec4(position, 1.0); vW = wp.xyz;" +
+        " gl_Position = projectionMatrix * viewMatrix * wp; }",
+      fragmentShader: "uniform float uAlpha; varying vec3 vN; varying vec3 vW;" +
+        "void main(){ float ndv = clamp(dot(normalize(vN), normalize(cameraPosition - vW)), 0.0, 1.0);" +
+        " vec3 col = mix(vec3(0.014, 0.026, 0.062), vec3(0.09, 0.16, 0.33), pow(1.0 - ndv, 2.6));" +
+        " gl_FragColor = vec4(col, uAlpha * 0.88); }",
+    });
+    var body = new THREE.Mesh(new THREE.SphereGeometry(R * 0.968, 64, 40), bodyMat);
+    body.renderOrder = -2;
+    out.group.add(body);
+    out.mats.push(bodyMat);
+    out.gain.push([bodyMat, 1]);
+    var mat = lineMat("#8fb8e8", GLSL_STILL);
+    mat.uniforms.uGlobe.value = 1;
+    var grat = lineObject(seg, bright, mat);
+    var axis = new THREE.Vector3(d.axis[0], d.axis[1], d.axis[2]);
+    grat.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), axis);
+    out.group.add(grat);
+    out.mats.push(mat);
+    /* every project's region, outlined like a country */
+    if (d.regions.length) {
+      var rs = [], rb = [];
+      d.regions.forEach(function (rg) {
+        var ca = Math.cos(rg.a) * R * 1.002, sa = Math.sin(rg.a) * R * 1.002;
+        strokeInto(rs, rb, function (t) {
+          var cs = Math.cos(t * 6.2832) * sa, sn = Math.sin(t * 6.2832) * sa;
+          return [rg.c[0] * ca + rg.u[0] * cs + rg.v[0] * sn,
+                  rg.c[1] * ca + rg.u[1] * cs + rg.v[1] * sn,
+                  rg.c[2] * ca + rg.u[2] * cs + rg.v[2] * sn];
+        }, 64, 1);
+      });
+      var rmat = lineMat("#ffd98a", GLSL_STILL);
+      rmat.uniforms.uGlobe.value = 1;
+      out.group.add(lineObject(rs, rb, rmat));
+      out.mats.push(rmat);
+      out.gain.push([rmat, 0.55]);
+    }
+    out.gain.push([mat, 0.62]);
+    out.step = function (t) { out.group.quaternion.setFromAxisAngle(axis, d.omega * t); };
+  }
+
+  function buildRiver(d, out) {
+    /* the channels: one soft ribbon of water per project */
+    var pos = [], uv = [], index = [], base = 0, S = 56, p = { x: 0, y: 0, z: 0 };
+    d.lanes.forEach(function (lane) {
+      if (!lane.g.mem.length) return;
+      var pad = 0.03, a0 = lane.u0 - pad, a1 = lane.u1 + pad;
+      for (var i = 0; i <= S; i++) {
+        var u = a0 + (a1 - a0) * i / S, c = d.mid(lane, u);
+        var half = Math.max(7, lane.hw * 0.46) * Math.pow(Math.sin(Math.PI * i / S), 0.3);
+        d.xyz(u * d.Len, c - half, -18, p); pos.push(p.x, p.y, p.z); uv.push(u * d.Len, -1);
+        d.xyz(u * d.Len, c + half, -18, p); pos.push(p.x, p.y, p.z); uv.push(u * d.Len, 1);
+        if (i < S) {
+          var k = base + i * 2;
+          index.push(k, k + 1, k + 2, k + 1, k + 3, k + 2);
+        }
+      }
+      base += (S + 1) * 2;
+    });
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
+    geo.setAttribute("aUV", new THREE.BufferAttribute(new Float32Array(uv), 2));
+    geo.setIndex(index);
+    var water = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      uniforms: { uTime: { value: 0 }, uAlpha: { value: 0 } },
+      vertexShader: "attribute vec2 aUV; varying vec2 vUV;" +
+        "void main(){ vUV = aUV; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader: [
+        "uniform float uTime; uniform float uAlpha; varying vec2 vUV;",
+        "void main(){",
+        "  float edge = pow(max(0.0, 1.0 - vUV.y * vUV.y), 1.6);",
+        "  /* light running downstream, bowed like a current */",
+        "  float band = pow(0.5 + 0.5 * sin(vUV.x * 0.05 - uTime * 1.3 - vUV.y * vUV.y * 1.4), 6.0);",
+        "  float a = uAlpha * edge * (0.24 + 0.30 * band);",
+        "  vec3 col = mix(vec3(0.26, 0.46, 0.95), vec3(0.42, 0.86, 0.92), band);",
+        "  gl_FragColor = vec4(col * a, a); }",
+      ].join("\n"),
+    });
+    var mesh = new THREE.Mesh(geo, water);
+    mesh.frustumCulled = false;
+    out.group.add(mesh);
+    out.mats.push(water);
+    out.gain.push([water, 1]);
+
+    /* motes carried by the current: placed entirely on the GPU from each
+       mote's own channel, so they cost the CPU nothing */
+    var a = [], b = [], c2 = [];
+    d.lanes.forEach(function (lane) {
+      if (!lane.g.mem.length) return;
+      var n = Math.round(10 + 46 * (lane.u1 - lane.u0) * Math.min(1.6, lane.hw / 26));
+      for (var i = 0; i < n; i++) {
+        a.push(lane.c, lane.A, lane.k);
+        b.push(lane.phi, lane.u0 - 0.02, lane.u1 + 0.02);
+        c2.push(Math.random(), (Math.random() - 0.5) * lane.hw * 0.7,
+                (0.012 + Math.random() * 0.016) / Math.max(0.15, lane.u1 - lane.u0),
+                1.6 + Math.random() * 2.2);
+      }
+    });
+    var mgeo = new THREE.BufferGeometry();
+    mgeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(a), 3));
+    mgeo.setAttribute("aB", new THREE.BufferAttribute(new Float32Array(b), 3));
+    mgeo.setAttribute("aD", new THREE.BufferAttribute(new Float32Array(c2), 4));
+    var motesMat = new THREE.ShaderMaterial({
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: { uTime: { value: 0 }, uAlpha: { value: 0 }, uLen: { value: d.Len },
+                  uDown: { value: d.down ? 1 : 0 }, uPx: { value: pxPerUnit() } },
+      vertexShader: [
+        "attribute vec3 aB; attribute vec4 aD;",
+        "uniform float uTime; uniform float uLen; uniform float uDown; uniform float uPx;",
+        "varying float vFade;",
+        "void main(){",
+        "  float f = fract(aD.x + uTime * aD.z);",
+        "  float u = mix(aB.y, aB.z, f);",
+        "  float across = position.x + position.y * sin(6.2831853 * position.z * u + aB.x) + aD.y;",
+        "  float along = u * uLen;",
+        "  vec3 p = uDown > 0.5 ? vec3(across, uLen * 0.5 - along, -9.0)",
+        "                       : vec3(along - uLen * 0.5, -across, -9.0);",
+        "  vFade = sin(3.14159 * f);",
+        "  vec4 mv = modelViewMatrix * vec4(p, 1.0);",
+        "  gl_PointSize = clamp(aD.w * uPx / -mv.z, 1.5, 14.0);",
+        "  gl_Position = projectionMatrix * mv; }",
+      ].join("\n"),
+      fragmentShader: [
+        "uniform float uAlpha; varying float vFade;",
+        "void main(){",
+        "  float a = smoothstep(0.5, 0.05, length(gl_PointCoord - 0.5)) * vFade * uAlpha * 0.7;",
+        "  gl_FragColor = vec4(vec3(0.62, 0.86, 1.0) * a, a); }",
+      ].join("\n"),
+    });
+    var pts = new THREE.Points(mgeo, motesMat);
+    pts.frustumCulled = false;
+    out.group.add(pts);
+    out.mats.push(motesMat);
+    out.gain.push([motesMat, 1]);
+    out.px.push(motesMat);
+
+    /* the time axis along one bank, a notch at every date mark */
+    var seg = [], bright = [];
+    function at(along, across) { d.xyz(along, across, 0, p); return [p.x, p.y, p.z]; }
+    var side = d.down ? -(d.edge - 12) : d.edge - 12, tickEnd = d.down ? -(d.edge - 4) : d.edge - 4;
+    strokeInto(seg, bright, function (t) { return at(t * d.Len, side); }, 2, 0.5);
+    d.ticks.forEach(function (tk) {
+      strokeInto(seg, bright, function (t) {
+        return at(tk.u * d.Len, side + (tickEnd - side) * t); }, 1, 0.9);
+    });
+    var amat = lineMat("#8fb8e8", GLSL_STILL);
+    out.group.add(lineObject(seg, bright, amat));
+    out.mats.push(amat);
+    out.gain.push([amat, 0.6]);
+  }
+
+  function buildWeb(d, out) {
+    var seg = [], bright = [], RF = d.RF, n = d.radials.length;
+    d.radials.forEach(function (rd) {
+      var cs = Math.cos(rd.a), sn = Math.sin(rd.a);
+      strokeInto(seg, bright, function (t) {
+        var r = d.r0 * 0.3 + (RF - d.r0 * 0.3) * t;
+        return [cs * r, sn * r, 0];
+      }, 8, rd.main ? 1 : 0.5);
+      if (rd.main) {                               // the guy lines that hold the web up
+        strokeInto(seg, bright, function (t) {
+          var r = RF * (1 + 0.55 * t);
+          return [cs * r, sn * r, 0];
+        }, 2, 0.3);
+      }
+    });
+    function ring(r, sag, b) {
+      for (var i = 0; i < n; i++) {
+        (function (a0, a1) {
+          strokeInto(seg, bright, function (t) {
+            var a = a0 + (a1 - a0) * t, rr = r * (1 - sag * Math.sin(Math.PI * t));
+            return [Math.cos(a) * rr, Math.sin(a) * rr, 0];
+          }, 6, b);
+        })(d.radials[i].a, i + 1 < n ? d.radials[i + 1].a : d.radials[0].a + Math.PI * 2);
+      }
+    }
+    if (n > 1) {
+      d.rings.forEach(function (r) { ring(r, d.sag, 0.62); });
+      ring(RF, d.sag * 0.6, 0.85);
+      [0.34, 0.52, 0.72].forEach(function (f) { ring(d.r0 * f, 0, 0.7); });   // the hub
+    }
+    var mat = lineMat("#cfe0ff", GLSL_TREMBLE, { uRF: RF });
+    out.group.add(lineObject(seg, bright, mat));
+    out.mats.push(mat);
+    out.gain.push([mat, 0.62]);
+  }
+
+  function buildTree(d, out) {
+    var pos = [], nrm = [], index = [], base = 0, seg = [], bright = [];
+    function bez(w, t) {
+      var u = 1 - t;
+      return [u * u * w.p0[0] + 2 * u * t * w.c[0] + t * t * w.p2[0],
+              u * u * w.p0[1] + 2 * u * t * w.c[1] + t * t * w.p2[1],
+              u * u * w.p0[2] + 2 * u * t * w.c[2] + t * t * w.p2[2]];
+    }
+    d.wood.forEach(function (w) {
+      if (w.r0 < 0.9) {                            // a twig: one thin line
+        strokeInto(seg, bright, function (t) { return bez(w, t); }, 4, 0.8);
+        return;
+      }
+      var sides = w.depth === 0 ? 10 : w.depth === 1 ? 7 : 5, steps = w.depth <= 1 ? 12 : 5;
+      for (var i = 0; i <= steps; i++) {
+        var t = i / steps, P = bez(w, t), Q = bez(w, Math.min(1, t + 0.02)), O = bez(w, Math.max(0, t - 0.02));
+        var tx = Q[0] - O[0], ty = Q[1] - O[1], tz = Q[2] - O[2];
+        var tl = Math.sqrt(tx * tx + ty * ty + tz * tz) || 1;
+        tx /= tl; ty /= tl; tz /= tl;
+        /* any vector across the branch, then one across both */
+        var rx = Math.abs(tz) < 0.9 ? 0 : 1, rz = Math.abs(tz) < 0.9 ? 1 : 0;
+        var nx = ty * rz, ny = tz * rx - tx * rz, nz = -ty * rx;
+        var nl = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+        nx /= nl; ny /= nl; nz /= nl;
+        var bx = ty * nz - tz * ny, by = tz * nx - tx * nz, bz = tx * ny - ty * nx;
+        var r = w.r0 + (w.r1 - w.r0) * t;
+        for (var s = 0; s < sides; s++) {
+          var a = s / sides * Math.PI * 2, cs = Math.cos(a), sn = Math.sin(a);
+          var ox = nx * cs + bx * sn, oy = ny * cs + by * sn, oz = nz * cs + bz * sn;
+          pos.push(P[0] + ox * r, P[1] + oy * r, P[2] + oz * r);
+          nrm.push(ox, oy, oz);
+        }
+        if (i < steps) {
+          for (s = 0; s < sides; s++) {
+            var k0 = base + i * sides + s, k1 = base + i * sides + (s + 1) % sides;
+            index.push(k0, k1, k0 + sides, k1, k1 + sides, k0 + sides);
+          }
+        }
+      }
+      base += (steps + 1) * sides;
+    });
+    var extra = { uGround: d.ground, uTall: d.tall, uAmp: d.amp, uFlat: d.flat ? 1 : 0 };
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pos), 3));
+    geo.setAttribute("normal", new THREE.BufferAttribute(new Float32Array(nrm), 3));
+    geo.setIndex(index);
+    var wood = new THREE.ShaderMaterial({
+      transparent: true,
+      uniforms: { uTime: { value: 0 }, uAlpha: { value: 0 }, uGround: { value: d.ground },
+                  uTall: { value: d.tall }, uAmp: { value: d.amp }, uFlat: { value: d.flat ? 1 : 0 } },
+      vertexShader: [
+        "uniform float uTime; varying vec3 vN; varying vec3 vW; varying float vH;",
+        GLSL_SWAY,
+        "void main(){",
+        "  vH = clamp((position.y - uGround) / uTall, 0.0, 1.0);",
+        "  vN = normalize(mat3(modelMatrix) * normal);",
+        "  vec4 wp = modelMatrix * vec4(sway(position, uTime), 1.0);",
+        "  vW = wp.xyz;",
+        "  gl_Position = projectionMatrix * viewMatrix * wp; }",
+      ].join("\n"),
+      fragmentShader: [
+        "uniform float uAlpha; varying vec3 vN; varying vec3 vW; varying float vH;",
+        "void main(){",
+        "  float ndv = clamp(dot(normalize(vN), normalize(cameraPosition - vW)), 0.0, 1.0);",
+        "  /* dark bark at the foot, warming to violet in the crown, lit at its edge */",
+        "  vec3 bark = mix(vec3(0.24, 0.15, 0.10), vec3(0.30, 0.22, 0.40), vH);",
+        "  vec3 col = bark * (0.3 + 0.7 * ndv) + vec3(1.0, 0.76, 0.48) * pow(1.0 - ndv, 2.2) * 0.6;",
+        "  gl_FragColor = vec4(col, uAlpha); }",
+      ].join("\n"),
+    });
+    var mesh = new THREE.Mesh(geo, wood);
+    mesh.frustumCulled = false;
+    out.group.add(mesh);
+    out.mats.push(wood);
+    out.gain.push([wood, 1]);
+    out.solid.push(wood);
+    if (seg.length) {
+      var tm = lineMat("#e9c79a", GLSL_SWAY, extra);
+      out.group.add(lineObject(seg, bright, tm));
+      out.mats.push(tm);
+      out.gain.push([tm, 0.5]);
+    }
+  }
+
+  var haloTex = null;
+  function buildGalaxies(d, out) {
+    if (!haloTex) haloTex = glowTexture(128, "rgba(255,255,255,.9)", "rgba(255,255,255,.22)");
+    var o = { x: 0, y: 0, z: 0 }, sprites = [];
+    d.clusters.forEach(function (c) {
+      var hue = window.Atlas && window.Atlas.hue ? window.Atlas.hue(c.slug) : 40;
+      var mat = new THREE.SpriteMaterial({
+        map: haloTex, color: new THREE.Color().setHSL(hue / 360, 0.55, 0.62, THREE.SRGBColorSpace),
+        transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
+      var sp = new THREE.Sprite(mat);
+      sp.scale.setScalar(c.R * 3.4);
+      sp.renderOrder = -1;
+      out.group.add(sp);
+      sprites.push({ sp: sp, c: c });
+    });
+    out.sprites = sprites;
+    out.step = function (t) {
+      sprites.forEach(function (it) {
+        d.centre(it.c, t, o);
+        it.sp.position.set(o.x, o.y, o.z);
+      });
+    };
+  }
+
+  function setDeco(shape) {
+    if (deco) { deco.target = 0; decoOld.push(deco); deco = null; }
+    if (!shape || !shape.deco) return;
+    var out = { kind: shape.deco.kind, group: new THREE.Group(), mats: [], gain: [], solid: [],
+                px: [], sprites: [], alpha: reduced ? 1 : 0, target: 1, step: null };
+    var d = shape.deco;
+    if (d.kind === "globe") buildGlobe(d, out);
+    else if (d.kind === "river") buildRiver(d, out);
+    else if (d.kind === "web") buildWeb(d, out);
+    else if (d.kind === "tree") buildTree(d, out);
+    else if (d.kind === "galaxies") buildGalaxies(d, out);
+    else return;
+    out.group.visible = graph.group.visible;
+    scene.add(out.group);
+    deco = out;
+    stepDeco(0, lifeTime);
+  }
+  function dropDeco(dc) {
+    scene.remove(dc.group);
+    dc.group.traverse(function (o) {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material && o.material.dispose) o.material.dispose();
+    });
+  }
+  function stepOneDeco(dc, dt, t) {
+    dc.alpha += (dc.target - dc.alpha) * Math.min(1, dt * 2.4);
+    if (reduced) dc.alpha = dc.target;
+    var a = dc.alpha * (focus ? 1 : 0.5);
+    dc.mats.forEach(function (m) { m.uniforms.uTime.value = t; });
+    dc.gain.forEach(function (g) { g[0].uniforms.uAlpha.value = a * g[1]; });
+    dc.sprites.forEach(function (it) { it.sp.material.opacity = a * 0.13; });
+    dc.group.visible = graph.group.visible && dc.alpha > 0.004;
+    if (dc.step) dc.step(t);
+  }
+  function stepDeco(dt, t) {
+    if (deco) stepOneDeco(deco, dt, t);
+    for (var i = decoOld.length - 1; i >= 0; i--) {
+      stepOneDeco(decoOld[i], dt, t);
+      if (decoOld[i].alpha < 0.01 || reduced) { dropDeco(decoOld[i]); decoOld.splice(i, 1); }
+    }
+  }
+
+  /* ---------------------------------------------------------- labels
+     Project names and date marks, as plain text over the world: each one
+     follows its place in space (the same track as the stars). Only shown
+     in the Constellation lens. */
+  var labelLayer = null, labels = [];
+  var _lv = new THREE.Vector3(), _lo = { x: 0, y: 0, z: 0 };
+  function setLabels(list) {
+    if (!labelLayer) {
+      labelLayer = document.createElement("div");
+      labelLayer.id = "cst-labels";
+      labelLayer.setAttribute("aria-hidden", "true");
+      document.body.appendChild(labelLayer);
+    }
+    labelLayer.textContent = "";
+    labels = (list || []).map(function (lb) {
+      var el = document.createElement("div"), inner = document.createElement("span");
+      el.className = "cst-label " + (lb.cls || "");
+      inner.textContent = lb.text;
+      el.appendChild(inner);
+      labelLayer.appendChild(el);
+      return { el: el, lb: lb, shown: true };
+    });
+  }
+  function stepLabels(t) {
+    if (!labelLayer) return;
+    var on = focus && graph.group.visible && !orb.veil;
+    if (labelLayer.hidden !== !on) labelLayer.hidden = !on;
+    if (!on) return;
+    var W = window.innerWidth, H = window.innerHeight;
+    labels.forEach(function (it) {
+      it.lb.pos(t, _lo);
+      var op = 1;
+      if (it.lb.globe) {                          // a name on the far side of the globe fades
+        var dot = (_lo.x * camera.position.x + _lo.y * camera.position.y + _lo.z * camera.position.z)
+          / (Math.sqrt(_lo.x * _lo.x + _lo.y * _lo.y + _lo.z * _lo.z) * camera.position.length() || 1);
+        op = Math.max(0, Math.min(1, (dot - 0.05) * 4));
+      }
+      _lv.set(_lo.x, _lo.y, _lo.z).project(camera);
+      var show = _lv.z < 1 && op > 0.02;
+      if (show !== it.shown) { it.el.style.display = show ? "" : "none"; it.shown = show; }
+      if (!show) return;
+      it.el.style.opacity = op.toFixed(2);
+      it.el.style.transform = "translate(" + ((_lv.x * 0.5 + 0.5) * W).toFixed(1) + "px,"
+        + ((0.5 - _lv.y * 0.5) * H).toFixed(1) + "px)";
+    });
+  }
+
   /* a stable 0..1 number for a string: the same link always bends the same way */
   function hash01(str) {
     var h = 2166136261;
@@ -804,6 +1351,9 @@ if (renderer) {
       8.6);
   }
   function isMemory(n) { return !n.kind || n.kind === "memory"; }
+  /* what a memory's standing does to its star (the float the shader reads) */
+  var STANDING_STATE = { disputed: 1, changed: 2, stale: 3, proven: 4, verified: 4,
+                         superseded: 5, archived: 5, done: 5 };
 
   /* old summaries may still carry LLM throat-clearing; the server repairs
      them during sleep, this covers the ones it hasn't met yet */
@@ -942,9 +1492,11 @@ if (renderer) {
     graph.hoverId = null; graph.hoverLink = -1; graph.linkFocus = -1;
     if (!framing.userMoved) framing.pending = true;
     clearRipples();
-    tween = null;
     disposeGraph();
-    if (!graph.nodes.length) { fitSpace(); N.requestRender(); return; }
+    if (!graph.nodes.length) {
+      graph.shape = null; setDeco(null); setLabels([]);
+      fitSpace(); N.requestRender(); return;
+    }
 
     computeHierarchy();
 
@@ -955,20 +1507,26 @@ if (renderer) {
     if (count) {
       var geo = nodeGeo.clone();
       var seeds = new Float32Array(count), heats = new Float32Array(count),
-          churns = new Float32Array(count), hovs = new Float32Array(count);
+          churns = new Float32Array(count), hovs = new Float32Array(count),
+          states = new Float32Array(count), glows = new Float32Array(count);
       graph.memNodes.forEach(function (n, i) {
         n._i = i;
         /* rank is also SIZE, unmissably: head 1.85x, then shrinking rings */
         n._r = radiusOf(n) * (n._head === n ? 1.85
           : [1, 1.0, 0.84, 0.72][Math.min(n._level, 3)] || 0.72);
         seeds[i] = (i * 0.61803) % 1;
+        /* how hot the heart burns: importance as it stands today (3.3) */
         heats[i] = Math.max(0, Math.min(1,
-          ((n.importance || 3) - 1) / 4 + (n._head === n ? 0.3 : 0)));
+          ((n.importance_now || n.importance || 3) - 1) / 4 + (n._head === n ? 0.3 : 0)));
         churns[i] = churnOf(n);
+        /* standing (3.3) shows in the star itself: see the shader */
+        states[i] = STANDING_STATE[n.standing] || 0;
+        glows[i] = n.standing === "changed" ? 1 : 0;
       });
       geo.setAttribute("aSeed", new THREE.InstancedBufferAttribute(seeds, 1));
       geo.setAttribute("aHeat", new THREE.InstancedBufferAttribute(heats, 1));
       geo.setAttribute("aChurn", new THREE.InstancedBufferAttribute(churns, 1));
+      geo.setAttribute("aState", new THREE.InstancedBufferAttribute(states, 1));
       var hovAttr = new THREE.InstancedBufferAttribute(hovs, 1);
       hovAttr.setUsage(THREE.DynamicDrawUsage);
       geo.setAttribute("aHov", hovAttr);
@@ -992,10 +1550,13 @@ if (renderer) {
         gsize[i] = n._r * 7.5;
       });
       var ggeo = new THREE.BufferGeometry();
-      ggeo.setAttribute("position", new THREE.BufferAttribute(gpos, 3));
+      var gposAttr = new THREE.BufferAttribute(gpos, 3);
+      gposAttr.setUsage(THREE.DynamicDrawUsage);
+      ggeo.setAttribute("position", gposAttr);
       ggeo.setAttribute("color", new THREE.BufferAttribute(gcol, 3));
       ggeo.setAttribute("psize", new THREE.BufferAttribute(gsize, 1));
       ggeo.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+      ggeo.setAttribute("aGlow", new THREE.BufferAttribute(glows, 1));
       graph.glow = new THREE.Points(ggeo, pointsMaterial(0.3, true));
       graph.glow.frustumCulled = false;
       graph.group.add(graph.glow);
@@ -1008,8 +1569,14 @@ if (renderer) {
     /* synapses: SEG short segments per link, so each one can curve */
     var nv = graph.links.length * SEG * 2;
     var lgeo = new THREE.BufferGeometry();
-    lgeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
-    lgeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(nv * 3), 3));
+    /* rewritten every frame: say so, or the driver re-creates the buffer
+       each time (that alone cost 13 ms a frame on a laptop chip) */
+    var lpos = new THREE.BufferAttribute(new Float32Array(nv * 3), 3);
+    lpos.setUsage(THREE.DynamicDrawUsage);
+    lgeo.setAttribute("position", lpos);
+    var lcol = new THREE.BufferAttribute(new Float32Array(nv * 3), 3);
+    lcol.setUsage(THREE.DynamicDrawUsage);
+    lgeo.setAttribute("color", lcol);
     var aT = new Float32Array(nv), aPh = new Float32Array(nv);
     graph.links.forEach(function (l, i) {
       for (var sg = 0; sg < SEG; sg++) {
@@ -1049,7 +1616,106 @@ if (renderer) {
     N.requestRender();
   };
 
+  /* a shape (layouts.js compute) gives every node a track, a place that
+     is a function of time. Nodes glide onto their tracks (the morph), then
+     ride them; nothing here is physics. */
+  var morphing = false, simRest = false, restAt = 0, shellK = 1;
+  var _to = { x: 0, y: 0, z: 0 };
+  function placeOnTrack() {                // reduced motion: the still picture
+    graph.nodes.forEach(function (n) {
+      graph.shape.track(n, 0, _to);
+      n.x = _to.x; n.y = _to.y; n.z = _to.z; n._m = null;
+    });
+    morphing = false;
+    updateBuffers();
+    fitSpace(true);
+  }
+  function beginMorph(only) {
+    if (!graph.shape) return;
+    if (reduced) { placeOnTrack(); return; }
+    var now = nowMs();
+    (only || graph.nodes).forEach(function (n) {
+      /* a ragged start, so the stars leave like a flock and not like a slab */
+      if (!isFinite(n.x) || !isFinite(n.y) || !isFinite(n.z)) n.x = n.y = n.z = 0;
+      n._m = { x0: n.x, y0: n.y, z0: n.z, t0: now,
+               d: only ? 0 : 420 * hash01(n.id), dur: only ? 650 : 1500 };
+    });
+    morphing = true;
+  }
+  function stepShape(now) {
+    var tr = graph.shape.track, t = lifeTime, any = false;
+    for (var i = 0; i < graph.nodes.length; i++) {
+      var n = graph.nodes[i];
+      if (n === drag.node) continue;
+      tr(n, t, _to);
+      var m = n._m;
+      if (m) {
+        var u = (now - m.t0 - m.d) / m.dur;
+        if (u >= 1) n._m = null;
+        else {
+          any = true;
+          if (u < 0) u = 0;
+          var e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+          n.x = m.x0 + (_to.x - m.x0) * e;
+          n.y = m.y0 + (_to.y - m.y0) * e;
+          n.z = m.z0 + (_to.z - m.z0) * e;
+          continue;
+        }
+      }
+      n.x = _to.x; n.y = _to.y; n.z = _to.z;
+    }
+    morphing = any;
+  }
+  /* the Brain keeps its physics; once that rests, it breathes: every star
+     swells out from its hemisphere and settles, in a slow wave front to back */
+  function breathe() {
+    var L = window.NebulaLayouts;
+    if (!simRest) {
+      graph.nodes.forEach(function (n) { n.hx = n.x; n.hy = n.y; n.hz = n.z; });
+      simRest = true;
+      restAt = lifeTime;
+    }
+    var amp = Math.min(1, (lifeTime - restAt) / 4) * 0.014;
+    for (var i = 0; i < graph.nodes.length; i++) {
+      var n = graph.nodes[i];
+      if (n === drag.node || n.hx == null) continue;
+      var cx = L.hemiCentre(n.hx < 0 ? -1 : 1) * brainScale;
+      var f = amp * Math.sin(lifeTime * 0.45 + n.hz / brainScale * 4.2);
+      n.x = n.hx + (n.hx - cx) * f; n.y = n.hy * (1 + f); n.z = n.hz * (1 + f);
+    }
+    updateBuffers();
+  }
+
   function startSim() {
+    var L0 = window.NebulaLayouts;
+    var mode0 = (L0 && L0.MODES.indexOf(layoutMode) >= 0) ? layoutMode : "organic";
+    var shape = null;
+    if (L0 && L0.compute) {
+      try {
+        shape = L0.compute(mode0, graph.nodes, graph.links,
+          { names: window.Atlas && window.Atlas.projectNames ? window.Atlas.projectNames() : {} });
+      } catch (e) {
+        N.lastError = "layout " + mode0 + ": " + String(e && e.stack || e);
+        console.error("Nebula layout failed, falling back to physics:", e);
+      }
+    }
+    graph.shape = shape;
+    simRest = false;
+    rankLinks();
+    setDeco(shape);
+    setLabels(shape ? shape.labels : []);
+    if (shape) {
+      CORTEX.target = 0;
+      if (reduced) CORTEX.alpha = 0;
+      if (graph.sim) graph.sim.stop();
+      graph.sim = null;
+      graph.nodes.forEach(function (n) { n.fx = n.fy = n.fz = null; n.vx = n.vy = n.vz = 0; });
+      fitSpace();
+      beginMorph();
+      return;
+    }
+    graph.nodes.forEach(function (n) { n._m = null; });
+    morphing = false;
     if (typeof window.d3 === "undefined" || !window.d3.forceSimulation) {
       graph.nodes.forEach(function (n, i) {
         var ph = Math.acos(1 - 2 * (i + 0.5) / graph.nodes.length);
@@ -1118,81 +1784,10 @@ if (renderer) {
        case every mode falls back to organic and nothing below runs. */
     var L = window.NebulaLayouts;
     var mode = (L && L.MODES.indexOf(layoutMode) >= 0) ? layoutMode : "organic";
-    var ringOf = L ? L.ringOf : function () { return 2; };
-    var planeR = Math.max(140, 34 * Math.sqrt(graph.nodes.length));
-    var centres = L ? L.projectCentres(graph.nodes, planeR) : {};
-
-    /* tree is the one mode with no physics: every position is fixed from
-       the radial tidy tree and there is no simulation at all. Every reader
-       of graph.sim (animateBody, dragMove) already guards on it. */
+    /* only two layouts reach this far: the Brain, which is physics by
+       design, and Organic when layouts.js could not give a shape */
     CORTEX.target = mode === "brain" ? 1 : 0;
     if (reduced) CORTEX.alpha = CORTEX.target;
-    if (mode === "tree") {
-      var tp = L.treePositions(graph.nodes, graph.links,
-        Math.max(48, 26 + 900 / Math.max(graph.nodes.length, 1) * 0.6));
-      /* no physics, but no jump either: every star glides to its place */
-      var tw = { t0: performance.now(), dur: 1100, list: [] };
-      graph.nodes.forEach(function (n) {
-        var p = tp[n.id];
-        if (!p) return;
-        tw.list.push({ n: n, x0: n.x || 0, y0: n.y || 0, z0: n.z || 0,
-                       x1: p.x, y1: p.y, z1: p.z });
-        n.fx = p.x; n.fy = p.y; n.fz = p.z;
-        n.vx = n.vy = n.vz = 0;
-      });
-      graph.sim = null;
-      if (reduced) {
-        tw.list.forEach(function (e) { e.n.x = e.x1; e.n.y = e.y1; e.n.z = e.z1; });
-        fitSpace(true);
-      } else {
-        tween = tw;
-      }
-      updateBuffers();
-      return;
-    }
-
-    function orbForce(alpha) {                 // everything on one sphere
-      var k = 0.14 * alpha, R = Math.max(170, 46 * Math.sqrt(graph.nodes.length));
-      for (var i = 0; i < graph.nodes.length; i++) {
-        var n = graph.nodes[i];
-        var target = n.kind === "folder" ? R * 1.12 : n.kind === "file" ? R * 0.86 : R;
-        var d = Math.sqrt(n.x * n.x + n.y * n.y + n.z * n.z) || 1;
-        var f = (target - d) / d * k;
-        n.vx += n.x * f; n.vy += n.y * f; n.vz += n.z * f;
-      }
-    }
-    function flowForce(axis) {                 // rank layers along one axis
-      var gap = Math.max(46, planeR * 0.28), top = 3 * gap;
-      return function (alpha) {
-        var k = 0.22 * alpha, kz = 0.12 * alpha;
-        for (var i = 0; i < graph.nodes.length; i++) {
-          var n = graph.nodes[i];
-          var t = top - ringOf(n) * gap;
-          var c = centres[n.project || ""] || { x: 0, y: 0, z: 0 };
-          if (axis === "y") {
-            n.vy += (t - n.y) * k;
-            n.vx += (c.x * 0.9 - n.x) * 0.02 * alpha;
-          } else {
-            n.vx += (-t - n.x) * k;
-            n.vy += (c.y * 0.9 - n.y) * 0.02 * alpha;
-          }
-          n.vz += (0 - n.z) * kz;
-        }
-      };
-    }
-    function webForce(alpha) {                 // concentric rings, flat
-      var k = 0.2 * alpha, kz = 0.3 * alpha;
-      for (var i = 0; i < graph.nodes.length; i++) {
-        var n = graph.nodes[i];
-        var c = centres[n.project || ""] || { x: 0, y: 0, z: 0 };
-        var ring = 22 + ringOf(n) * 42;
-        var dx = n.x - c.x, dy = n.y - c.y;
-        var d = Math.sqrt(dx * dx + dy * dy) || 1;
-        var f = (ring - d) / d * k;
-        n.vx += dx * f; n.vy += dy * f;
-        n.vz += (0 - n.z) * kz;
-      }
-    }
 
     /* the Brain: each project's lobe sits under the cortex of a hemisphere
        (layouts.js brainLobes). Memories settle at a depth by rank, heads
@@ -1250,7 +1845,10 @@ if (renderer) {
         var lx = (n.x - cx) / (B.rx * brainR * sq), ly = n.y / (B.ry * brainR),
             lz = n.z / (B.rz * brainR);
         var d = Math.sqrt(lx * lx + ly * ly + lz * lz) || 1e-3;
-        var want = n.kind === "folder" ? 1.06 : n.kind === "file" ? 1.0
+        /* everything lives under the skin: heads just beneath it, files
+           with the memories that name them, folders deep in the lobe (they
+           used to float outside the brain) */
+        var want = n.kind === "folder" ? 0.5 : n.kind === "file" ? 0.8
                  : n._head === n ? 0.94 : 0.9 - 0.07 * Math.min(n._level || 1, 3);
         /* the skin is a wall: leaving it costs four times what drifting
            inward does, so a crowded lobe deepens instead of spilling out */
@@ -1282,10 +1880,13 @@ if (renderer) {
         if (l.kinds && l.kinds.indexOf("file_ref") >= 0) return 0.12;
         return 0.04;
       });
-    } else if (mode !== "organic") link.strength(0.12);
+    }
     var sim = window.d3.forceSimulation(graph.nodes, 3)
       .force("link", link);
-    if (mode === "organic") {
+    if (mode === "brain") {
+      sim.force("charge", window.d3.forceManyBody().strength(-55))
+         .force("brain", brainForce);
+    } else {
       sim.force("charge", window.d3.forceManyBody()
           .strength(function (n) {
             return n._head === n ? -520
@@ -1294,22 +1895,6 @@ if (renderer) {
           }))
          .force("hierarchy", hierarchyForce)
          .force("anchor", anchorForce);
-    } else if (mode === "orb") {
-      sim.force("charge", window.d3.forceManyBody().strength(-70))
-         .force("anchor", anchorForce)
-         .force("orb", orbForce);
-    } else if (mode === "flow_down") {
-      sim.force("charge", window.d3.forceManyBody().strength(-60))
-         .force("flow", flowForce("y"));
-    } else if (mode === "flow_right") {
-      sim.force("charge", window.d3.forceManyBody().strength(-60))
-         .force("flow", flowForce("x"));
-    } else if (mode === "web") {
-      sim.force("charge", window.d3.forceManyBody().strength(-40))
-         .force("web", webForce);
-    } else if (mode === "brain") {
-      sim.force("charge", window.d3.forceManyBody().strength(-55))
-         .force("brain", brainForce);
     }
     /* center goes on LAST so organic keeps the exact force order it had
        before the layout picker existed. The Brain centres itself: a busy
@@ -1330,12 +1915,18 @@ if (renderer) {
      jumps: the shell eases toward the fit */
   function fitSpace(now) {
     var maxR = 0;
-    graph.nodes.forEach(function (n) {
+    if (graph.shape && graph.nodes.length) {
+      /* a shape knows its own size before a single star has arrived */
+      if (graph.shape.shellR) maxR = graph.shape.shellR / 1.22;
+      else graph.shape.bounds.forEach(function (b) {
+        maxR = Math.max(maxR, Math.sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2]));
+      });
+    } else graph.nodes.forEach(function (n) {
       var d = Math.sqrt((n.x || 0) * (n.x || 0) + (n.y || 0) * (n.y || 0)
                         + (n.z || 0) * (n.z || 0)) + (n._r || 4) * 3;
       if (d > maxR) maxR = d;
     });
-    SPACE.target = Math.max(170, maxR * 1.22);
+    SPACE.target = Math.max(graph.shape && graph.shape.shellR ? 120 : 170, maxR * 1.22);
     if (now || reduced) {
       SPACE.r = SPACE.target;
       anchorSpace();
@@ -1345,10 +1936,15 @@ if (renderer) {
     }
   }
 
+  /* this runs every frame now (the shapes never stop moving), so it
+     allocates nothing and leaves the bounding spheres alone: one generous
+     sphere, set once, serves the ray and never goes stale */
+  var _um = new THREE.Matrix4(), _uq = new THREE.Quaternion(),
+      _us = new THREE.Vector3(), _upv = new THREE.Vector3();
+  var WIDE = new THREE.Sphere(new THREE.Vector3(0, 0, 0), 1e5);
   function updateBuffers() {
     if (!graph.mesh && !graph.files && !graph.folders) return;
-    var m = new THREE.Matrix4(), q = new THREE.Quaternion(),
-        s = new THREE.Vector3(), p = new THREE.Vector3();
+    var m = _um, q = _uq, s = _us, p = _upv;
     if (graph.mesh) {
       graph.memNodes.forEach(function (n, i) {
         /* NaN is contagious: one bad position would silently make the whole
@@ -1374,9 +1970,9 @@ if (renderer) {
          stars that later drifted outward were rejected by that stale
          sphere before any per-star test ran. Invalidate it on every
          position update; the next pick recomputes an honest one. */
-      graph.mesh.boundingSphere = null;
+      graph.mesh.boundingSphere = WIDE;
       graph.glow.geometry.attributes.position.needsUpdate = true;
-      graph.glow.geometry.computeBoundingSphere();
+      graph.glow.geometry.boundingSphere = WIDE;
     }
 
     function placeCrystals(meshObj, list) {
@@ -1393,16 +1989,27 @@ if (renderer) {
         meshObj.setMatrixAt(i, m);
       });
       meshObj.instanceMatrix.needsUpdate = true;
-      meshObj.boundingSphere = null;     // same stale-sphere lesson as the stars
+      meshObj.boundingSphere = WIDE;     // same stale-sphere lesson as the stars
     }
     placeCrystals(graph.files, graph.fileNodes);
     placeCrystals(graph.folders, graph.folderNodes);
 
     if (graph.lines) {
       var lp = graph.lines.geometry.attributes.position.array;
-      var flat = FLAT_MODES.indexOf(layoutMode) >= 0;
-      graph.links.forEach(function (l, i) {
+      var sh = graph.shape;
+      var flat = sh ? !!(sh.flat || sh.flatBend) : false, arcR = sh && sh.arc ? sh.arc : 0;
+      for (var i = 0; i < graph.links.length; i++) {
+        var l = graph.links[i];
         var a = l.source, b = l.target;
+        if (l._off) {
+          /* not drawn: fold it away to a point far outside the world, once */
+          if (!l._gone) {
+            for (var z0 = i * SEG * 6, z1 = z0 + SEG * 6; z0 < z1; z0++) lp[z0] = 9e4;
+            l._gone = true;
+          }
+          continue;
+        }
+        l._gone = false;
         var dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
         var len = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
         dx /= len; dy /= len; dz /= len;
@@ -1410,7 +2017,14 @@ if (renderer) {
            twist (flat layouts keep it in their plane), a tenth of its
            length at most, never a loop */
         var px, py, pz, bend = Math.min(len * 0.12, 36);
-        if (flat) {
+        var hx = (a.x + b.x) / 2, hy = (a.y + b.y) / 2, hz = (a.z + b.z) / 2;
+        var hl = arcR ? Math.sqrt(hx * hx + hy * hy + hz * hz) : 0;
+        if (arcR && hl > arcR * 0.08) {
+          /* on the globe a link is an arc over the surface, never a tunnel
+             through it: the further apart its ends, the higher it rises */
+          px = hx / hl; py = hy / hl; pz = hz / hl;
+          bend = 2 * arcR * (1.012 + 0.16 * (1 - hl / arcR)) - 2 * hl;
+        } else if (flat) {
           px = -dy; py = dx; pz = 0;
           if (l._twist > Math.PI) { px = -px; py = -py; }
         } else {
@@ -1437,9 +2051,9 @@ if (renderer) {
           o += 6;
           qx = cx; qy = cy; qz = cz;
         }
-      });
+      }
       graph.lines.geometry.attributes.position.needsUpdate = true;
-      graph.lines.geometry.computeBoundingSphere();
+      graph.lines.geometry.boundingSphere = WIDE;
     }
   }
 
@@ -1449,23 +2063,46 @@ if (renderer) {
     if (n.kind === "folder") return out.copy(FOLDLINK);
     return nodeColor(n, out).lerp(FILAMENT, 0.45);
   }
+  /* how bright a link is at rest: its kind and weight, times what the
+     shape makes of it (a tree hides its cross links behind the wood, a
+     galaxy keeps one bright thread) */
+  function linkBase(l) {
+    var k = l.kinds || [];
+    var base = k.indexOf("in_folder") >= 0 ? 0.08
+             : k.indexOf("file_ref") >= 0 ? 0.16 + (l.w || 0) * 0.5
+             : (k.indexOf("derived_from") >= 0 ? 0.24 : 0.10) + (l.w || 0) * 0.5;
+    return base * (l._lk == null ? 1 : l._lk);
+  }
+  /* only the strongest links are drawn at rest. Thousands of faint lines
+     are noise to the eye and the costliest thing in the scene (blended
+     lines on a laptop chip); the rest wait, and show the moment their
+     star is touched or chosen. */
+  var LINK_BUDGET = 1100;
+  function rankLinks() {
+    if (graph.links.length <= LINK_BUDGET) {
+      graph.links.forEach(function (l) { l._far = false; });
+      return;
+    }
+    var order = graph.links.map(function (l, i) { return [linkBase(l), i]; })
+      .sort(function (a, b) { return b[0] - a[0] || a[1] - b[1]; });
+    order.forEach(function (it, rank) { graph.links[it[1]]._far = rank >= LINK_BUDGET; });
+  }
   function paintLinks() {
     if (!graph.lines) return;
     var lc = graph.lines.geometry.attributes.color.array;
     var la = graph.lines.geometry.attributes.aLit.array;
     var hov = graph.hoverId, sel = graph.selected;
-    var firing = !!(hov || sel || graph.linkFocus >= 0);
+    var firing = !!(hov || sel || graph.linkFocus >= 0), refold = false;
     graph.links.forEach(function (l, i) {
       var sid = l.source.id, tid = l.target.id;
       var onSel = sel && (sid === sel || tid === sel);
       var onHov = hov && (sid === hov || tid === hov);
       var lit = i === graph.linkFocus ? 1.0 : i === graph.hoverLink ? 0.8 : 0;
       var provenance = l.kinds && l.kinds.indexOf("derived_from") >= 0;
-      var isFile = l.kinds && l.kinds.indexOf("file_ref") >= 0;
       var isFold = l.kinds && l.kinds.indexOf("in_folder") >= 0;
-      var base = isFold ? 0.08
-               : isFile ? 0.16 + (l.w || 0) * 0.5
-               : (provenance ? 0.24 : 0.10) + (l.w || 0) * 0.5;
+      var base = linkBase(l);
+      l._off = !!l._far && !onSel && !onHov && !lit;
+      if (l._off !== !!l._gone) refold = true;
       // additive blending: intensity IS opacity
       var k = Math.max(lit, (onSel ? (isFold ? 0.5 : 0.95) : onHov ? 0.85 : base) * graph.dim);
       /* while one star fires, the rest of the brain quietens */
@@ -1478,19 +2115,24 @@ if (renderer) {
       var fire = lit || (onHov ? 1 : onSel ? 0.75 : 0);
       linkEndColor(l.source, _ca);
       linkEndColor(l.target, _cb);
-      if (onSel || onHov || lit || provenance) { _ca.lerp(STAR, 0.5); _cb.lerp(STAR, 0.5); }
+      if (onSel || onHov || lit || provenance || l._thread) { _ca.lerp(STAR, 0.5); _cb.lerp(STAR, 0.5); }
+      /* at rest the sign alone steers the murmur (a river's runs downstream) */
+      var litv = fire ? fire * dir : (l._dir < 0 ? -0.0001 : 0);
       for (var sg = 0; sg < SEG; sg++) {
         for (var v = 0; v < 2; v++) {
           var t = (sg + v) / SEG, o = (i * SEG + sg) * 2 + v;
           lc[o * 3] = (_ca.r + (_cb.r - _ca.r) * t) * k;
           lc[o * 3 + 1] = (_ca.g + (_cb.g - _ca.g) * t) * k;
           lc[o * 3 + 2] = (_ca.b + (_cb.b - _ca.b) * t) * k;
-          la[o] = fire * dir;
+          la[o] = litv;
         }
       }
     });
     graph.lines.geometry.attributes.color.needsUpdate = true;
     graph.lines.geometry.attributes.aLit.needsUpdate = true;
+    /* a link came into view or left it: its geometry must follow now, not
+       at the next frame (a stilled world has no next frame) */
+    if (refold) updateBuffers();
   }
 
   function paintNodes() {
@@ -1618,12 +2260,19 @@ if (renderer) {
       return Math.max((Math.abs(_pp.dot(_rt)) + r) / th,
                       (Math.abs(_pp.dot(_up)) + r) / tv) - _pp.dot(_fw);
     }
+    var best = 0;
+    if (graph.shape) {
+      /* a shape is framed by its own outline, so the camera can leave
+         while the stars are still on their way */
+      graph.shape.bounds.forEach(function (b) { best = Math.max(best, need(b[0], b[1], b[2], 10)); });
+      return Math.max(160, best);
+    }
     /* the bulk decides, not a few far-flung planets: fit the 96th
        percentile star, never closer than 80% of what the farthest needs */
     var needs = graph.nodes.map(function (n) {
       return need(n.x || 0, n.y || 0, n.z || 0, (n._r || 4) * 1.6);
     }).sort(function (a, b) { return a - b; });
-    var best = needs.length
+    best = needs.length
       ? Math.max(needs[Math.floor((needs.length - 1) * 0.96)], needs[needs.length - 1] * 0.8)
       : 0;
     if (CORTEX.target > 0 && cortexSample) {          // the whole brain, always
@@ -1639,7 +2288,7 @@ if (renderer) {
      it, unless the hand has taken the camera. The Brain is first seen in
      three-quarter view (front, left, above), the way a brain is drawn. */
   function maybeFrame() {
-    if (flight || orb.veil || tween || !graph.nodes.length) return;
+    if (flight || orb.veil || !graph.nodes.length) return;
     if (!window.innerWidth || !window.innerHeight) return;    // unseen: frame when seen
     var dir, d;
     if (framing.pending) {
@@ -1649,10 +2298,10 @@ if (renderer) {
       fitSpace();
       /* a new shape is first seen from its own best side: the Brain in
          three-quarter view, a flat shape face on; otherwise keep the view */
-      if (!framing.keepDir && layoutMode === "brain") dir = BRAIN_VIEW.clone();
-      else if (!framing.keepDir && FLAT_MODES.indexOf(layoutMode) >= 0) {
-        dir = new THREE.Vector3(0, 0.12, 1).normalize();
-      } else {
+      if (!framing.keepDir && graph.shape) {
+        dir = new THREE.Vector3(graph.shape.view[0], graph.shape.view[1], graph.shape.view[2]).normalize();
+      } else if (!framing.keepDir && layoutMode === "brain") dir = BRAIN_VIEW.clone();
+      else {
         dir = camera.position.clone().sub(controls.target);
         if (dir.lengthSq() < 1) dir.set(0, 0.12, 1);
         dir.normalize();
@@ -1696,13 +2345,12 @@ if (renderer) {
     var L = window.NebulaLayouts;
     if (!L || L.MODES.indexOf(mode) < 0) mode = "organic";
     layoutMode = mode;
-    tween = null;
     framing.userMoved = false;          // a new shape is worth seeing whole
     framing.pending = true;
     framing.keepDir = false;            // ... from its own best side
     graph.nodes.forEach(function (n) { n.fx = n.fy = n.fz = null; });
     if (graph.nodes.length) { startSim(); paintLinks(); updateBuffers(); N.requestRender(); }
-    else { CORTEX.target = mode === "brain" ? 1 : 0; }
+    else { CORTEX.target = mode === "brain" ? 1 : 0; graph.shape = null; setDeco(null); setLabels([]); }
   };
 
   /* ------------------------------------------------------------ pointer */
@@ -1859,7 +2507,12 @@ if (renderer) {
           + (n._head === n ? ' · <b class="tip-crown">★ head</b>' : "")
           + "</p>"
           + "<strong>" + esc(cleanLabel(n.label || n.id)) + "</strong>"
-          + '<p class="quiet">importance ' + (n.importance || "?")
+          + '<p class="quiet">'
+          + (n.standing && n.standing !== "current" && n.standing !== "open"
+             ? '<span class="standing s-' + esc(n.standing) + '">' + esc(n.standing) + "</span> · " : "")
+          + "importance " + (n.importance_now || n.importance || "?")
+          + (n.importance_now != null && n.importance_now !== n.importance
+             ? " today (stored " + esc(n.importance) + ")" : "")
           + " · gravity " + (n.degree != null ? Number(n.degree).toFixed(1) : "?")
           + " · ring " + (n._level != null ? n._level : "?")
           + "</p>";
@@ -1888,6 +2541,7 @@ if (renderer) {
     pointer.x = ev.clientX; pointer.y = ev.clientY;
     pointer.nx = (ev.clientX / window.innerWidth) * 2 - 1;
     pointer.ny = -(ev.clientY / window.innerHeight) * 2 + 1;
+    lastInput = nowMs();
     if (drag.node) { dragMove(); return; }
     if (!hoverPending && focus) {       // hover is feedback, not animation:
       hoverPending = true;              // it works under reduced motion too
@@ -1937,6 +2591,8 @@ if (renderer) {
     var wasDrag = drag.node && drag.moved > 2;
     if (drag.node) {
       drag.node.fx = drag.node.fy = drag.node.fz = null;
+      /* in a shape, a star you let go of glides back to its place */
+      if (graph.shape) beginMorph([drag.node]);
       drag.node = null;
       controls.enabled = focus && !orb.veil;
     }
@@ -1966,7 +2622,7 @@ if (renderer) {
     flight = {
       p0: camera.position.clone(), p1: toPos.clone(),
       t0: controls.target.clone(), t1: toTarget.clone(),
-      start: performance.now(), dur: dur, done: done,
+      start: nowMs(), dur: dur, done: done,
     };
   }
 
@@ -2184,8 +2840,10 @@ if (renderer) {
     requestAnimationFrame(function () {
       stillPending = false;
       if (frame.dirty) measureFrame();
+      stepDeco(0, 0);
+      stepLabels(0);
       maybeFrame();
-      if (flight) stepFlight(performance.now());
+      if (flight) stepFlight(nowMs());
       controls.update();
       renderer.render(scene, camera);
     });
@@ -2200,19 +2858,6 @@ if (renderer) {
     if (t >= 1) { flight = null; if (f.done) f.done(); }
   }
 
-  /* a layout without physics (tree) glides there instead of jumping */
-  var tween = null;
-  function stepTween(now) {
-    var t = Math.min(1, (now - tween.t0) / tween.dur);
-    var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;   // easeInOutCubic
-    tween.list.forEach(function (it) {
-      it.n.x = it.x0 + (it.x1 - it.x0) * e;
-      it.n.y = it.y0 + (it.y1 - it.y0) * e;
-      it.n.z = it.z0 + (it.z1 - it.z0) * e;
-    });
-    updateBuffers();
-    if (t >= 1) { tween = null; fitSpace(); }
-  }
 
   /* a slow machine loses pixels before it loses frames: two slow windows
      in a row drop the pixel ratio to 1, then thin the fog wisps. Never
@@ -2224,6 +2869,8 @@ if (renderer) {
     starsMat.uniforms.uPR.value = pr;
     cortexMat.uniforms.uPR.value = pr;
     cortexMat.uniforms.uPxPerUnit.value = pxPerUnit();
+    nodeMat.uniforms.uPx.value = pxPerUnit();
+    if (deco) deco.px.forEach(function (m) { m.uniforms.uPx.value = pxPerUnit(); });
   }
   function watchPerf(dt) {
     if (perf.done) return;
@@ -2250,11 +2897,11 @@ if (renderer) {
   var docStyle = document.documentElement.style;
   function animate(now) {
     requestAnimationFrame(animate);
-    if (document.hidden) { lastNow = now; return; }
+    if (document.hidden) { lastNow = nowMs(); return; }
     /* self-healing: one bad frame must never freeze the world into an
        unclickable still image. Log the first few, keep rendering. */
     try {
-      animateBody(now);
+      animateBody(nowMs());
     } catch (e) {
       if (++animErrors <= 3) {
         N.lastError = String(e && e.stack || e);
@@ -2271,17 +2918,35 @@ if (renderer) {
     watchPerf(dt);
 
     if (flight) stepFlight(now);
-    if (tween) stepTween(now);
     stepFrame(dt);
     maybeFrame();
     if (ripples.length) stepRipples(now);
 
-    /* physics: settle the constellation */
-    if (graph.sim && graph.sim.alpha() > graph.sim.alphaMin()) {
+    /* the living clock: it only runs while the world is allowed to move
+       (the ambience switch stills it; reduced motion never starts it) */
+    var alive = !reduced && ambient.visible;
+    if (alive) lifeTime += dt;
+    nodeMat.uniforms.uLife.value = alive ? 1 : 0;
+    synapseMat.uniforms.uLife.value = alive ? 1 : 0;
+
+    if (graph.shape) {
+      /* a shape: every star rides its track (or is still gliding onto it) */
+      if (graph.group.visible && (alive || morphing || drag.node)) {
+        stepShape(now);
+        updateBuffers();
+      }
+    } else if (graph.sim && graph.sim.alpha() > graph.sim.alphaMin()) {
+      /* physics: settle the constellation */
+      simRest = false;
       graph.sim.tick();
       updateBuffers();
       if (++fitCounter % 20 === 0) fitSpace();
+    } else if (alive && graph.sim && layoutMode === "brain" && graph.group.visible) {
+      breathe();
     }
+    stepDeco(dt, lifeTime);
+    stepLabels(lifeTime);
+    shellK += ((graph.shape ? graph.shape.shell : 1) - shellK) * Math.min(1, dt * 2.2);
 
     /* the shell eases toward its fit — weight, not snap */
     if (Math.abs(SPACE.target - SPACE.r) > 0.5) {
@@ -2294,7 +2959,9 @@ if (renderer) {
     synapseMat.uniforms.uTime.value = clockTime;
     if (graph.glow) graph.glow.material.uniforms.uTime.value = clockTime;
     shellMat.uniforms.uTime.value = ambient.visible ? clockTime : 0;
-    stars.position.copy(camera.position);      // the far field rides along
+    for (var sl = 0; sl < starLayers.length; sl++) {   // far rides along, near lags: depth
+      starLayers[sl].pts.position.copy(camera.position).multiplyScalar(starLayers[sl].ride);
+    }
     if (ambient.visible) starsMat.uniforms.uTime.value = clockTime;
 
     /* the cortex fades in with the Brain; the round shell gives way to it */
@@ -2307,7 +2974,7 @@ if (renderer) {
       glassMat.uniforms.uAlpha.value = ca * 0.9;
       glassMat.uniforms.uTime.value = clockTime;
     }
-    shellMat.uniforms.uAlpha.value = (focus ? 0.55 : 0.3) * (1 - CORTEX.alpha);
+    shellMat.uniforms.uAlpha.value = (focus ? 0.55 : 0.3) * (1 - CORTEX.alpha) * shellK;
 
     /* the glass leans with the hand: two custom props, GPU transforms only */
     pointer.px += (pointer.nx - pointer.px) * 0.04;
@@ -2367,6 +3034,21 @@ if (renderer) {
       graph.pulses.geometry.setDrawRange(0, 0);
     }
 
+    /* the camera never quite stands still. As a backdrop the world turns
+       slowly, as before. In the lens it waits until the hand has been away
+       for a while, then eases into a slow turn (a round shape) or a gentle
+       sway (a flat one, which must stay facing you). Any touch stops it. */
+    var turn = 0;
+    if (alive && !focus) turn = 0.25;
+    else if (alive && !orb.veil && !flight && !drag.node && !graph.selected
+             && now - lastInput > IDLE_MS) {
+      var ramp = Math.min(1, (now - lastInput - IDLE_MS) / 4000);
+      var sways = graph.shape && (graph.shape.flat || graph.shape.mode === "orb");
+      turn = ramp * (sways ? 0.2 * Math.cos(lifeTime * 0.11) : 0.16);
+    }
+    controls.autoRotate = turn !== 0;
+    controls.autoRotateSpeed = turn;
+
     controls.update();
     renderer.render(scene, camera);
   }
@@ -2407,6 +3089,8 @@ if (renderer) {
       animErrors: animErrors,
       lastError: N.lastError || null,
       layout: layoutMode, cortex: CORTEX.alpha, quality: N.quality || "full",
+      shape: graph.shape ? graph.shape.mode : null, structure: deco ? deco.kind : null,
+      morphing: morphing, lifeTime: Math.round(lifeTime * 10) / 10, labels: labels.length,
       glass: !!glass, brainScale: brainScale, brainStats: brainStats(),
       frame: { w: frame.w, h: frame.h, sx: Math.round(frame.sx), sy: Math.round(frame.sy) },
       ripples: ripples.length,
@@ -2429,13 +3113,13 @@ if (renderer) {
       function one() {
         if (gl.isContextLost()) { resolve({ error: "webgl context lost" }); return; }
         var t0 = performance.now();
-        now = t0;                          // the real clock: flights and tweens run true
+        now = nowMs();
         animateBody(now);
         gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
         var ms = performance.now() - t0;
         total += ms; if (ms > worst) worst = ms;
         if (++i < frames) { setTimeout(one, 0); return; }
-        lastNow = performance.now();      // the next real frame gets a sane step
+        lastNow = nowMs();                // the next real frame gets a sane step
         resolve({ msPerFrame: Math.round(total / frames * 100) / 100,
                   worstMs: Math.round(worst * 100) / 100, frames: frames,
                   pixelRatio: renderer.getPixelRatio(),
@@ -2450,6 +3134,31 @@ if (renderer) {
     });
   };
 
+  /* wind the world's clock forward by hand: `seconds` of life at 60 steps
+     a second, every step a real frame, drawn and waited for. For checks on
+     a page nobody is looking at (a hidden page never animates): step, then
+     look. Returns what a frame cost, CPU and GPU together. Bursts are kept
+     short; a long one trips the driver watchdog. */
+  N.advance = function (seconds) {
+    var steps = Math.max(1, Math.min(Math.round((seconds || 1) * 60), 600));
+    if (reduced) { still(); return { reduced: true }; }
+    var gl = renderer.getContext(), px = new Uint8Array(4), total = 0, worst = 0;
+    for (var i = 0; i < steps; i++) {
+      if (gl.isContextLost()) return { error: "webgl context lost" };
+      clockSkew += 1000 / 60;
+      var t0 = performance.now();
+      animateBody(nowMs());
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      var ms = performance.now() - t0;
+      total += ms; if (ms > worst) worst = ms;
+    }
+    return { frames: steps, msPerFrame: Math.round(total / steps * 100) / 100,
+             worstMs: Math.round(worst * 100) / 100, pixelRatio: renderer.getPixelRatio(),
+             size: [window.innerWidth, window.innerHeight],
+             nodes: graph.nodes.length, links: graph.links.length,
+             layout: layoutMode, calls: renderer.info.render.calls };
+  };
+
   window.addEventListener("resize", function () {
     camera.aspect = window.innerWidth / window.innerHeight;
     frame.dirty = true;
@@ -2460,6 +3169,7 @@ if (renderer) {
     N.requestRender();
   });
 
+  resizeUniforms();
   N.setAmbience(ambienceOn());
   N.setFocus(document.body.dataset.lens === "constellation");
 }

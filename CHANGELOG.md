@@ -3,6 +3,98 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
+## 3.4.0 (2026-11-20)
+
+Atlas catches up with 3.3, and the Constellation comes alive. Nothing here
+changes the agents' tools, the storage or the database: it is the web UI,
+the read endpoints behind it, and five write endpoints for the user. Upgrade
+with `brain upgrade`. There is no migration.
+
+### The Constellation
+
+- **Every layout looks like its name.** Organic is a field of galaxies, one
+  per project, each turning on its own tilt and tied to the others by one
+  bright thread. Orb is a globe: a region per project, links as arcs over the
+  surface, the far side hidden behind the body. Flow down and Flow right are a
+  river: memories in the order they happened, a channel per project, sessions
+  in the current, a date axis along the bank. Web is a spider's web: the most
+  connected memory at the hub, a spoke per project, the rings by age. Tree is
+  a tree: a limb per project, twigs and leaves, folders hanging as fruit.
+  Brain keeps its folded glass; its folders and files now sit inside it.
+- **Each shape draws what it stands on and names its projects**: the globe's
+  graticule and region outlines, the river's water and motes, the web's silk,
+  the tree's wood, a glow at the heart of each galaxy.
+- **Nothing stands still.** Galaxies turn and drift, the globe spins, the
+  river runs, the web trembles, the tree sways, the brain breathes. A bead of
+  light travels each link. The sky has three depths of stars that slide
+  against each other. Left alone for seven seconds, the camera eases into a
+  slow turn (or a gentle sway for a flat shape); any touch stops it. Changing
+  layout glides every star to its new place.
+- **Still mode.** With the system's reduced-motion setting, or `?motion=still`
+  on the address, every star is placed at once and nothing moves. The
+  ambience switch in the rail stills the shapes as well as the fog. A hidden
+  tab does not animate.
+- **2D draws the same shapes.** The flat view is the same geometry projected
+  on the page, with the same motion, labels and structures. Its physics is
+  switched off, and its colours now match the legend (rank, as in 3D).
+- **Standing shows in the stars**: a disputed memory flickers with a red
+  edge, one that just replaced another glows, a stale loop burns low, a proven
+  or verified one carries a pale ring. The tooltip names the standing and both
+  importances.
+- **Faster.** About 700 nodes used to cost 40 ms a frame on a laptop graphics
+  chip. They now cost 11 to 15 ms (20 ms in the Brain). The star shader works
+  by how large a star is on screen, and only the strongest 1,100 links are
+  drawn at rest; the others appear when you touch their star.
+- `Nebula.advance(seconds)` and `Constellation.debug()` in the browser console
+  step the 3D world by hand and report what a frame costs.
+
+### Atlas shows what 3.3 knows
+
+- **Standing on every memory**, wherever one is listed or opened: a small
+  badge (proven, verified, changed, disputed, stale, superseded, done), and
+  the importance as it stands today with an arrow when it moved from the
+  stored one. A disputed memory links to the memory that corrects it; a
+  replaced one to its replacement, and the other way round.
+- **A project page opens with its handover**, the same sections an agent's
+  brief opens with: where we left off, what changed, open loops (stale ones
+  last and marked), facts and decisions, how-tos, and a "waiting on you" line
+  (rules to confirm, beliefs to approve, contradictions, stale loops) whose
+  chips open the review they count.
+- **Your verdict on a memory**, in the inspector: still true (verify), done
+  (close an open loop), replaced by, corrected by, and take a correction back.
+  The picker for the other memory starts from what is already linked and
+  searches the project. These run the same lifecycle the agents use, write as
+  `ui` in the audit trail, and act as the user, so they may retire or dispute
+  what the user wrote. A finished loop can be reopened.
+- **A summary the brain made itself is marked** with a small sign in every
+  row, and in words on the memory, so it is not taken for the author's.
+- New read endpoint `GET /api/ui/brief?project=`. `/api/ui/graph`,
+  `/api/ui/stream`, `/api/ui/search`, `/api/ui/memories/{id}` and its
+  `/related` gain `standing` and `importance_now`; `importance` stays the
+  stored value. The memory detail gains `lineage`.
+- New write endpoints under `/api/ui/edit/memories/{id}/`: `verify`, `close`,
+  `supersede`, `correct`, `uncorrect`. They need the API key when one is set,
+  like every Atlas write.
+
+### Easier to read
+
+- The two quiet text colours were too quiet (about 3:1 on the glass at
+  10 px). They are now about 5:1 and 8:1.
+- In every list the type badge is a fixed column, so summaries start at the
+  same place and the eye can run down them. Types with no colour (decision,
+  open loop, procedure) have one.
+- Timestamps read `2026-11-20 07:17`, not the raw value with microseconds.
+  Search results show the date, not only the time.
+- The Constellation controls wrap as whole groups, with the legend and the
+  counts on their own line. The 3D box says what is on screen.
+- The rail's foot is one block of like buttons. Section headings in the
+  inspector and on the memory page have a rule under them.
+
+### Not in this pass
+
+- The Doctor page does not yet show the age of the file index or the cleanup
+  lists, and there is no page for one name or screen for name patterns.
+
 ## 3.3.0 (2026-11-20)
 
 The memory and the brain. A review of a brain in daily use found the note
