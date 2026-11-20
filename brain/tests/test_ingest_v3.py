@@ -11,9 +11,9 @@ from app.models import MemoryEntry, ValidationError
 from app.storage import add_memory, get_memory
 from app.vector import vec_add
 
-REPORT_KEYS = {"id", "summary", "importance", "type", "tags", "trust", "writer", "embedded",
-               "chunks", "content_chars", "superseded", "potential_supersessions",
-               "warnings", "duplicate"}
+REPORT_KEYS = {"id", "summary", "summary_source", "importance", "type", "tags", "trust",
+               "writer", "embedded", "chunks", "content_chars", "superseded", "closed",
+               "corrected", "potential_supersessions", "warnings", "duplicate"}
 
 
 @pytest.fixture
@@ -103,13 +103,15 @@ async def test_short_body_is_its_own_summary(ing_db, fake_provider):
 
 
 @pytest.mark.asyncio
-async def test_summariser_failure_falls_back_to_the_opening(ing_db, fake_provider):
+async def test_summariser_failure_falls_back_to_the_opening(ing_db, fake_provider, monkeypatch):
+    monkeypatch.setenv("MEMORYBRAIN_SUMMARY_MODE", "model")
+
     async def broken(content, max_sentences=3):
         raise RuntimeError("model gone")
     fake_provider.summarise = broken
     body = "word " * 200
     result = await ingest(MemoryEntry(content=body, type="note", project="acme"))
-    assert result.summary == body[:280]
+    assert result.summary == s.opening_summary(body) and len(result.summary) <= 281
     assert "summary fallback" in write_report(result)["warnings"]
 
 
@@ -343,11 +345,14 @@ async def test_an_agent_write_never_retires_the_users_own_fact(ing_db, fake_prov
 
 
 @pytest.mark.asyncio
-async def test_the_summary_importance_and_embedding_calls_run_side_by_side(ing_db, fake_provider):
+async def test_the_summary_importance_and_embedding_calls_run_side_by_side(ing_db, fake_provider,
+                                                                           monkeypatch):
     """O3: none of the three model calls needs another, so a slow model costs
-    the slowest call, not the sum of all three."""
+    the slowest call, not the sum of all three (summary mode "model")."""
     import asyncio
     import time
+
+    monkeypatch.setenv("MEMORYBRAIN_SUMMARY_MODE", "model")
 
     real_embed_many = fake_provider.embed_many
 

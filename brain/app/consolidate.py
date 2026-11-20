@@ -419,6 +419,52 @@ def _words(text: str) -> set[str]:
             if w not in STOPWORDS and w not in _LOOP_MARKER_WORDS and len(w) > 1}
 
 
+def _says_done(wanted: set[str], text: str) -> bool:
+    """Does one sentence of text report this loop done? It needs a done-word,
+    no negation, and at least 60% of the loop's own words (never fewer than two)."""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text or ""):
+        if _NEGATION_RE.search(sentence):
+            continue
+        words = _words(sentence) | set(re.findall(r"[a-z]+", sentence.lower()))
+        need = max(LOOP_MIN_MATCH, LOOP_CLOSE_SHARE * len(wanted))
+        if words & _DONE_WORDS and len(wanted & words) >= need:
+            return True
+    return False
+
+
+def close_loops_reported_by(session_id: str, db_path: Path = None) -> list[str]:
+    """Close the open loops this one session or handover reports done (the
+    rule of _close_loops, for a single new memory). Runs when a session is
+    written, so a loop does not wait for the next sleep cycle. Returns the
+    ids it closed; each closure is audited and restore_memory undoes it."""
+    db_path = db_path or DB_PATH
+    closed: list[str] = []
+    with _connect(db_path) as conn:
+        session = conn.execute(
+            """SELECT id, project, content, timestamp FROM memories
+               WHERE id = ? AND status = 'active' AND type IN ('session', 'handover')""",
+            (session_id,)).fetchone()
+        if session is None:
+            return closed
+        loops = conn.execute(
+            """SELECT id, content FROM memories
+               WHERE project = ? AND type = 'open_loop' AND status = 'active'
+                 AND timestamp < ?""", (session["project"], session["timestamp"])).fetchall()
+        for loop in loops:
+            wanted = _words(loop["content"])
+            if not wanted or not _says_done(wanted, session["content"]):
+                continue
+            conn.execute(
+                """UPDATE memories SET status = 'done', valid_to = ?, invalidated_by = ?
+                   WHERE id = ? AND status = 'active'""",
+                (session["timestamp"], session["id"], loop["id"]))
+            _audit(conn, loop["id"], "close", "ingest", "this session says done",
+                   {"by": session["id"]})
+            closed.append(loop["id"])
+        conn.commit()
+    return closed
+
+
 def _close_loops(conn, project: str) -> int:
     """Close each active loop that a later active session reports done: one
     sentence holding a done-word, no negation, and at least 60% of the loop's
@@ -439,16 +485,7 @@ def _close_loops(conn, project: str) -> int:
                ORDER BY timestamp ASC""",
             (project, loop["timestamp"])).fetchall()
         for session in later:
-            done = False
-            for sentence in re.split(r"(?<=[.!?])\s+|\n+", session["content"] or ""):
-                if _NEGATION_RE.search(sentence):
-                    continue
-                words = _words(sentence) | set(re.findall(r"[a-z]+", sentence.lower()))
-                need = max(LOOP_MIN_MATCH, LOOP_CLOSE_SHARE * len(wanted))
-                if words & _DONE_WORDS and len(wanted & words) >= need:
-                    done = True
-                    break
-            if done:
+            if _says_done(wanted, session["content"]):
                 conn.execute(
                     """UPDATE memories SET status = 'done', valid_to = ?, invalidated_by = ?
                        WHERE id = ? AND status = 'active'""",

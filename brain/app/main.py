@@ -381,6 +381,28 @@ async def readiness():
             "security_warning": security_warning()}
 
 
+def _workspace_status() -> dict:
+    """How fresh the file index is: file references only resolve against files
+    the brain has seen. The session hook starts a scan when this is over a day
+    old. roots 0 means `brain scan --root` was never run."""
+    from datetime import datetime, timezone
+    try:
+        from .workspace import store as ws
+        roots = ws.list_roots(DB_PATH)
+    except Exception:
+        return {"roots": 0, "last_scan": "", "scan_age_hours": None}
+    seen = [r["last_seen"] for r in roots if r.get("last_seen")]
+    last, age = (max(seen) if seen else ""), None
+    if last:
+        try:
+            when = datetime.fromisoformat(last)
+            when = when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+            age = round(max(0.0, (datetime.now(timezone.utc) - when).total_seconds() / 3600), 1)
+        except ValueError:
+            age = None
+    return {"roots": len(roots), "last_scan": last, "scan_age_hours": age}
+
+
 @app.get("/status")
 async def status():
     """Runtime matrix for multi-AI adapters (Grok/Claude/Codex/Gemini)."""
@@ -400,6 +422,7 @@ async def status():
         "build_stamp": stamp,
         "scheduler": scheduler_status(db_path=DB_PATH),
         "reembed_pending": _reembed_pending(),
+        "workspace": _workspace_status(),
         "mcp": {
             "sse": "/sse",
             "sse_messages": "/messages/",

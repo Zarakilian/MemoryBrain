@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MemoryBrain pre-compact hook.
+MemoryBrain capture hook: before a compaction, and at the end of a session.
 
 Claude Code runs this before it compacts the context, with JSON on stdin:
 {session_id, transcript_path, cwd, trigger}. The hook stores what is about
@@ -10,6 +10,12 @@ to be compacted as a session memory:
    12 hours, else
 2. the tail of the transcript: the text of the last 40 user and assistant
    messages (tool calls and results skipped), at most 20,000 characters.
+
+Wired to SessionEnd as well ({hook_event_name: "SessionEnd", reason, ...}), it
+is the safety net for a session that ends without a log: the transcript tail
+is stored, unless the session was only a few messages long, and unless a
+session log reached the brain in the last three hours (the brain checks, so
+a session that ran log-everything is never stored twice).
 
 The stdin JSON itself is never posted.
 """
@@ -31,6 +37,9 @@ HANDOVER_MAX_AGE_S = 12 * 3600
 TAIL_MESSAGES = 40
 TAIL_CHARS = 20_000
 MESSAGE_CHARS = 4_000  # one pasted log or injected summary must not fill the tail
+SESSION_END_MIN_MESSAGES = 6      # a shorter session has nothing worth keeping
+SESSION_END_QUIET_MINUTES = 180   # a session log this recent already covers it
+SUMMARY_ASK_CHARS = 160
 
 
 # brain setup records the install folder beside the installed hooks
@@ -123,13 +132,20 @@ def _message_text(event: dict) -> tuple[str, str]:
     return role, "\n".join(t for t in parts if isinstance(t, str) and t).strip()
 
 
-def transcript_tail(path: Path, trigger: str) -> str:
+def transcript_tail(path: Path, trigger: str, when: str = "compaction") -> str:
     """The last 40 text messages of a Claude Code JSONL transcript, formatted."""
+    return transcript_capture(path, trigger, when)[0]
+
+
+def transcript_capture(path: Path, trigger: str, when: str = "compaction") -> tuple:
+    """(the formatted tail, how many text messages the transcript holds, the
+    last thing the user asked). ("", 0, "") when there is nothing to read."""
     messages = []
+    last_ask = ""
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return ""
+        return "", 0, ""
     for line in lines:
         try:
             event = json.loads(line)
@@ -139,24 +155,41 @@ def transcript_tail(path: Path, trigger: str) -> str:
             continue  # isMeta lines are injected context, not the conversation
         role, text = _message_text(event)
         if text:
+            if role == "user":
+                last_ask = text
             if len(text) > MESSAGE_CHARS:
                 text = text[:MESSAGE_CHARS] + " [...]"
             messages.append(f"[{role}] {text}")
     if not messages:
-        return ""
+        return "", 0, ""
     body = "\n\n".join(messages[-TAIL_MESSAGES:])[-TAIL_CHARS:]
-    return (f"Session transcript tail, captured automatically at compaction ({trigger}).\n\n"
-            + body)
+    return (f"Session transcript tail, captured automatically at {when} ({trigger}).\n\n"
+            + body, len(messages), last_ask)
+
+
+def capture_summary(when: str, last_ask: str) -> str:
+    """One line for the brief, so an automatic capture never reads like a log
+    someone wrote: it says what it is, and the last thing the user asked."""
+    ask = " ".join((last_ask or "").split())[:SUMMARY_ASK_CHARS]
+    head = ("Auto-captured at session end, no session log was written"
+            if when == "session end" else "Auto-captured at compaction")
+    return f"{head}: {ask}" if ask else head
 
 
 def post_session(content: str, project: str, trigger: str) -> bool:
     return _post(content, project, trigger) is not None
 
 
-def _post(content: str, project: str, trigger: str):
+def _post(content: str, project: str, trigger: str, source: str = "", summary: str = "",
+          quiet_minutes: int = 0):
     """The brain's reply ({} when it is not JSON), or None when nothing was stored."""
-    payload = json.dumps({"content": content, "project": project,
-                          "source": f"pre-compact:{trigger}"}).encode("utf-8")
+    body = {"content": content, "project": project,
+            "source": source or f"pre-compact:{trigger}"}
+    if summary:
+        body["summary"] = summary
+    if quiet_minutes:
+        body["quiet_minutes"] = quiet_minutes
+    payload = json.dumps(body).encode("utf-8")
     headers = {"Content-Type": "application/json", "X-Brain-Client": "hook"}
     api_key = brain_key()
     if api_key:
@@ -177,7 +210,10 @@ def _post(content: str, project: str, trigger: str):
         result = {}
     if not isinstance(result, dict):
         result = {}
-    _log(f"session ingested, id={result.get('id', '?')}")
+    if result.get("skipped"):
+        _log(f"not stored: {result['skipped']}")
+    else:
+        _log(f"session ingested, id={result.get('id', '?')}")
     return result
 
 
@@ -218,8 +254,10 @@ def main(stdin=None) -> int:
         return 0
     hook = read_hook_input(stdin or sys.stdin)
     cwd = Path(hook.get("cwd") or os.getenv("CLAUDE_PROJECT_DIR") or os.getcwd())
-    trigger = str(hook.get("trigger") or "auto")
     project = detect_project(cwd)
+    if hook.get("hook_event_name") == "SessionEnd":
+        return _session_end(hook, cwd, project)
+    trigger = str(hook.get("trigger") or "auto")
     handover = recent_handover(cwd, time.time())
     if handover:
         reply = _post(handover, project, trigger)
@@ -230,14 +268,31 @@ def main(stdin=None) -> int:
             return 0
         # that handover is already stored (an earlier compaction today): the
         # conversation since then is what is new
-    content = transcript_tail(Path(hook["transcript_path"]), trigger) \
-        if hook.get("transcript_path") else ""
+    content, _count, last_ask = transcript_capture(Path(hook["transcript_path"]), trigger) \
+        if hook.get("transcript_path") else ("", 0, "")
     if not content:
         if not handover:
             _log("nothing to ingest (no recent handover, no transcript text)")
         return 0
-    if post_session(content, project, trigger):
+    if _post(content, project, trigger,
+             summary=capture_summary("compaction", last_ask)) is not None:
         update_memory_timestamp(cwd)
+    return 0
+
+
+def _session_end(hook: dict, cwd: Path, project: str) -> int:
+    """The session is over. Store its tail unless it was too short to matter;
+    the brain skips it when a session log was written in the last three hours."""
+    reason = re.sub(r"[^a-z0-9_-]", "", str(hook.get("reason") or "other").lower())[:40] or "other"
+    content, count, last_ask = transcript_capture(Path(hook["transcript_path"]), reason,
+                                                  "session end") \
+        if hook.get("transcript_path") else ("", 0, "")
+    if not content or count < SESSION_END_MIN_MESSAGES:
+        _log("nothing to ingest at session end (a short session, or no transcript text)")
+        return 0
+    _post(content, project, reason, source=f"session-end:{reason}",
+          summary=capture_summary("session end", last_ask),
+          quiet_minutes=SESSION_END_QUIET_MINUTES)
     return 0
 
 

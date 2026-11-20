@@ -196,6 +196,28 @@ if [ -n "$MEMORYBRAIN_DIR" ] && [ -f "${MEMORYBRAIN_DIR}/VERSION" ]; then
     fi
 fi
 
+# ── Keep the file index fresh ─────────────────────────────────────────────────
+# A file reference only resolves against files the brain has seen. When the last
+# scan is over a day old, start one in the background: it sends only what
+# changed and never delays the session. It needs the roots `brain scan --root`
+# set up once on this machine. MEMORYBRAIN_AUTO_SCAN=off turns it off.
+
+if [ "${MEMORYBRAIN_AUTO_SCAN:-on}" != "off" ] && [ -n "$MEMORYBRAIN_DIR" ] \
+        && [ -f "${MEMORYBRAIN_DIR}/cli/brain.py" ]; then
+    SCAN_DUE=$("${CURL[@]}" "${BRAIN_URL}/status" | "$PY" -c "
+import sys, json
+try:
+    ws = json.load(sys.stdin).get('workspace') or {}
+except ValueError:
+    ws = {}
+age = ws.get('scan_age_hours')
+print('yes' if ws.get('roots') and (age is None or age >= 24) else 'no')
+" 2>/dev/null || echo "no")
+    if [ "$SCAN_DUE" = "yes" ]; then
+        ( "$PY" "${MEMORYBRAIN_DIR}/cli/brain.py" scan > /dev/null 2>&1 & ) > /dev/null 2>&1 || true
+    fi
+fi
+
 # ── Subsystem readiness check ────────────────────────────────────────────────
 # On full success: silent. On degraded: what is broken, what still works, how to fix it.
 

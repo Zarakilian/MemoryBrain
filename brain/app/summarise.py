@@ -57,6 +57,62 @@ def summary_input(content: str) -> str:
     return content[:SUMMARY_HEAD] + "\n…\n" + content[-SUMMARY_TAIL:]
 
 
+OPENING_CHARS = 280
+OPENING_MIN_SENTENCE = 40   # a sentence end before this is too early to stop at
+_LINE_LEAD = re.compile(r"^\s*(?:#{1,6}\s+|[-*•>]\s+|\d+[.)]\s+)")
+# . ! or ? followed by whitespace or the end, so export.py, 2.5 and
+# wiki.example.com stay whole
+_SENTENCE_END = re.compile(r"[.!?](?=\s|$)")
+
+
+OPENING_SCAN_LINES = 8
+LABEL_MAX_CHARS = 40
+
+
+def _is_label(line: str) -> bool:
+    """A section label, not a sentence: it ends with a colon, or it is a few
+    words with no punctuation or digits ("What we worked on", "Key decisions")."""
+    if line.endswith(":"):
+        return True
+    return len(line) <= LABEL_MAX_CHARS and not re.search(r"[.!?,;()\d/\\]", line)
+
+
+def summary_mode() -> str:
+    """MEMORYBRAIN_SUMMARY_MODE. "extract" (the default): the writer's summary,
+    else the opening of the text, and no model call on a write. "model": the
+    summary model writes a missing summary and scores importance, as before 3.3."""
+    mode = os.getenv("MEMORYBRAIN_SUMMARY_MODE", "").strip().lower()
+    return "model" if mode == "model" else "extract"
+
+
+def opening_summary(content: str, limit: int = OPENING_CHARS) -> str:
+    """The opening of a body, as its summary: the first line (joined with the
+    next ones while it is still a bare title), cut at a sentence end where
+    there is one. Nothing in it is invented, which a small model cannot promise."""
+    lines = []
+    for raw in (content or "").splitlines():
+        line = " ".join(_LINE_LEAD.sub("", raw).replace("**", "").replace("__", "").split())
+        if line:
+            lines.append((line, raw.lstrip().startswith("#") or _is_label(line)))
+    if not lines:
+        return ""
+    text = lines[0][0]
+    # a short title is filled out with the first lines that say something,
+    # skipping section labels ("What we did:", "## Files")
+    for extra, label in lines[1:OPENING_SCAN_LINES]:
+        if len(text) >= 80:
+            break
+        if not label:
+            text = f"{text.rstrip(':')}: {extra}" if text.endswith(":") else f"{text} {extra}"
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    ends = [m.end() for m in _SENTENCE_END.finditer(cut)]
+    if ends and ends[-1] >= OPENING_MIN_SENTENCE:
+        return cut[:ends[-1]]
+    return cut.rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
 def strip_preamble(text: str) -> str:
     """Remove LLM throat-clearing from the front of a summary."""
     cleaned = _PREAMBLE_RE.sub("", (text or "").strip()).strip()

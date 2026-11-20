@@ -3,11 +3,29 @@ from __future__ import annotations
 
 import re
 
-KNOWN_EXTS: tuple[str, ...] = (
+DOC_EXTS: tuple[str, ...] = (
     "md", "sql", "html", "htm", "xhtml", "ps1", "py", "sh", "json", "yaml", "yml",
     "csv", "xlsx", "docx", "pptx", "txt", "xml", "png", "svg", "mmd",
 )
-_EXT = "(?:" + "|".join(KNOWN_EXTS) + ")"
+# v3.3: source, config and asset files. A bare name with one of these (no
+# folder in front) is kept only when it resolves to an indexed file, because
+# prose is full of look-alikes ("Node.js", "error.log").
+CODE_EXTS: tuple[str, ...] = (
+    "ts", "tsx", "js", "jsx", "mjs", "cjs", "cs", "csproj", "sln", "cpp", "hpp", "c", "h",
+    "java", "kt", "go", "rs", "rb", "php", "swift", "css", "scss", "vue", "svelte",
+    "toml", "ini", "cfg", "conf", "config", "proj", "bat", "cmd", "psm1", "tf", "bicep",
+    "ipynb", "pdf", "log", "uproject", "uasset", "umap", "blend",
+    "jpg", "jpeg", "gif", "webp", "zip",
+)
+KNOWN_EXTS: tuple[str, ...] = DOC_EXTS + CODE_EXTS
+_CODE_EXT_SET = frozenset(CODE_EXTS)
+# Longest first, so the pattern never stops at "c" inside "cs" or "js" inside "json".
+_EXT = "(?:" + "|".join(sorted(KNOWN_EXTS, key=len, reverse=True)) + ")"
+# Product names that look like file names. Never a file reference on their own.
+NOT_FILES = frozenset({
+    "node.js", "next.js", "nuxt.js", "vue.js", "react.js", "three.js", "d3.js", "p5.js",
+    "express.js", "angular.js", "ember.js", "backbone.js", "chart.js", "moment.js",
+})
 # Every piece is bounded by the NTFS limit of 255 characters per name.
 # Unbounded, a run of short slash tokens ("a/b c/d ...") let each start scan
 # to the end of the text: 100,000 characters took most of a minute.
@@ -74,7 +92,7 @@ def extract_path_tokens(text: str) -> list[str]:
     pieces.append(cleaned[last:])
     for m in _BARE_RE.finditer("".join(pieces)):
         tok = m.group(1)
-        if tok not in seen:
+        if tok not in seen and tok.lower() not in NOT_FILES:
             seen.add(tok)
             found.append(tok)
     return found
@@ -82,6 +100,12 @@ def extract_path_tokens(text: str) -> list[str]:
 
 def is_path_shaped(token: str) -> bool:
     return "/" in token or "\\" in token
+
+
+def is_bare_code_name(token: str) -> bool:
+    """A file name with no folder and a source, config or asset extension
+    ("server.ts", "error.log"): too common in prose to keep unless it resolves."""
+    return not is_path_shaped(token) and split_ext(token) in _CODE_EXT_SET
 
 
 def ci(s: str) -> str:

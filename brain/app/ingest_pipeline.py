@@ -20,7 +20,8 @@ from .indexing import chunk_text
 from .models import MemoryEntry, Project, validate_entry
 from .storage import (DB_PATH, close_superseded, count_chunks, get_memory,
                       get_memory_by_content_hash, insert_memory, upsert_project)
-from .summarise import embed_documents, embed_model_id, score_importance, summarise
+from .summarise import (embed_documents, embed_model_id, opening_summary, score_importance,
+                        summarise, summary_mode)
 from .vector import get_backend, insert_vectors, vec_add, vec_search_multi, vec_update_metadata
 from .write_policy import apply_write_policy
 
@@ -93,6 +94,7 @@ def write_report(entry: MemoryEntry) -> dict:
     return {
         "id": entry.id,
         "summary": entry.summary,
+        "summary_source": entry.summary_source,
         "importance": entry.importance,
         "type": entry.type,
         "tags": list(entry.tags or []),
@@ -102,6 +104,8 @@ def write_report(entry: MemoryEntry) -> dict:
         "chunks": entry.chunks,
         "content_chars": len(entry.content or ""),
         "superseded": list(entry.superseded),
+        "closed": list(entry.closed),
+        "corrected": list(entry.corrected),
         "potential_supersessions": list(entry.potential_supersessions),
         "warnings": list(entry.warnings),
         "duplicate": bool(entry.duplicate),
@@ -118,24 +122,40 @@ async def ingest(entry: MemoryEntry) -> MemoryEntry:
 
 
 async def _ensure_summary(entry: MemoryEntry, warnings: list[str]) -> None:
+    """The writer's summary is kept word for word. Without one, a short body is
+    its own summary and a long one gets its opening (summary_mode "extract",
+    the default), or the model's summary when MEMORYBRAIN_SUMMARY_MODE=model."""
     if entry.summary:
+        entry.summary_source = entry.summary_source or "writer"
         return
     if len(entry.content) <= SHORT_SUMMARY_MAX:
-        entry.summary = entry.content
+        entry.summary, entry.summary_source = entry.content, "verbatim"
         return
-    try:
-        entry.summary = (await summarise(entry.content)).strip()
-    except Exception as exc:
-        logger.warning("summariser failed for %s (%s); using the opening",
-                       entry.id, type(exc).__name__)
-        entry.summary = ""
-    if not entry.summary:
-        entry.summary = entry.content[:FALLBACK_SUMMARY_CHARS]
+    if summary_mode() == "model":
+        try:
+            entry.summary = (await summarise(entry.content)).strip()
+        except Exception as exc:
+            logger.warning("summariser failed for %s (%s); using the opening",
+                           entry.id, type(exc).__name__)
+            entry.summary = ""
+        if entry.summary:
+            entry.summary_source = "model"
+            return
         warnings.append("summary fallback")
+    else:
+        warnings.append("no summary given: the opening of the text is used; "
+                        "pass summary (one line) next time")
+    entry.summary = opening_summary(entry.content) or entry.content[:FALLBACK_SUMMARY_CHARS]
+    entry.summary_source = "extract"
 
 
 async def _ensure_importance(entry: MemoryEntry) -> None:
+    """The caller's importance, else the type's default (write_policy), else 3.
+    Only summary_mode "model" asks the model to score it."""
     if entry.importance is not None:
+        return
+    if summary_mode() != "model":
+        entry.importance = 3
         return
     try:
         entry.importance = max(1, min(5, int(await score_importance(entry.content))))
@@ -277,6 +297,12 @@ async def _ingest_inner(entry: MemoryEntry) -> MemoryEntry:
     except Exception:
         logger.warning("project upsert failed for %s", entry.project, exc_info=True)
     await _link(entry, parent, superseded)
+    if entry.type in ("session", "handover"):
+        try:  # a loop this session reports done closes now, not at the next sleep
+            from .consolidate import close_loops_reported_by
+            entry.closed = await asyncio.to_thread(close_loops_reported_by, entry.id, DB_PATH)
+        except Exception:
+            logger.warning("loop closing failed for %s", entry.id, exc_info=True)
     try:  # names the memory mentions (hosts, tickets, paths ...), off the event loop
         from .entities import index_entities
         await asyncio.to_thread(index_entities, entry.id, entry.content, DB_PATH)

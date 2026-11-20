@@ -442,9 +442,13 @@ def file_context(file_id: str, db_path: Path) -> dict:
     for r in mems:
         d = dict(r)
         try:
-            d["how"] = json.loads(d.pop("meta") or "{}").get("how", "")
+            meta = json.loads(d.pop("meta") or "{}")
         except ValueError:
-            d["how"] = ""
+            meta = {}
+        d["how"] = meta.get("how", "")
+        for extra in ("line", "commit"):  # where in the file, and at which commit
+            if meta.get(extra):
+                d[extra] = meta[extra]
         memories.append(d)
     return {"file": f, "project": owner["project"] if owner else "",
             "memories": memories, "links_in": [dict(r) for r in links_in],

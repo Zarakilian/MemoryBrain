@@ -267,6 +267,13 @@ async def search_with_status(
     except Exception:
         feedback = {}
 
+    try:  # standing: what has happened to each memory since it was written
+        from .standing import DISPUTED_RANK, standings
+        stand = standings(ids, path)
+    except Exception:
+        logger.warning("standing unavailable for this search", exc_info=True)
+        DISPUTED_RANK, stand = 1.0, {}
+
     fused_scores = fuse([r["id"] for r in kw_results], [r["id"] for r in sem_results])
     scores = {}
     for i in ids:
@@ -274,8 +281,10 @@ async def search_with_status(
         row = rows[i]
         strength = effective_strength(row["strength"], row["timestamp"], row["last_recalled"],
                                       bool(row["pinned"]), memory_type=row["type"])
+        # a disputed memory gives way to the memory that corrects it
+        disputed = DISPUTED_RANK if stand.get(i, {}).get("standing") == "disputed" else 1.0
         adjust = (age_factor(row["type"], row["timestamp"]) * strength_factor(strength)
-                  * feedback.get(i, 1.0))
+                  * feedback.get(i, 1.0) * disputed)
         scores[i] = fused * min(ADJUST_MAX, max(ADJUST_MIN, adjust))
     ranked = sorted(ids, key=lambda i: scores[i], reverse=True)
 
@@ -291,14 +300,22 @@ async def search_with_status(
             excerpt = snippets[i]
         else:
             excerpt = _window(row["content"], terms)
-        output.append({
+        info = stand.get(i, {})
+        hit = {
             "id": i, "summary": row["summary"], "content_preview": row["content"][:200],
             "type": row["type"], "project": row["project"], "source": row["source"],
-            "importance": row["importance"], "timestamp": row["timestamp"],
+            "importance": info.get("importance", row["importance"]),
+            "timestamp": row["timestamp"],
             "status": row["status"], "trust": row["trust"], "writer": row["writer"],
             "excerpt": " ".join(excerpt.split())[:EXCERPT_CHARS],
             "matched": "both" if (i in kw_rank and i in sem_rank)
                        else ("keyword" if i in kw_rank else "semantic"),
             "score": round(scores[i], 6),
-        })
+        }
+        if info:
+            hit["standing"] = info["standing"]
+            for key in ("corrected_by", "superseded_by"):
+                if info.get(key):
+                    hit[key] = info[key]
+        output.append(hit)
     return output, degraded

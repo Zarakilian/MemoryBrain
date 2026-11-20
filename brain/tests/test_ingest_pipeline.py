@@ -6,8 +6,10 @@ from app.ingest_pipeline import ingest
 
 
 @pytest.mark.asyncio
-async def test_ingest_stores_entry_in_sqlite(tmp_db, mock_ollama):
-    # Content must be > 400 chars to go through Ollama summarisation
+async def test_ingest_stores_entry_in_sqlite(tmp_db, mock_ollama, monkeypatch):
+    # Content must be > 400 chars to go through Ollama summarisation, and since
+    # 3.3 the model only writes summaries when asked to
+    monkeypatch.setenv("MEMORYBRAIN_SUMMARY_MODE", "model")
     long_content = "postgres query is slow because the index is missing on the timestamp column " * 6
     entry = MemoryEntry(content=long_content, type="note", project="api-service")
     with patch("app.ingest_pipeline.DB_PATH", tmp_db), \

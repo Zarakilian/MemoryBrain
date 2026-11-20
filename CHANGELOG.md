@@ -3,6 +3,115 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
+## 3.3.0 (2026-11-20)
+
+The memory and the brain. A review of a brain in daily use found the note
+bodies good and everything after the write weak: a small model rewrote them
+into summaries that were sometimes wrong, a correction left the wrong note
+active beside it, open loops never closed, most file references pointed at
+nothing, and real ticket and server names were not indexed. This release
+fixes those, and makes the brief a handover any assistant can pick up from.
+Upgrade with `brain upgrade`, then read "After upgrading" below.
+
+### Changed defaults
+
+- **No model rewrites a summary any more.** `add_memory(summary=…)` is stored
+  word for word (`description` still works as the old name). A long memory
+  without one gets the opening of its text, cut at a sentence end. Before,
+  the summary model wrote it, and a small local model invents details.
+  `MEMORYBRAIN_SUMMARY_MODE=model` restores the old behaviour.
+- **Importance is no longer scored by the model.** It is the writer's
+  (`add_memory(importance=1..5)`), else 4 for a fact or decision and 3 for
+  the rest. A write now makes no summary-model call, so it is faster, and the
+  summary model is only needed for the sleep cycle.
+- **The `importance` an agent reads moves with the memory's standing** (see
+  Added). The stored value is `base_importance` on `get_memory`.
+
+### Added
+
+- **Truth maintenance on the write.** `add_memory` takes `supersedes`,
+  `corrects` and `closes`: lists of memory ids, full or the first 8
+  characters. A superseded memory is archived and points at its replacement,
+  a corrected one stays and is marked disputed, a closed loop becomes done.
+  Every id is checked before anything is stored, what the user wrote is only
+  retired by the user, and each move is audited and undone by
+  `restore_memory`. The same moves for stored memories: `brain_admin`
+  `supersede`, `correct_memory`, `close_loop`.
+- **A session that reports a loop done closes it** as it is written, by the
+  rule the sleep cycle already used. The write report lists what closed.
+- **Standing.** Every memory has one, worked out when it is read: `proven`
+  (old and uncorrected, importance kept), `verified`, `changed` (replaced an
+  older memory in the last 30 days, +1), `disputed` (-2, with
+  `corrected_by`), `stale` (an open loop over 30 days, -1). Pinned,
+  user-written, verified and often-recalled memories get +1.
+  `brain_admin(action="verify_memory")` records a re-check. Search moves a
+  disputed memory below its correction.
+- **The brief is a handover.** New sections `where_we_left_off` (the last
+  session log and its writer), `changes` (what replaced, corrected or
+  finished something) and `howtos` (memories tagged `howto` or `runbook`).
+  Facts are ordered by standing, stale loops come last, and `waiting_on_you`
+  counts the rules and beliefs awaiting your yes. A project nobody touched
+  inside the window still shows its last work, and `dormant` says so.
+- **File references.** Source, config and asset files are recognised in
+  text. A bare file name that fits several files takes the one beside
+  another file or folder the memory names. A ref can carry `line` and
+  `commit`. `/status` reports how old the file index is, and the session
+  hook starts `brain scan` in the background when it is over a day old.
+- **Names.** Ticket ids without a hyphen (`INC0012345`) and pull requests
+  (`owner/repo#12`) are indexed. `brain_admin(action="entity_patterns")`
+  adds patterns for the names one install uses, stored in its database.
+  `get_entity_context` returns everything about one name.
+- **Session-end capture.** The capture hook also handles `SessionEnd`: a
+  session that ends without a log leaves its transcript tail, unless it was
+  under 6 messages or a session log was stored in the last 3 hours.
+- `brain_admin` actions for cleaning an existing brain: `resummarise`,
+  `list_stated_corrections`, `list_open_loops`, `reindex_entities`.
+- The `log-everything` skill writes the session log, the facts as their own
+  memories, what they replace, the loops it closed and the loops still open.
+
+### Fixes
+
+- **The image builds again.** Every `google-genai` 0.1.x release was
+  withdrawn from PyPI, so `google-genai~=0.1.0` stopped resolving and every
+  fresh build, including `brain upgrade`, failed at the package install. The
+  requirement is pinned exactly to the version the Gemini provider was
+  written against. Moving that provider to the 1.x client is still to do.
+- Field and call names (`UserId`, `IsActive`, `GetRowsAsync`) are no longer
+  indexed as products, nor file stems (`PROGRESS_LOG.md`) as environment
+  variables, nor `DDR4-3200` or `GPT-6` as tickets.
+- The Agents page counts a memory under the agent that wrote it (the writer
+  the transport reported), not under "other" because its source named a
+  skill.
+- A project with a confirmed home folder is no longer guessed a second one:
+  naming a file under a shared parent folder used to hand that whole parent
+  to the project.
+- The startup summary shows each project's last session, not whatever
+  memory happened to be written last.
+
+### After upgrading
+
+Nothing is changed for you by the upgrade itself: migration `012` only adds
+columns. To bring an existing brain up to the new standard, ask your
+assistant to run these, in order. Each lists before it changes.
+
+1. `brain_admin(action="resummarise")` shows the model-written summaries it
+   would replace with the opening of the text. Run it again with
+   `{"dry_run": false}` to apply. The old summary is kept in the audit row.
+2. `brain_admin(action="list_stated_corrections")` lists memories that say
+   in words that they supersede or correct another one that is still
+   active. Settle each pair with `supersede`, `correct_memory` or
+   `close_loop`. Pairs marked `partial` want `correct_memory`.
+3. `brain_admin(action="list_open_loops", args={"stale_only": true})` lists
+   the loops over 30 days old. Close the finished ones.
+4. `brain_admin(action="entity_patterns", …)` for your own server and id
+   shapes, then `brain_admin(action="reindex_entities")`.
+5. `python cli/brain.py scan` once, so file references resolve. The session
+   hook keeps the index fresh after that.
+6. Confirm the rules waiting in Atlas (`/ui`, review) or with
+   `brain procedures`. The session brief now says how many are waiting.
+7. Wire the session-end capture if you want it: see "The hooks" in
+   [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
+
 ## 3.2.1 (2026-10-02)
 
 - Every MCP message over the classic SSE transport raised an error after it

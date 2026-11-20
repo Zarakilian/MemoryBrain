@@ -3,13 +3,13 @@
 **Purpose:** explain where a memory goes from the moment an agent writes it to the moment it shows up in a brief, and what happens when a part is down.
 **Audience:** engineers running or changing MemoryBrain. You know Docker, SQLite and HTTP.
 **Done when:** you can say which component handles each step below, and what each failure in the degraded-mode table costs you.
-**Last verified:** 2026-10-02 (version 3.2.1)
+**Last verified:** 2026-11-20 (version 3.3.0)
 
 Setup lives in [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), upgrades in [docs/UPGRADE_TO_V3.md](docs/UPGRADE_TO_V3.md), wiring each assistant in [docs/CONNECTING_ASSISTANTS.md](docs/CONNECTING_ASSISTANTS.md). Every setting is in [.env.example](.env.example).
 
 ## What it is
 
-MemoryBrain is a passive, local memory store shared by every assistant you use. It never pulls from other systems. Assistants read with search and briefs, and write what they learned with `add_memory`. Think of it as a lab notebook that several people write in: each entry is dated and signed, nothing is torn out, a correction is a new entry that points at the old one, and the first page lists the rules the owner set.
+MemoryBrain is a passive, local memory store shared by every assistant you use. It is a memory (the log of what was done, fixed and changed) and a brain (what each project has learned and still holds true). Everything it knows lives in one database on your machine; the repository holds the application only. It never pulls from other systems. Assistants read with search and briefs, and write what they learned with `add_memory`. Think of it as a lab notebook that several people write in: each entry is dated and signed, nothing is torn out, a correction is a new entry that points at the old one, and the first page lists the rules the owner set.
 
 ## The parts
 
@@ -39,11 +39,11 @@ REST, CLI, Atlas  ─┘                     │   ingest · search · brief · 
 1. **Validate.** Type, size, project and status are checked. Bad input is a 422, never a 500.
 2. **Redact.** Secrets are replaced with `[REDACTED:<rule>]` before anything else sees the text (rules below). Credentials in URLs are stripped.
 3. **Deduplicate.** The same content in the same project returns the stored copy with `duplicate: true`. The check runs again right before storing, so two racing writes still store once.
-4. **Summarise and score.** Bodies up to 400 characters are their own summary. Longer ones are summarised by the model. If the model fails, the summary is the first 280 characters, importance is 3, and the write report says `summary fallback`.
+4. **Summarise and score.** The writer's `summary` is stored word for word. Without one, a body up to 400 characters is its own summary and a longer one gets its opening: the first lines, cut at a sentence end, at most 280 characters. No model is called, so a summary cannot say what the text did not. Importance is the writer's, else 4 for a fact or decision and 3 for the rest. `summary_source` records which it was (`writer`, `verbatim`, `extract`, `model`). `MEMORYBRAIN_SUMMARY_MODE=model` brings back the pre-3.3 behaviour: the summary model writes missing summaries and scores importance.
 5. **Embed.** The text gets a document vector, made with EmbeddingGemma's document prompt and tagged with the model's id. Bodies over 1,800 characters are also split into chunks of about 900 characters with 150 overlap, cut at a heading, a blank line or a sentence end, and each chunk gets its own vector. Embedding never fails the write: on error the memory is stored with `embedded=0`.
 6. **Store first.** The row, its vectors and any supersession closures go in one transaction. If the vector store itself will not load, the row is stored without vectors. A memory is never lost because a model was down.
-7. **Supersede.** A new fact or decision that is near-identical (similarity 0.97) to an active one replaces it automatically; for beliefs the bar is 0.95. The old one is archived with `superseded_by` and a `valid_to` date, and an audit row. Other near matches come back in `potential_supersessions` for a person or agent to decide. Sessions are never archived automatically.
-8. **Link.** The graph gains semantic, tag, reference, session-chain and entity edges. Paths in the text become `file_ref` links to indexed files, plus any `refs` the writer named on purpose. Entities (hosts, tickets, ids, paths, products, environment variables) are indexed. Links are cache: a failure here is logged, never fatal.
+7. **Supersede.** The writer names what this memory replaces (`supersedes`), partly corrects (`corrects`) or finishes (`closes`), by full id or by the first 8 characters. Every id is resolved and checked before anything is stored: a prefix that fits two memories, a memory in another project, or one the user wrote, fails the whole write. A superseded memory is archived with `superseded_by` and a `valid_to` date. A corrected one stays active with `corrected_by` set. A closed loop becomes `done`. Each gets an audit row and `restore_memory` undoes it. On its own, a new fact or decision that is near-identical (similarity 0.97) to an active one replaces it; for beliefs the bar is 0.95. Other near matches come back in `potential_supersessions`. Sessions are never archived automatically. A session or handover that reports an open loop done, in one sentence, closes that loop as it is written.
+8. **Link.** The graph gains semantic, tag, reference, session-chain and entity edges. Paths in the text become `file_ref` links to indexed files, plus any `refs` the writer named on purpose. A bare file name that fits several files takes the one beside something else the memory names (how `sibling`); a bare source file name that fits none is dropped, since prose is full of look-alikes. Entities (hosts, tickets, pull requests, ids, paths, products, environment variables, and the install's own patterns) are indexed. Links are cache: a failure here is logged, never fatal.
 9. **Report.** The caller gets the write report: id, summary, writer, trust, embedded, chunk count, duplicate flag, supersessions and warnings.
 
 ## Provenance
@@ -56,6 +56,30 @@ REST, CLI, Atlas  ─┘                     │   ingest · search · brief · 
 | `memory_audit` | One row per archive, restore, supersede, pin, unpin and hard delete: who, when, why. |
 
 Agents archive; only you delete. MCP `delete_memory` archives with an audit row and `brain_admin(action="restore_memory")` undoes it. A permanent delete exists only in Atlas and leaves one content-free audit row.
+
+## Standing: importance that moves
+
+The stored `importance` is what the writer gave a memory. The importance an agent reads is worked out each time from what has happened to the memory since. Nothing is stored, so reading twice changes nothing.
+
+| Standing | When | Effect on importance |
+|---|---|---|
+| `proven` | An active fact, decision or reference over 30 days old with no correction | None. Age never lowers a truth that held |
+| `verified` | `verify_memory` recorded that someone checked it | +1 |
+| `changed` | It replaced an older memory in the last 30 days | +1 |
+| `disputed` | An active memory corrects part of it, or it sits in an open contradiction | -2, and `corrected_by` names the correction |
+| `stale` | An open loop over 30 days old | -1 |
+| `superseded`, `archived` | No longer current | Counts 1 |
+| `done` | A finished loop | Counts at most 2 |
+
+A memory that is pinned, written by you, verified, or recalled often (strength 1.5 or more) gets +1. The result stays between 1 and 5. The brief orders facts by it, search results and `get_memory` carry it, and search moves a disputed memory down so its correction comes first.
+
+## Names
+
+Every write indexes the names in it: hosts, ticket ids (with a hyphen or without, such as `INC0012345`), pull requests (`owner/repo#12`), ids, paths, products and environment variables.
+
+Each install adds patterns for the names only it uses, with `brain_admin(action="entity_patterns")`: its servers, its ticket prefixes, its page ids. They are stored in that brain's database, at most 40, each checked before it is saved (a pattern that could run forever is refused). `reindex_entities` applies them to what is already stored.
+
+`brain_admin(action="get_entity_context", args={"name": …})` returns everything about one name: the current memories that mention it, the open loops among them, the files they point at, and how much history is behind it.
 
 ## Search
 
@@ -72,9 +96,11 @@ If the query cannot be embedded, search returns the keyword hits with a `degrade
 
 ## Briefs
 
-`get_project_brief(project)` is the pack an agent reads at session start. It opens with an envelope that says the contents are stored data, not instructions. Then, in order: pins, the rules you confirmed ("How you want things done"), current facts and decisions (those with no `valid_to`), open loops, the next-session note, approved beliefs, hits for an optional `intent`, conflicts, recent work, and an optional system lane. Every item carries its `trust` and `writer`.
+`get_project_brief(project)` is the pack an agent reads at session start. It is built so any agent can pick the project up where the last one stopped. It opens with an envelope that says the contents are stored data, not instructions. Then, in order: where we left off (the last session log, with who wrote it and how long ago), pins, the rules you confirmed ("How you want things done"), current facts and decisions ordered by standing, what changed (memories that replaced or corrected older ones, loops that were finished), open loops (fresh first, stale last), the next-session note, how-tos (memories tagged `howto` or `runbook`), approved beliefs, hits for an optional `intent`, conflicts, recent work, and an optional system lane. Every item carries its `trust` and `writer`.
 
-The default budget is 6,000 characters (about 1,500 tokens; a project's policy can change it), and it covers the sections only. Each item is cut down first: summaries to 280 characters, the next-session note to 800 with a pointer to the full memory, belief sources to ids and short summaries. Agent-written text gets 60% of the budget plus whatever room your own items leave unused, so your notes always keep up to 40% and an all-agent brain still fills the brief. Within a section your own items come first. When the budget is hit, sections are trimmed from the end (system lane first, pins last) and `truncated` names them.
+The header says more: `last_activity` and `dormant` (no write for 30 days), `open_loop_count`, and `waiting_on_you`, which counts what only you can settle: rules and beliefs awaiting your yes, open contradictions, stale loops. When nothing was written inside the window, `recent` and `changes` still show the last work, at any age. A file index over 7 days old adds a warning.
+
+The default budget is 6,000 characters (about 1,500 tokens; a project's policy can change it), and it covers the sections only. Each item is cut down first: summaries to 280 characters, the next-session note to 800 with a pointer to the full memory, belief sources to ids and short summaries. Agent-written text gets 60% of the budget plus whatever room your own items leave unused, so your notes always keep up to 40% and an all-agent brain still fills the brief. Within a section your own items come first. When the budget is hit, sections are trimmed from the end (system lane first; pins, your rules, the next-session note and where we left off last) and `truncated` names them. Trimming keeps a floor in each working section (5 open loops, 6 facts, 3 changes, 3 how-tos) for as long as another section still has more than its own, so a long list of facts never pushes out what is still open.
 
 ## The sleep cycle
 
@@ -93,14 +119,24 @@ When you correct how an agent works, the agent calls `record_correction(rule, ev
 
 - **Transports.** MCP over SSE (`/sse`, Claude Code), streamable HTTP (`/mcp`, Grok) and stdio through `docker exec` (Codex, Gemini), plus REST for anything else. They all reach the same tools.
 - **Core profile.** By default the tool list holds 15 tools: `search_memory`, `get_memory`, `add_memory`, `get_project_brief`, `get_startup_summary`, `get_recent_context`, `pin_memory`, `set_project_info`, `get_file_context`, `get_agent_inbox`, `post_task`, `reply_to_thread`, `get_thread`, `record_correction` and `brain_admin`. The list is about 7,000 characters of schema, which matters because every agent loads it at session start.
-- **brain_admin.** One tool runs the 24 less common operations, with the same arguments and validation as the full tools. `MEMORYBRAIN_TOOLS=full` lists every tool again. The server still answers a hidden tool called by name, but most clients only let the model call listed tools, so skills and prompts use `brain_admin`.
-- **Explicit refs.** `add_memory(refs=[{"path", "kind"}])` names up to 25 files, folders, urls, tasks or services. File refs resolve against the workspace index and are kept even when they dangle; they survive every relink and rebuild.
+- **brain_admin.** One tool runs the 34 less common operations, with the same arguments and validation as the full tools. `MEMORYBRAIN_TOOLS=full` lists every tool again. The server still answers a hidden tool called by name, but most clients only let the model call listed tools, so skills and prompts use `brain_admin`.
+- **Explicit refs.** `add_memory(refs=[{"path", "kind"}])` names up to 25 files, folders, urls, tasks or services. A file ref can carry `line` (`"40-62"`) and `commit`, and `get_file_context` shows them. File refs resolve against the workspace index and are kept even when they dangle; they survive every relink and rebuild.
 - **Synapse.** Agents hand each other work through threads with a pull inbox. See [docs/AGENT_EXCHANGE.md](docs/AGENT_EXCHANGE.md).
 
 ## The hooks
 
 - **Session start** (`session-start-memory.sh`): finds the project from a `.brainproject` file in the folder or up to four parents, binds the folder to it, then prints this project's brief, rendered as data, and its next-session note labelled with who wrote it and when. It warns when the running version differs from the repo's, and says what still works when a subsystem is down. A project with no notes gets one line, never other projects' notes.
+- **Keeping the file index fresh.** A file reference only resolves against files the brain has seen. When the last scan is over a day old, the session-start hook starts `brain scan` in the background. It sends only what changed and never delays the session. It needs the roots that `brain scan --root` set up once on that machine. `MEMORYBRAIN_AUTO_SCAN=off` in the hook's environment turns it off.
 - **Pre-compact** (`pre-compact-auto-handover.py`): stores a `HANDOVER-*.md` written in the last 12 hours, or else the last 40 messages of the transcript (at most 20,000 characters, 4,000 per message, injected context skipped). Never the hook's own JSON.
+- **Session end** (the same script, wired to `SessionEnd`): the safety net for a session that ends without a log. It stores the transcript tail, tagged `auto-capture`, with a summary that says what it is. It skips a session under 6 messages, and the brain skips it when a session log was stored for that project in the last 3 hours, so a session that ran `log-everything` is never stored twice.
+
+To wire the session-end capture in Claude Code, add this beside the `PreCompact` entry in `~/.claude/settings.json`, with the command your `PreCompact` entry already uses:
+
+```json
+"SessionEnd": [
+  { "hooks": [ { "type": "command", "command": "<the same command as your PreCompact hook>" } ] }
+]
+```
 
 ## Security
 
@@ -128,9 +164,9 @@ Redaction is a net, not a licence: agents are still told never to write secrets.
 
 | What is down | `/readiness` shows | Writes | Search | Briefs |
 |---|---|---|---|---|
-| Ollama (container stopped) | `ollama: error` | Stored. Summary is the first 280 characters, importance 3, no vectors (`embedded=0`) until the re-embed job catches up | Keyword hits, with a `degraded` reason | Work; intent hits are keyword only |
+| Ollama (container stopped) | `ollama: error` | Stored, with the writer's summary or the opening of the text. No vectors (`embedded=0`) until the re-embed job catches up | Keyword hits, with a `degraded` reason | Work; intent hits are keyword only |
 | Embedding model not pulled | `embedding_model: missing` | Stored without vectors, embedded later | Keyword hits, with a `degraded` reason | Work |
-| Summary model not pulled | `summary_model: missing` | Stored with the 280-character fallback summary and importance 3; vectors are made | Full | Work |
+| Summary model not pulled | `summary_model: missing` | Unaffected: a write makes no summary-model call (unless `MEMORYBRAIN_SUMMARY_MODE=model`). The sleep cycle cannot draft beliefs | Full | Work |
 | Cloud provider key missing | `gemini_api_key: missing` or `openai_api_key: missing` | As for Ollama down | Keyword hits | Work |
 | Vector store (sqlite-vec will not load) | `vector_store: error` | Stored without vectors | Keyword hits | Work |
 | SQLite | `sqlite: error` | Fail | Fail | Fail |

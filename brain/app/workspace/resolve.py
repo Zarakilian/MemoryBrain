@@ -9,18 +9,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import storage as _st
 from ..redact import scrub
 from . import store as ws
-from .paths import ci, extract_path_tokens, is_path_shaped, normalise_rel
+from .paths import (ci, extract_path_tokens, is_bare_code_name, is_path_shaped,
+                    normalise_rel)
 
 logger = logging.getLogger(__name__)
 
 WEIGHTS = {"exact": 1.0, "exact_global": 1.0, "suffix": 0.9,
-           "basename": 0.8, "basename_global": 0.6, "dangling": 0.1}
+           "basename": 0.8, "sibling": 0.7, "basename_global": 0.6, "dangling": 0.1}
 MAX_FILE_EDGES = 25
 MAX_CANDIDATES = 5
 
@@ -168,8 +170,71 @@ def file_ref_edges(memory_id: str, project: str, text: str, db_path: Path) -> li
                 "kind": "file_ref", "weight": res["weight"], "meta": meta}
         if key not in best or edge["weight"] > best[key]["weight"]:
             best[key] = edge
-    edges = sorted(best.values(), key=lambda e: e["weight"], reverse=True)
+    edges = _resolve_siblings(list(best.values()), [], db_path)
+    # "server.ts" or "error.log" in prose with no file behind it is not a reference
+    edges = [e for e in edges if not (e["dst_kind"] == "dangling"
+                                      and is_bare_code_name(e["meta"]["token"])
+                                      and not e["meta"].get("candidates"))]
+    edges.sort(key=lambda e: e["weight"], reverse=True)
     return edges[:MAX_FILE_EDGES]
+
+
+def _folder(rel_path_ci: str) -> str:
+    return rel_path_ci.rsplit("/", 1)[0] if "/" in rel_path_ci else ""
+
+
+def _beside(folder: str, named: set[str]) -> bool:
+    """Is this folder one of the named ones, inside one, or the folder one of
+    them sits in ("ticket/" for a named "ticket/sql/")? A file at the top of a
+    root is beside nothing: every path is under the root."""
+    if not folder:
+        return False
+    return any(folder == f or folder.startswith(f + "/") or f.startswith(folder + "/")
+               for f in named)
+
+
+def _resolve_siblings(edges: list[dict], extra_folders: list[str], db_path: Path) -> list[dict]:
+    """A bare file name that fits several files ("notes.md" in every ticket
+    folder) takes the one that sits beside, or under, something else the same
+    memory names: a resolved file, a path it spelled out, or a folder ref.
+    Exactly one such file resolves it (how "sibling"); none or several leave it
+    dangling with its candidates, as before."""
+    waiting = [e for e in edges if e["dst_kind"] == "dangling"
+               and not is_path_shaped(e["meta"].get("token", ""))
+               and e["meta"].get("ref_kind", "file") == "file"]
+    if not waiting:
+        return edges
+    roots = [r["abs_path"] for r in ws.list_roots(db_path)]
+    folders = {ci(f).strip("/") for f in extra_folders if f}
+    for e in edges:
+        token = e["meta"].get("token", "")
+        if e["meta"].get("ref_kind", "file") != "file":
+            continue  # a url or a folder ref is not a file path (folders come in extra_folders)
+        if e["dst_kind"] == "file":
+            f = ws.get_file(db_path, file_id=e["dst_id"])
+            if f:
+                folders.add(_folder(ci(f["rel_path"])))
+        elif is_path_shaped(token):
+            folders.add(_folder(ci(normalise_rel(token, roots))))
+    folders.discard("")
+    if not folders:
+        return edges
+    with _st._connect(db_path) as conn:
+        for e in waiting:
+            base = ci(normalise_rel(e["meta"]["token"], roots))
+            rows = _rows(conn, "basename_ci = ?", (base,))
+            near = [r for r in rows if _beside(_folder(r["rel_path_ci"]), folders)]
+            if len(near) != 1:
+                continue
+            e.update(dst_kind="file", dst_id=near[0]["file_id"], weight=WEIGHTS["sibling"])
+            e["meta"].update(how="sibling", candidates=[])
+    seen: dict[str, dict] = {}
+    for e in edges:  # a sibling hit may land on a file another token already found
+        is_file = e["meta"].get("ref_kind", "file") == "file"
+        key = e["dst_kind"] + ":" + (e["dst_id"].lower() if is_file else e["dst_id"])
+        if key not in seen or e["weight"] > seen[key]["weight"]:
+            seen[key] = e
+    return list(seen.values())
 
 
 _WRITE_LINK = """INSERT INTO file_links (src_kind, src_id, dst_kind, dst_id, kind, weight, meta, created_at)
@@ -201,6 +266,9 @@ def write_file_links(edges: list[dict], db_path: Path, explicit: bool = False) -
 REF_KINDS = ("file", "directory", "url", "task", "service")
 MAX_REFS = 25
 MAX_REF_CHARS = 500
+# where in the file, and at which commit: "42", "42-60", "3f9a2c1d"
+_LINE_RE = re.compile(r"^\d{1,7}(?:-\d{1,7})?$")
+_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 
 
 def clean_refs(refs) -> list[dict]:
@@ -223,7 +291,18 @@ def clean_refs(refs) -> list[dict]:
             raise ValueError(f"refs: a path is longer than {MAX_REF_CHARS} characters")
         if kind not in REF_KINDS:
             raise ValueError(f"refs: kind must be one of {', '.join(REF_KINDS)}")
-        out.append({"path": scrub(path), "kind": kind})
+        clean = {"path": scrub(path), "kind": kind}
+        line = str(ref.get("line") or "").strip().replace(" ", "")
+        if line:
+            if not _LINE_RE.match(line):
+                raise ValueError("refs: line must be a line number or a range such as 42-60")
+            clean["line"] = line
+        commit = str(ref.get("commit") or "").strip()
+        if commit:
+            if not _COMMIT_RE.match(commit):
+                raise ValueError("refs: commit must be a commit hash of 7 to 40 hex characters")
+            clean["commit"] = commit.lower()
+        out.append(clean)
     return out
 
 
@@ -235,6 +314,9 @@ def explicit_ref_edges(memory_id: str, project: str, refs: list[dict], db_path: 
     for ref in refs:
         path, kind = ref["path"], ref["kind"]
         meta = {"token": path, "explicit": True, "ref_kind": kind}
+        for extra in ("line", "commit"):
+            if ref.get(extra):
+                meta[extra] = ref[extra]
         if kind == "file":
             res = resolve_token(path, project, db_path)
             dst_kind = "file" if res["file_id"] else "dangling"
@@ -247,7 +329,9 @@ def explicit_ref_edges(memory_id: str, project: str, refs: list[dict], db_path: 
         best[key] = {
             "src_kind": "memory", "src_id": memory_id, "dst_kind": dst_kind, "dst_id": dst_id,
             "kind": "file_ref", "weight": weight, "meta": meta}
-    return list(best.values())
+    # a folder named beside a bare file name says which copy of that file is meant
+    named_folders = [normalise_rel(r["path"], roots) for r in refs if r["kind"] == "directory"]
+    return _resolve_siblings(list(best.values()), named_folders, db_path)
 
 
 def link_explicit_refs(memory_id: str, project: str, refs: list[dict], db_path: Path) -> dict:
@@ -263,6 +347,11 @@ def _infer_bindings(project: str, edges: list[dict], db_path: Path) -> None:
     """A memory in project P naming a path under an UNBOUND top folder binds it (how='memory')."""
     roots = ws.list_roots(db_path)
     if not roots or not project:
+        return
+    # A project that already has a confirmed home is not guessed a second one:
+    # naming a file under a shared parent ("Other/app/x.md") used to hand the
+    # whole parent, and every other project's folder in it, to this project.
+    if any(f.get("confirmed") for f in ws.list_folders(db_path, project=project)):
         return
     with _st._connect(db_path) as conn:
         for e in edges:

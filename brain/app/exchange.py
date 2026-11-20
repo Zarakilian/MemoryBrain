@@ -74,6 +74,18 @@ def attribute_source(source: str) -> str:
     return "other"
 
 
+def attribute_memory(writer: str, source: str) -> str:
+    """The agent a memory is counted under: who the transport said wrote it
+    (the writer column, v3: "claude-code", "mcp:codex-cli"), and only when that
+    names no known agent, its free-form source. A skill name in source
+    ("log-everything") used to send most of a brain's memories to "other"."""
+    who = (writer or "").strip().lower()
+    if who.startswith("mcp:"):
+        who = who[4:]
+    agent = attribute_source(who) if who else "other"
+    return agent if agent != "other" else attribute_source(source)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -431,14 +443,14 @@ def agent_stats(
             p[field] += 1
 
     with _connect(db_path) as conn:
-        mem_sql = """SELECT source, project, timestamp FROM memories
+        mem_sql = """SELECT source, writer, project, timestamp FROM memories
                      WHERE status = 'active' AND timestamp >= ?"""
         mem_params: list[Any] = [cutoff]
         if project:
             mem_sql += " AND project = ?"
             mem_params.append(project)
         for r in conn.execute(mem_sql, mem_params).fetchall():
-            bump(attribute_source(r["source"]), r["project"],
+            bump(attribute_memory(r["writer"], r["source"]), r["project"],
                  "memories", r["timestamp"])
 
         try:

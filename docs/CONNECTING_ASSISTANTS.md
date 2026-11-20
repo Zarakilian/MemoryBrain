@@ -37,7 +37,15 @@ the full tool: `delete_memory` (archives), `restore_memory`, `get_related`,
 `list_conflicts`, `resolve_conflict`, `dismiss_conflict`, `list_pins`,
 `unpin_memory`, `consolidate`, `rebuild_graph`, `rebuild_file_links`,
 `reembed`, `get_policy`, `set_policy`, `list_threads`, `update_task_status`,
-`get_agent_stats`, `get_workspace_map`, `get_project_files`, `list_projects`.
+`get_agent_stats`, `get_workspace_map`, `get_project_files`, `list_projects`,
+and since 3.3 `supersede`, `correct_memory`, `close_loop`, `verify_memory`,
+`list_stated_corrections`, `list_open_loops`, `resummarise`,
+`get_entity_context`, `entity_patterns`, `reindex_entities`.
+
+Every assistant follows the same writing rules, so one can pick up where
+another stopped: always pass `summary` on `add_memory`, one truth per fact,
+and `supersedes`, `corrects` or `closes` when a memory replaces, disputes or
+finishes an older one. [AGENTS.md](../AGENTS.md) has the full list.
 
 Set `MEMORYBRAIN_TOOLS=full` in the live `.env` (then restart the brain) to
 list all 35 tools again. A tool that is not listed still answers when called

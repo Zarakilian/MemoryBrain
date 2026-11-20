@@ -49,8 +49,16 @@ class MemoryEntry:
     valid_from: Optional[str] = None
     valid_to: Optional[str] = None
     invalidated_by: Optional[str] = None
+    # Who wrote the summary (persisted, v3.3): "writer" (the caller gave it),
+    # "verbatim" (a short body is its own summary), "extract" (the opening of
+    # the text), "model" (the summary model), "" (unknown: stored before 3.3)
+    summary_source: str = ""
+    verified_at: Optional[str] = None    # last time someone checked it and found it true
+    corrected_by: Optional[str] = None   # an active memory that says part of this is wrong
     # Transient fields (returned from ingest, never stored)
     superseded: list = field(default_factory=list)
+    closed: list = field(default_factory=list)       # open loops this write finished
+    corrected: list = field(default_factory=list)    # memories this write disputes
     potential_supersessions: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
     chunks: int = 0

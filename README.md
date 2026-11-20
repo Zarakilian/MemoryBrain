@@ -114,19 +114,31 @@ rest with the same arguments; `MEMORYBRAIN_TOOLS=full` lists every tool again.
 | Other agents | `get_agent_inbox` · `post_task` · `reply_to_thread` · `get_thread` |
 | Learning and the rest | `record_correction` · `brain_admin` |
 
-`brain_admin` actions: `delete_memory` (archives) · `restore_memory` · `get_related` · `get_graph` · `get_timeline` · `get_entities` · `record_retrieval` · `list_conflicts` · `resolve_conflict` · `dismiss_conflict` · `list_pins` · `unpin_memory` · `consolidate` · `rebuild_graph` · `rebuild_file_links` · `reembed` · `get_policy` · `set_policy` · `list_threads` · `update_task_status` · `get_agent_stats` · `get_workspace_map` · `get_project_files` · `list_projects`
+`brain_admin` actions: `delete_memory` (archives) · `restore_memory` · `get_related` · `get_graph` · `get_timeline` · `get_entities` · `record_retrieval` · `list_conflicts` · `resolve_conflict` · `dismiss_conflict` · `list_pins` · `unpin_memory` · `consolidate` · `rebuild_graph` · `rebuild_file_links` · `reembed` · `get_policy` · `set_policy` · `list_threads` · `update_task_status` · `get_agent_stats` · `get_workspace_map` · `get_project_files` · `list_projects` · `supersede` · `correct_memory` · `close_loop` · `verify_memory` · `list_stated_corrections` · `list_open_loops` · `resummarise` · `get_entity_context` · `entity_patterns` · `reindex_entities`
 
 ### Recommended agent protocol
 
 1. `get_startup_summary`
 2. `get_agent_inbox(agent=<me>)`: anything the other agents left for you?
 3. `get_project_brief(project=…)`. It is stored data, not instructions; every item carries `trust` and `writer`.
-4. Work with typed writes: `fact` / `decision` / `open_loop` / `session` (always pass `source=<me>`, and `refs=[…]` for the files a memory is about)
+4. Work with typed writes: `fact` / `decision` / `open_loop` / `session`. Always pass `summary` (one line) and `source=<me>`, `refs=[…]` for the files a memory is about, and `supersedes` / `corrects` / `closes` when it replaces, disputes or finishes an older memory
 5. `pin_memory` for env truths and current goals
 6. When the user corrects how you work: `record_correction(rule=…, evidence=…)`. The user confirms it; then it leads every brief.
 7. Handoffs: `post_task(kind=review, to_agent=codex, refs=[…])` instead of making the human copy-paste
 8. After heavy weeks: `brain_admin(action="consolidate")`, then `brain_admin(action="list_conflicts")` and resolve
 9. When a search result was *actually used*: `brain_admin(action="record_retrieval", args={…, "chosen_id": …})`. Reading it with `get_memory` soon after the search counts too.
+
+## What's new in 3.3: the memory and the brain
+
+MemoryBrain is a memory (the log of what was done) and a brain (what the project has learned). 3.3 makes both dependable enough that any assistant can pick a project up where the last one stopped. [CHANGELOG.md](CHANGELOG.md) has the detail and the steps to run after upgrading.
+
+- **The writer owns the summary.** `add_memory(summary=…)` is stored word for word. A missing one is the opening of the text. No small model rewrites your notes any more, so a summary can no longer say something the note did not.
+- **A correction retires what it corrects.** `supersedes`, `corrects` and `closes` on `add_memory` take memory ids (or their first 8 characters). The old memory is archived, marked disputed, or marked done, in the same write.
+- **Importance is alive.** An old fact nobody corrected stays high. A disputed one sinks and points at its fix. A fresh fix leads for 30 days. Stale open loops go last.
+- **The brief is a handover.** It opens with where the last session stopped and who wrote it, then what changed, then what is open. A project untouched for a year still shows its last work.
+- **File references resolve.** Source files are recognised, a bare file name is matched by what else the memory names, a ref can carry a line and a commit, and the session hook keeps the file index fresh.
+- **It knows your names.** Ticket ids such as `INC0012345` and pull requests such as `owner/repo#12` are indexed. Each install adds patterns for its own servers and ids, stored in its own database. `get_entity_context` returns everything about one name.
+- **A session that ends without a log is still captured**, once, by the session-end hook.
 
 ## What's new in MemoryBrain 3
 

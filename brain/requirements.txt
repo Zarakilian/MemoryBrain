@@ -7,7 +7,11 @@ ollama~=0.6.0
 httpx~=0.28.0
 pydantic~=2.12.0
 jinja2~=3.1
-google-genai~=0.1.0
+# Pinned exactly: every 0.1.x release was withdrawn (yanked) from PyPI, and pip
+# only installs a yanked release for an exact pin. "~=0.1.0" stopped resolving,
+# which broke every fresh image build. This is the version the Gemini provider
+# was written against; moving it to the 1.x client needs a real key to verify.
+google-genai==0.1.0
 openai~=1.58.0
 # test
 pytest~=9.0.0

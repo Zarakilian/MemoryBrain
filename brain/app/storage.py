@@ -98,8 +98,8 @@ def insert_memory(conn: sqlite3.Connection, entry: MemoryEntry) -> None:
            (id, content, summary, type, project, tags, source, importance,
             timestamp, content_hash, status, superseded_by, supersedes,
             writer, trust, embedded, valid_from, valid_to, invalidated_by,
-            content_updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            content_updated_at, summary_source)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
             entry.id, entry.content, entry.summary, entry.type, entry.project,
             json.dumps(entry.tags), entry.source,
@@ -107,7 +107,7 @@ def insert_memory(conn: sqlite3.Connection, entry: MemoryEntry) -> None:
             ts, h,
             entry.status, entry.superseded_by, entry.supersedes,
             entry.writer, entry.trust, int(entry.embedded), entry.valid_from,
-            entry.valid_to, entry.invalidated_by, ts,
+            entry.valid_to, entry.invalidated_by, ts, entry.summary_source or "",
         ),
     )
 
@@ -253,12 +253,13 @@ def set_supersedes(memory_id: str, supersedes: str, db_path: Path = DB_PATH):
 
 
 def get_project_recent_state(project: str, db_path: Path = DB_PATH) -> str:
-    """Return the summary of the most recent active memory for a project."""
+    """Where the project stands, in one line: the summary of its newest session
+    or handover (the last log of work), else of its newest active memory."""
     with _connect(db_path) as conn:
         row = conn.execute(
             """SELECT summary, content FROM memories
                WHERE project = ? AND status = 'active'
-               ORDER BY timestamp DESC LIMIT 1""",
+               ORDER BY (type IN ('session', 'handover')) DESC, timestamp DESC LIMIT 1""",
             (project,),
         ).fetchone()
     if row is None:
@@ -643,4 +644,7 @@ def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
         valid_from=row["valid_from"] if "valid_from" in keys else None,
         valid_to=row["valid_to"] if "valid_to" in keys else None,
         invalidated_by=row["invalidated_by"] if "invalidated_by" in keys else None,
+        summary_source=(row["summary_source"] or "") if "summary_source" in keys else "",
+        verified_at=row["verified_at"] if "verified_at" in keys else None,
+        corrected_by=row["corrected_by"] if "corrected_by" in keys else None,
     )

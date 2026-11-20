@@ -12,6 +12,8 @@ description: >
 
 Capture this session so future agents (and you) can resume without re-deriving context.
 
+MemoryBrain is two things, and this skill writes both. The **memory** is the log: what was done, fixed and changed. The **brain** is what the project has learned: the facts, decisions and how-tos that stay true after the session is forgotten.
+
 **Never log secrets**: tokens, passwords, connection strings, private keys, full credential lines from any connections file, or raw payment data.
 
 ---
@@ -41,11 +43,36 @@ From the full conversation, write a **300 to 700 word** summary covering:
 
 Be specific: SHAs, env var **names** (not values), URLs of public pages, test evidence.
 
+Write file paths from the workspace root (`Reports/export/run.py`) or absolute, never a bare name such as `notes.md`: a bare name fits many files, so the brain cannot link it. Write pull requests as `owner/repo#12`.
+
+Also write a **one-line summary** of the session (the date and the outcome). The brain stores it word for word and shows it in every brief.
+
+---
+
+## Step 1b: What was learned, and what it replaces (required)
+
+Call `get_project_brief(project)` first and note the ids of the open loops this session finished, and of any fact this session proved wrong or out of date. The first 8 characters of an id are enough.
+
+Then, for each thing that will still be true next month, one `add_memory` call:
+
+| Field | What to pass |
+|-------|--------------|
+| `type` | `fact` for something true, `decision` for a choice the user made (with the reason) |
+| `content` | One truth, under about 600 characters, with exact names, numbers and ids |
+| `summary` | One line a future reader can act on |
+| `tags` | The topic, the ticket id, and `howto` for a procedure someone will repeat |
+| `supersedes` | `[id]` when it replaces an older memory (the old one is archived) |
+| `corrects` | `[id]` when only part of an older memory is wrong (it stays, marked disputed) |
+
+One `add_memory` with `type: "open_loop"` per unfinished item: one actionable line, the next action and who does it. Pass `supersedes: [old id]` when it updates an older loop.
+
+Skip anything the brief already holds unchanged.
+
 ---
 
 ## Step 2: MemoryBrain (always try)
 
-Prefer MCP tools if connected (`add_memory` or the ingest equivalents). Grok MCP is configured with `X-Brain-Key` when `BRAIN_API_KEY` is set on the live service. Pass `refs=[{"path": "<file>", "kind": "file"}, …]` (at most 25) for the files you changed. If your MCP config can send headers, add `X-Brain-Agent: grok` so the brain records Grok as the writer.
+Prefer MCP tools if connected (`add_memory` or the ingest equivalents). Grok MCP is configured with `X-Brain-Key` when `BRAIN_API_KEY` is set on the live service. Store the session with `type: "session"`, the one-line `summary`, `closes: [ids of the open loops this session finished]` and `refs=[{"path": "<file>", "kind": "file"}, …]` (at most 25) for the files you changed. If your MCP config can send headers, add `X-Brain-Agent: grok` so the brain records Grok as the writer.
 
 If the MCP handshake failed, use HTTP. **Auth:** if the live install's `.env` has a non-empty `BRAIN_API_KEY`, send header `X-Brain-Key: <value>` on every request (do not print the key). Where the live install lives on this machine is in the machine's `.local/` notes.
 
@@ -57,9 +84,12 @@ X-Brain-Key: <from live .env if set>
 {
   "project": "<PROJECT_SLUG>",
   "source": "log-everything",
+  "summary": "<the one-line summary>",
   "content": "<session summary>"
 }
 ```
+
+The HTTP route cannot close loops or replace memories. When you are on HTTP, name the finished loops in the summary text ("the post-check is done"): a session that reports a loop done closes it.
 
 Also post a short note (optional tags via the note endpoint if available):
 
@@ -118,6 +148,8 @@ Otherwise, if the repo has a handover or a `DEV_LOG` / `PROJECT_LOG` convention,
 Report a checklist:
 
 - [ ] MemoryBrain session and note (ids, or "offline / timeout")
+- [ ] Facts and decisions stored, and which older memories they replaced or corrected
+- [ ] Open loops closed, and open loops opened
 - [ ] Each file path updated
 - [ ] Next-session notes (user or agent-derived)
 - [ ] Deployed commit SHAs (if anything was deployed)
