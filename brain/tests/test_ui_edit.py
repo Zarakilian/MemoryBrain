@@ -329,3 +329,150 @@ def test_a_verdict_reason_is_scrubbed_of_secrets(verdict_client):
         row = conn.execute("""SELECT reason FROM memory_audit WHERE memory_id = ?
                               AND action = 'supersede'""", ("cccccccc-0001",)).fetchone()
     assert "A1b2A1b2" not in (row["reason"] or "")
+
+
+# ------------------------------------------ 3.3 cleanup: the one bulk apply
+
+LONG_BODY = ("Moved the nightly export to the new queue. " * 12).strip()        # over 400 characters
+MODEL_SUMMARY = ("The team moved the export to another queue on March 2, 2026, with several "
+                 "follow-up steps that were completed afterwards by everyone involved. " * 2).strip()
+
+
+@pytest.fixture
+def cleanup_client(edit_client):
+    c, db = edit_client
+    add_memory(MemoryEntry(id="abababab-0001", content=LONG_BODY, summary=MODEL_SUMMARY,
+                           type="session", project="proj-a", summary_source="model"), db_path=db)
+    add_memory(MemoryEntry(id="abababab-0002", content=LONG_BODY + " Second run.",
+                           summary="Export moved; queue renamed", type="session",
+                           project="proj-a", summary_source="writer"), db_path=db)
+    return c, db
+
+
+def test_resummarise_apply_replaces_what_the_dry_run_showed(cleanup_client):
+    from app.storage import _connect
+    c, db = cleanup_client
+    dry = c.get("/api/ui/cleanup/summaries").json()
+    assert dry["would_change"] == 1
+    r = c.post("/api/ui/edit/cleanup/resummarise", json={"expect": dry["would_change"]})
+    assert r.status_code == 200 and r.json()["dry_run"] is False and r.json()["changed"] == 1
+    assert get_memory("abababab-0001", db_path=db).summary == dry["examples"][0]["new"]
+    # the writer's own line is never touched
+    assert get_memory("abababab-0002", db_path=db).summary == "Export moved; queue renamed"
+    with _connect(db) as conn:
+        audit_row = conn.execute("""SELECT actor, detail FROM memory_audit WHERE memory_id = ?
+                                    AND action = 'resummarise'""", ("abababab-0001",)).fetchone()
+        source = conn.execute("SELECT summary_source FROM memories WHERE id = ?",
+                              ("abababab-0001",)).fetchone()[0]
+    assert audit_row["actor"] == "ui"
+    assert "The team moved the export" in audit_row["detail"]       # the old summary is kept
+    assert source == "extract"
+    # nothing is left, and a second apply changes nothing
+    assert c.get("/api/ui/cleanup/summaries").json()["would_change"] == 0
+    assert c.post("/api/ui/edit/cleanup/resummarise").json()["changed"] == 0
+
+
+def test_resummarise_apply_refuses_a_list_that_changed_since_the_dry_run(cleanup_client):
+    c, db = cleanup_client
+    r = c.post("/api/ui/edit/cleanup/resummarise", json={"expect": 5})
+    assert r.status_code == 409 and "dry run again" in r.json()["detail"]
+    assert get_memory("abababab-0001", db_path=db).summary == MODEL_SUMMARY
+    # one project's apply leaves the others alone
+    r = c.post("/api/ui/edit/cleanup/resummarise", json={"project": "elsewhere", "expect": 0})
+    assert r.status_code == 200 and r.json()["changed"] == 0
+    assert get_memory("abababab-0001", db_path=db).summary == MODEL_SUMMARY
+    assert c.post("/api/ui/edit/cleanup/resummarise", json={"expect": -1}).status_code == 422
+
+
+def test_resummarise_apply_needs_the_api_key_when_one_is_set(cleanup_client, monkeypatch):
+    c, db = cleanup_client
+    monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
+    assert c.post("/api/ui/edit/cleanup/resummarise", json={}).status_code == 401
+    assert get_memory("abababab-0001", db_path=db).summary == MODEL_SUMMARY
+    r = c.post("/api/ui/edit/cleanup/resummarise", json={}, headers={"X-Brain-Key": "sekrit"})
+    assert r.status_code == 200 and r.json()["changed"] == 1
+
+
+# ------------------------------------------------- 3.3 name patterns
+
+PATTERN = r"\bsrv-[a-z]+-\d{2}\b"          # made up: no install's real names belong in the repo
+
+
+def test_name_pattern_add_list_and_remove(edit_client):
+    from app.entities import list_patterns
+    c, db = edit_client
+    r = c.post("/api/ui/edit/names/patterns", json={"kind": "server", "pattern": PATTERN})
+    assert r.status_code == 200 and r.json()["added"] is True
+    assert [(p["kind"], p["pattern"]) for p in r.json()["patterns"]] == [("server", PATTERN)]
+    assert [(p["kind"], p["pattern"]) for p in list_patterns(db)] == [("server", PATTERN)]
+    # the same one again is not stored twice
+    r = c.post("/api/ui/edit/names/patterns", json={"kind": " server ", "pattern": PATTERN})
+    assert r.status_code == 200 and r.json()["added"] is False and len(r.json()["patterns"]) == 1
+    r = c.request("DELETE", "/api/ui/edit/names/patterns",
+                  json={"kind": "server", "pattern": PATTERN})
+    assert r.status_code == 200 and r.json() == {"removed": True, "patterns": []}
+    assert list_patterns(db) == []
+    r = c.request("DELETE", "/api/ui/edit/names/patterns",
+                  json={"kind": "server", "pattern": PATTERN})
+    assert r.status_code == 404
+
+
+@pytest.mark.parametrize("kind,pattern,says", [
+    ("server", "srv-(", "not a valid regular expression"),
+    ("server", "a{99999999999}", "not a valid regular expression"),   # too large to repeat
+    ("server", "(a+)+", "repeats a group"),
+    ("server", "x*", "matches empty text"),
+    ("server", "", "must not be empty"),
+    ("server", "a" * 201, "exceeds 200 characters"),
+    ("My Server", r"srv-\d+", "kind must be"),
+    ("", r"srv-\d+", "kind must be"),
+])
+def test_a_bad_name_pattern_is_refused_in_words(edit_client, kind, pattern, says):
+    from app.entities import list_patterns
+    c, db = edit_client
+    r = c.post("/api/ui/edit/names/patterns", json={"kind": kind, "pattern": pattern})
+    assert r.status_code == 422
+    assert isinstance(r.json()["detail"], str) and says in r.json()["detail"]
+    assert list_patterns(db) == []
+
+
+def test_name_patterns_stop_at_the_limit(edit_client):
+    from app.entities import MAX_PATTERNS, add_pattern
+    c, db = edit_client
+    for i in range(MAX_PATTERNS):
+        add_pattern("server", rf"\bsrv{i}-\d{{2}}\b", db_path=db)
+    r = c.post("/api/ui/edit/names/patterns", json={"kind": "server", "pattern": PATTERN})
+    assert r.status_code == 422 and "remove one first" in r.json()["detail"]
+
+
+def test_reindex_makes_stored_notes_follow_a_new_pattern(edit_client):
+    c, db = edit_client
+    add_memory(MemoryEntry(id="acacacac-0001", content="restarted srv-web-01 after the patch",
+                           summary="restarted srv-web-01", type="note", project="proj-a"),
+               db_path=db)
+    assert "a search of the text" in c.get("/ui/name/srv-web-01").text     # not indexed yet
+    assert c.post("/api/ui/edit/names/patterns",
+                  json={"kind": "server", "pattern": PATTERN}).status_code == 200
+    r = c.post("/api/ui/edit/names/reindex")
+    assert r.status_code == 200
+    report = r.json()
+    assert report["memories"] == 2 and report["entities"] >= 1
+    html = c.get("/ui/name/srv-web-01").text
+    assert "the name index" in html and ">server<" in html and "restarted srv-web-01" in html
+    assert 'href="/ui/name/srv-web-01"' in c.get("/ui/names").text
+
+
+def test_name_pattern_writes_need_the_api_key_when_one_is_set(edit_client, monkeypatch):
+    from app.entities import list_patterns
+    c, db = edit_client
+    monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
+    body = {"kind": "server", "pattern": PATTERN}
+    assert c.post("/api/ui/edit/names/patterns", json=body).status_code == 401
+    assert c.request("DELETE", "/api/ui/edit/names/patterns", json=body).status_code == 401
+    assert c.post("/api/ui/edit/names/reindex").status_code == 401
+    assert list_patterns(db) == []
+    key = {"X-Brain-Key": "sekrit"}
+    assert c.post("/api/ui/edit/names/patterns", json=body, headers=key).status_code == 200
+    assert c.post("/api/ui/edit/names/reindex", headers=key).status_code == 200
+    # the pages that read stay open, like every Atlas read
+    assert c.get("/ui/names").status_code == 200 and c.get("/ui/name/srv-web-01").status_code == 200

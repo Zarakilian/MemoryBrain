@@ -714,6 +714,9 @@
   }
 
   if (window.Atlas) {
+    /* the one write path (client header, the key, the ask on a 401), for
+       pages that carry their own script: names.js */
+    Atlas.writeFetch = writeFetch;
     Atlas.extraCommands = (Atlas.extraCommands || []).concat([
       { kind: "edit", label: "Add note / file", run: openAddNote },
       { kind: "edit", label: "New project", run: function () { openProject(null); } },

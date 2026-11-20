@@ -470,6 +470,72 @@ def clear_correction(memory_id: str):
     return _lifecycle(lambda: lifecycle.clear_correction(memory_id, actor="ui", db_path=DB_PATH))
 
 
+# ------------------------------------------------------- 3.3 cleanup
+# The Doctor page lists what could be tidied (dry runs, read-only, in
+# routes.py). Only this applies one of them in bulk; the other two lists are
+# settled pair by pair with the verdict endpoints above.
+
+class ResummariseBody(BaseModel):
+    project: str = Field(default="", max_length=64)
+    expect: int | None = Field(default=None, ge=0)   # the count the dry run showed
+
+
+@router.post("/api/ui/edit/cleanup/resummarise")
+def apply_resummarise(body: ResummariseBody | None = None):
+    """Swap the summaries the old model wrote for the opening of the text
+    (the same function as brain_admin resummarise). Each audit row keeps the
+    summary it replaced. With `expect`, a list that changed since the dry run
+    is refused, so nothing the user did not see is rewritten."""
+    from ..resummarise import resummarise
+    body = body or ResummariseBody()
+    project = body.project or None
+    if body.expect is not None:
+        now = resummarise(project, dry_run=True, db_path=DB_PATH)["would_change"]
+        if now != body.expect:
+            raise HTTPException(409, f"The list changed since the dry run ({body.expect} then, "
+                                     f"{now} now). Run the dry run again.")
+    return resummarise(project, dry_run=False, actor="ui", db_path=DB_PATH)
+
+
+# ---------------------------------------------------- 3.3 name patterns
+# The names only this place uses (its servers, its ticket prefixes). They
+# live in this install's database, never in the application.
+
+class PatternBody(BaseModel):
+    # the limits that matter are check_pattern's, which says what is wrong in words
+    kind: str = Field(default="", max_length=200)
+    pattern: str = Field(default="", max_length=2000)
+
+
+@router.post("/api/ui/edit/names/patterns")
+def add_name_pattern(body: PatternBody):
+    """Add one pattern. add_pattern runs check_pattern first: a bad kind or a
+    bad regular expression comes back as its sentence, with 422."""
+    from .. import entities
+    try:
+        out = entities.add_pattern(body.kind, body.pattern, db_path=DB_PATH)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return {**out, "patterns": entities.list_patterns(DB_PATH)}
+
+
+@router.delete("/api/ui/edit/names/patterns")
+def remove_name_pattern(body: PatternBody):
+    from .. import entities
+    if not entities.remove_pattern(body.kind, body.pattern, db_path=DB_PATH):
+        raise HTTPException(404, "No such pattern")
+    return {"removed": True, "patterns": entities.list_patterns(DB_PATH)}
+
+
+@router.post("/api/ui/edit/names/reindex")
+def reindex_names():
+    """Index every memory's names again with today's patterns (the same
+    function as brain_admin reindex_entities). Returns what it reports:
+    how many memories it read and how many names the index now holds."""
+    from ..entities import reindex_entities
+    return reindex_entities(DB_PATH)
+
+
 @router.post("/api/ui/edit/memories/{memory_id}/archive")
 def archive(memory_id: str):
     if not archive_memory_audited(memory_id, actor="ui", db_path=DB_PATH):

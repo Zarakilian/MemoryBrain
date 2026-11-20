@@ -7,8 +7,9 @@ brain reports its version at `GET /status`.
 
 Atlas catches up with 3.3, and the Constellation comes alive. Nothing here
 changes the agents' tools, the storage or the database: it is the web UI,
-the read endpoints behind it, and five write endpoints for the user. Upgrade
-with `brain upgrade`. There is no migration.
+the read endpoints behind it, and nine write endpoints for the user. The one
+exception is a fix to how a bad name pattern is refused (last section).
+Upgrade with `brain upgrade`. There is no migration.
 
 ### The Constellation
 
@@ -90,10 +91,41 @@ with `brain upgrade`. There is no migration.
 - The rail's foot is one block of like buttons. Section headings in the
   inspector and on the memory page have a rule under them.
 
-### Not in this pass
+### The Doctor cleans up, and names have pages
 
-- The Doctor page does not yet show the age of the file index or the cleanup
-  lists, and there is no page for one name or screen for name patterns.
+- **The Doctor says how old the file index is**, from the `workspace` block of
+  `GET /status`. Over a day old, it says so and names what to run on the host
+  (`brain scan`). On a brain with an API key and no key in the browser it
+  works the same answer out from the workspace map.
+- **Three cleanup lists on the Doctor page**, each a dry run first: summaries
+  the old model wrote (apply swaps them for the opening of their own text),
+  corrections stated only in prose (each pair gets Supersede, Correct or
+  Close), and stale open loops (Close). A dry run only reads. Nothing changes
+  until you press an apply button, the bulk one asks twice, and it is refused
+  if the list changed since the dry run. A project box keeps the lists to one
+  project. The copied report carries the counts, never the notes' text.
+- **A page for one name**, `/ui/name/<name>` (optional `?project=`): what the
+  brain holds about one ticket, server, file or product. Its current
+  memories and open loops with their standing, the files they point at, and
+  how much history sits behind it. A name the index does not hold is searched
+  for in the text, and the page says which of the two found it.
+- **A names screen**, `/ui/names`: this install's own name patterns, to list,
+  add and remove; a look-up box; and the most mentioned names, each a link to
+  its page. A bad pattern comes back as a sentence that says what is wrong.
+  After a change it offers to reindex the stored notes and shows what the
+  reindex reports. Patterns stay in the install's database.
+- The command palette opens both: "Names", and "Everything about ..." for
+  whatever is typed. The Doctor and the page footer link to the names screen.
+- New read endpoints: `GET /api/ui/cleanup/summaries`, `/corrections` and
+  `/loops` (each takes `project`).
+- New write endpoints: `POST /api/ui/edit/cleanup/resummarise`, `POST` and
+  `DELETE /api/ui/edit/names/patterns`, `POST /api/ui/edit/names/reindex`.
+  They need the API key when one is set, like every Atlas write.
+- Fixed: a name pattern with a repeat count too large to compile
+  (`a{99999999999}`) raised an error. It is now refused in words like any
+  other bad pattern, in Atlas and in `brain_admin entity_patterns`.
+- Fixed: the palette could show the answer to what was typed a moment
+  earlier when a slow search came back late.
 
 ## 3.3.0 (2026-11-20)
 

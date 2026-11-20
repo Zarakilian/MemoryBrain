@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% from "_macros.html" import mem_row %}
+{% block title %}{{ ctx.name[:60] }} · MemoryBrain{% endblock %}
+{% block stage %}
+{# Everything stored about one name (entities.entity_context): the page an
+   agent gets from brain_admin get_entity_context, for a person. #}
+<article class="memory-page name-page">
+  <header class="mem-head">
+    <nav class="crumbs">
+      <a href="/ui">Nebula</a> /
+      <a href="/ui/names">Names</a> /
+      <span class="crumb-id">{{ ctx.name }}</span>
+    </nav>
+    <h1 class="mem-title">{{ ctx.name }}</h1>
+    <div class="mem-meta">
+      {% for k in ctx.kinds %}<span class="badge t-name">{{ k|replace('_', ' ') }}</span>{% endfor %}
+      {% if scope %}
+      <span><span class="pdot" style="--ph:{{ scope|phue }}"></span> in {{ scope }} only</span>
+      <a class="name-scope" href="/ui/name/{{ ctx.name|urlencode }}">all projects</a>
+      {% else %}
+      {% for p in ctx.projects %}
+      <a class="name-scope" href="/ui/name/{{ ctx.name|urlencode }}?project={{ p|urlencode }}"
+         title="Only what {{ p }} holds about this name"><span class="pdot" style="--ph:{{ p|phue }}"></span> {{ p }}</a>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </header>
+
+  {% set found = ctx.memories|length + ctx.open_loops|length + ctx.history %}
+  {% if not found %}
+  <p class="name-none">Nothing stored mentions <strong>{{ ctx.name }}</strong>{% if scope %} in {{ scope }}{% endif %}.
+    The name index does not hold it and a search of the text found nothing.</p>
+  <p class="quiet">If this is a name only this place uses, such as a server or a ticket prefix,
+    <a class="name-link" href="/ui/names">add a pattern for it</a> so the brain indexes it.</p>
+  {% else %}
+  <dl class="mem-facts">
+    <dt>current</dt>
+    <dd>{{ ctx.memories|length }} {{ 'memory' if ctx.memories|length == 1 else 'memories' }},
+        {{ ctx.open_loops|length }} open {{ 'loop' if ctx.open_loops|length == 1 else 'loops' }}{% if ctx.memories|length >= limit or ctx.open_loops|length >= limit %}
+        (the newest {{ limit }} of each are listed; there may be more){% endif %}</dd>
+    <dt>history</dt>
+    <dd>{% if ctx.history %}{{ ctx.history }} older
+        {{ 'memory sits' if ctx.history == 1 else 'memories sit' }} behind it (archived, replaced or finished){% else %}none: nothing about it has been archived, replaced or finished{% endif %}</dd>
+    <dt>first seen</dt><dd>{{ (ctx.first_seen or '')[:10] }}</dd>
+    <dt>last seen</dt><dd>{{ (ctx.last_seen or '')[:10] }}</dd>
+    <dt>found by</dt>
+    <dd>{% if ctx.found_by == 'index' %}the name index{% else %}a search of the text (the name index does not hold it){% endif %}</dd>
+  </dl>
+
+  <section class="mem-related">
+    <h2>Open loops</h2>
+    {% for m in ctx.open_loops %}{{ mem_row(m, show_project=not scope, when='date') }}{% else %}
+    <p class="quiet">No open loop mentions it.</p>{% endfor %}
+  </section>
+
+  <section class="mem-related">
+    <h2>Current memories</h2>
+    {% for m in ctx.memories %}{{ mem_row(m, show_project=not scope, when='date') }}{% else %}
+    <p class="quiet">No current memory mentions it. What is stored about it is history.</p>{% endfor %}
+  </section>
+
+  <section class="mem-related">
+    <h2>Files these memories point at</h2>
+    {% for f in ctx.files %}
+    <p class="name-file"><code>{{ f.rel_path }}</code>
+      <span class="quiet">{{ f.memories }} {{ 'memory' if f.memories == 1 else 'memories' }}</span></p>
+    {% else %}<p class="quiet">None of them names a file the index holds.</p>{% endfor %}
+  </section>
+  {% endif %}
+</article>
+{% endblock %}

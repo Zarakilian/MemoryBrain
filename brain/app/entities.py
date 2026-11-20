@@ -69,7 +69,8 @@ def check_pattern(kind: str, pattern: str) -> re.Pattern:
                          "it can take forever on long text")
     try:
         compiled = re.compile(pattern)
-    except re.error as exc:
+    except (re.error, OverflowError, RecursionError) as exc:
+        # a count too large to repeat ("a{99999999999}") is an OverflowError, not a re.error
         raise ValueError(f"pattern is not a valid regular expression: {exc}") from None
     if compiled.match(""):
         raise ValueError("pattern matches empty text")

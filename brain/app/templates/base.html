@@ -30,7 +30,7 @@
       Memory<em>Brain</em>
     </a>
     <nav class="rail-nav" aria-label="Scope">
-      <a href="/ui" class="{{ 'on' if not current and not agents_page else '' }}">
+      <a href="/ui" class="{{ 'on' if not current and not agents_page and not names_page else '' }}">
         <span class="pdot all"></span><span class="pname">All memories</span>
         <span class="count">{{ stats.total }}</span></a>
       <a href="/ui/agents" class="{{ 'on' if agents_page else '' }}"
@@ -69,6 +69,7 @@
     {% block stage %}{% endblock %}
     <footer class="buildfoot">
       build <code>{{ build_stamp }}</code> &middot; <a href="/ui/doctor">doctor</a>
+      &middot; <a href="/ui/names">names</a>
       &middot; {{ stats.projects }} projects &middot; {{ stats.edges }} links
       &middot; {{ stats.files }} files &middot; {{ stats.file_edges }} file links
     </footer>
