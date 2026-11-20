@@ -163,3 +163,169 @@ def test_an_atlas_edit_leaves_an_audit_row(edit_client):
         conn.close()
     assert [(r["action"], r["actor"]) for r in rows] == [("edit", "ui")]
     assert "summary" in rows[0]["reason"]
+
+
+# ------------------------------------------ 3.3 the user's verdicts (lifecycle)
+
+def _audit_rows(db, memory_id):
+    from app.storage import _connect
+    with _connect(db) as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT action, actor FROM memory_audit WHERE memory_id = ? ORDER BY rowid",
+            (memory_id,)).fetchall()]
+
+
+@pytest.fixture
+def verdict_client(edit_client):
+    c, db = edit_client
+    rows = [("cccccccc-0001", "fact", "the port is 7741", "agent"),
+            ("cccccccc-0002", "fact", "the port is 7742", "agent"),
+            ("cccccccc-0003", "open_loop", "rotate the key", "agent"),
+            ("cccccccc-0004", "fact", "written in Atlas by the user", "user"),
+            ("cccccccc-0005", "session", "session: rotated the key", "agent")]
+    for id_, type_, text, trust in rows:
+        add_memory(MemoryEntry(id=id_, content=f"{text} (full text)", summary=text, type=type_,
+                               project="proj-a", trust=trust), db_path=db)
+    upsert_project(Project(slug="proj-b", name="Proj B"), db_path=db)
+    add_memory(MemoryEntry(id="dddddddd-0001", content="another project", summary="elsewhere",
+                           type="fact", project="proj-b"), db_path=db)
+    return c, db
+
+
+def test_verify_marks_a_memory_as_checked(verdict_client):
+    c, db = verdict_client
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/verify", json={"note": "checked the config"})
+    assert r.status_code == 200 and r.json()["verified_by"] == "ui"
+    m = c.get("/api/ui/memories/cccccccc-0001").json()
+    assert m["standing"] == "verified" and m["verified_at"]
+    assert m["importance_now"] == m["importance"] + 1
+    assert {"action": "verify", "actor": "ui"} in _audit_rows(db, "cccccccc-0001")
+    # no body at all is fine too (the button sends an empty one)
+    assert c.post("/api/ui/edit/memories/cccccccc-0002/verify").status_code == 200
+
+
+def test_close_loop_finishes_it_and_reopen_brings_it_back(verdict_client):
+    c, db = verdict_client
+    r = c.post("/api/ui/edit/memories/cccccccc-0003/close", json={"by": "cccccccc-0005"})
+    assert r.status_code == 200 and r.json() == {"id": "cccccccc-0003", "closed": True,
+                                                 "status": "done"}
+    assert get_memory("cccccccc-0003", db_path=db).status == "done"
+    assert c.get("/api/ui/memories/cccccccc-0003").json()["standing"] == "done"
+    assert {"action": "close", "actor": "ui"} in _audit_rows(db, "cccccccc-0003")
+    # the loop has left the brief's open list and shows under what changed
+    brief = c.get("/api/ui/brief", params={"project": "proj-a"}).json()
+    assert brief["open_loop_count"] == 0
+    assert [ch["kind"] for ch in brief["changes"]] == ["finished"]
+    # Reopen is the existing restore
+    r = c.patch("/api/ui/edit/memories/cccccccc-0003", json={"status": "active"})
+    assert r.status_code == 200
+    assert get_memory("cccccccc-0003", db_path=db).status == "active"
+
+
+def test_close_refuses_what_is_not_an_open_loop(verdict_client):
+    c, _ = verdict_client
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/close")
+    assert r.status_code == 422 and "open loops" in r.json()["detail"]
+
+
+def test_supersede_archives_the_old_one_and_points_it_at_the_new(verdict_client):
+    c, db = verdict_client
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/supersede",
+               json={"by": "cccccccc-0002", "reason": "the port moved"})
+    assert r.status_code == 200 and r.json()["superseded"] == ["cccccccc-0001"]
+    old = get_memory("cccccccc-0001", db_path=db)
+    assert old.status == "archived" and old.superseded_by == "cccccccc-0002"
+    assert c.get("/api/ui/memories/cccccccc-0002").json()["standing"] == "changed"
+    assert {"action": "supersede", "actor": "ui"} in _audit_rows(db, "cccccccc-0001")
+    # a full id or its first 8 characters both name a memory; a prefix that
+    # fits several is refused, and nothing changes
+    r = c.post("/api/ui/edit/memories/cccccccc-0004/supersede", json={"by": "cccccccc"})
+    assert r.status_code == 422 and "more than one" in r.json()["detail"]
+    assert get_memory("cccccccc-0004", db_path=db).status == "active"
+
+
+def test_atlas_may_retire_what_the_user_wrote_and_an_agent_may_not(verdict_client):
+    from app import lifecycle
+    c, db = verdict_client
+    with pytest.raises(lifecycle.LifecycleError, match="written by the user"):
+        lifecycle.supersede("cccccccc-0004", "cccccccc-0002", actor="some-agent", db_path=db)
+    assert get_memory("cccccccc-0004", db_path=db).status == "active"
+    r = c.post("/api/ui/edit/memories/cccccccc-0004/supersede", json={"by": "cccccccc-0002"})
+    assert r.status_code == 200
+    assert get_memory("cccccccc-0004", db_path=db).status == "archived"
+
+
+def test_correct_marks_it_disputed_and_uncorrect_takes_it_back(verdict_client):
+    c, db = verdict_client
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/correct", json={"by": "cccccccc-0002"})
+    assert r.status_code == 200 and r.json()["corrected"] == ["cccccccc-0001"]
+    m = c.get("/api/ui/memories/cccccccc-0001").json()
+    assert m["status"] == "active" and m["standing"] == "disputed"
+    assert m["lineage"]["corrected_by"]["id"] == "cccccccc-0002"
+    assert m["importance_now"] < m["importance"]
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/uncorrect")
+    assert r.status_code == 200 and r.json() == {"id": "cccccccc-0001", "cleared": True,
+                                                 "was": "cccccccc-0002"}
+    m = c.get("/api/ui/memories/cccccccc-0001").json()
+    assert m["standing"] != "disputed" and not m.get("corrected_by")
+    actions = [a["action"] for a in _audit_rows(db, "cccccccc-0001")]
+    assert actions[-2:] == ["correct", "uncorrect"]
+    # taking back a correction that is not there changes nothing
+    assert c.post("/api/ui/edit/memories/cccccccc-0001/uncorrect").json()["cleared"] is False
+
+
+def test_verdicts_refuse_bad_targets(verdict_client):
+    c, db = verdict_client
+    # the other memory does not exist
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/supersede", json={"by": "eeeeeeee-9999"})
+    assert r.status_code == 404
+    # a memory cannot replace or correct itself
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/supersede", json={"by": "cccccccc-0001"})
+    assert r.status_code == 422 and "itself" in r.json()["detail"]
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/correct", json={"by": "cccccccc-0001"})
+    assert r.status_code == 422
+    # not across projects
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/supersede", json={"by": "dddddddd-0001"})
+    assert r.status_code == 422 and "belongs to project" in r.json()["detail"]
+    # `by` is required, and must look like an id
+    assert c.post("/api/ui/edit/memories/cccccccc-0001/supersede", json={}).status_code == 422
+    assert c.post("/api/ui/edit/memories/cccccccc-0001/correct",
+                  json={"by": "not an id!"}).status_code == 422
+    # an id that is not one (the old test rows use short ids) is refused, not a crash
+    assert c.post("/api/ui/edit/memories/m1/verify").status_code == 422
+    assert c.post("/api/ui/edit/memories/ffffffff-0000/verify").status_code == 404
+    # nothing above changed anything
+    assert get_memory("cccccccc-0001", db_path=db).status == "active"
+    assert not get_memory("cccccccc-0001", db_path=db).superseded_by
+
+
+def test_only_an_active_memory_can_be_verified(verdict_client):
+    c, db = verdict_client
+    c.post("/api/ui/edit/memories/cccccccc-0001/archive")
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/verify")
+    assert r.status_code == 422 and "archived" in r.json()["detail"]
+
+
+def test_verdicts_need_the_api_key_when_one_is_set(verdict_client, monkeypatch):
+    c, db = verdict_client
+    monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
+    for path, body in (("verify", None), ("close", None), ("uncorrect", None),
+                       ("supersede", {"by": "cccccccc-0002"}),
+                       ("correct", {"by": "cccccccc-0002"})):
+        assert c.post(f"/api/ui/edit/memories/cccccccc-0001/{path}", json=body).status_code == 401
+    assert get_memory("cccccccc-0001", db_path=db).status == "active"
+    r = c.post("/api/ui/edit/memories/cccccccc-0001/verify", headers={"X-Brain-Key": "sekrit"})
+    assert r.status_code == 200
+    # the reads that show standing stay open, like every Atlas read
+    assert c.get("/api/ui/brief", params={"project": "proj-a"}).status_code == 200
+
+
+def test_a_verdict_reason_is_scrubbed_of_secrets(verdict_client):
+    from app.storage import _connect
+    c, db = verdict_client
+    c.post("/api/ui/edit/memories/cccccccc-0001/supersede",
+           json={"by": "cccccccc-0002", "reason": "moved, token ghp_" + "A1b2" * 9})
+    with _connect(db) as conn:
+        row = conn.execute("""SELECT reason FROM memory_audit WHERE memory_id = ?
+                              AND action = 'supersede'""", ("cccccccc-0001",)).fetchone()
+    assert "A1b2A1b2" not in (row["reason"] or "")

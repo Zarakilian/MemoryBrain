@@ -338,3 +338,175 @@ def test_file_page_renders_and_404s(ui_client, tmp_db):
     assert 'data-id="a1"' in r.text and "exact" in r.text            # referencing memory row + how
     assert "none yet" in r.text                                       # links / touched placeholders
     assert ui_client.get("/ui/file/does-not-exist").status_code == 404
+
+
+# ----------------------------------------------- 3.3 in Atlas: standing, brief
+
+def _seed_33(db):
+    """One project with a little history: an old fact, a loop gone stale, a
+    fresh loop, a fact that was corrected, one that was replaced, a how-to."""
+    from datetime import datetime, timedelta, timezone
+    from app import lifecycle
+    upsert_project(Project(slug="proj-s", name="Proj S"), db_path=db)
+    old = datetime.now(timezone.utc) - timedelta(days=45)
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("aaaaaaaa-0001", "fact", "the port is 7741", old, []),
+        ("aaaaaaaa-0002", "open_loop", "rotate the key", old, []),
+        ("aaaaaaaa-0003", "open_loop", "write the runbook", now, []),
+        ("aaaaaaaa-0004", "fact", "the timeout is 30 seconds", old, []),
+        ("aaaaaaaa-0005", "fact", "the timeout is 60 seconds", now, []),
+        ("aaaaaaaa-0006", "fact", "the old host name", old, []),
+        ("aaaaaaaa-0007", "fact", "the new host name", now, []),
+        ("aaaaaaaa-0008", "note", "how to restart it", now, ["howto"]),
+        ("aaaaaaaa-0009", "session", "session: fixed the timeout", now, []),
+    ]
+    for id_, type_, text, ts, tags in rows:
+        add_memory(MemoryEntry(id=id_, content=f"{text} (full text)", summary=text, type=type_,
+                               project="proj-s", tags=tags, timestamp=ts), db_path=db)
+    lifecycle.correct("aaaaaaaa-0004", "aaaaaaaa-0005", actor="test", db_path=db)
+    lifecycle.supersede("aaaaaaaa-0006", "aaaaaaaa-0007", actor="test", db_path=db)
+
+
+@pytest.fixture
+def client_33(_patched):
+    _seed_33(_patched)
+    return TestClient(app)
+
+
+def test_stream_rows_carry_standing_and_both_importances(client_33):
+    data = client_33.get("/api/ui/stream", params={"project": "proj-s"}).json()
+    rows = {m["id"]: m for d in data["days"] for m in d["items"]}
+    assert rows["aaaaaaaa-0001"]["standing"] == "proven"
+    assert rows["aaaaaaaa-0002"]["standing"] == "stale"
+    assert rows["aaaaaaaa-0003"]["standing"] == "open"
+    assert rows["aaaaaaaa-0007"]["standing"] == "changed"
+    disputed = rows["aaaaaaaa-0004"]
+    assert disputed["standing"] == "disputed" and disputed["corrected_by"] == "aaaaaaaa-0005"
+    # importance stays the stored one; importance_now is what it counts for today
+    assert disputed["importance_now"] < disputed["importance"]
+    assert rows["aaaaaaaa-0007"]["importance_now"] > rows["aaaaaaaa-0007"]["importance"]
+    # the replaced fact is archived: it has left the stream
+    assert "aaaaaaaa-0006" not in rows
+
+
+def test_stream_page_shows_the_badges_and_the_moved_importance(client_33):
+    html = client_33.get("/ui", params={"project": "proj-s"}).text
+    for badge in ("s-proven", "s-stale", "s-disputed", "s-changed"):
+        assert f'class="standing {badge}"' in html
+    assert "today, stored as" in html
+    assert 'class="imp down"' in html and 'class="imp up"' in html
+    # an ordinary memory gets no badge at all
+    assert 's-current' not in html and 's-open"' not in html
+
+
+def test_graph_nodes_carry_standing_for_the_constellation(client_33):
+    g = client_33.get("/api/ui/graph", params={"project": "proj-s", "min_weight": 0}).json()
+    by_id = {n["id"]: n for n in g["nodes"]}
+    assert by_id["aaaaaaaa-0004"]["standing"] == "disputed"
+    assert by_id["aaaaaaaa-0002"]["standing"] == "stale"
+    assert "importance_now" in by_id["aaaaaaaa-0001"]
+
+
+def test_memory_detail_names_who_corrected_and_replaced_it(client_33):
+    m = client_33.get("/api/ui/memories/aaaaaaaa-0004").json()
+    assert m["standing"] == "disputed"
+    assert m["lineage"]["corrected_by"]["id"] == "aaaaaaaa-0005"
+    fixer = client_33.get("/api/ui/memories/aaaaaaaa-0005").json()
+    assert [o["id"] for o in fixer["lineage"]["corrects"]] == ["aaaaaaaa-0004"]
+    gone = client_33.get("/api/ui/memories/aaaaaaaa-0006").json()
+    assert gone["standing"] == "superseded"
+    assert gone["lineage"]["superseded_by"]["id"] == "aaaaaaaa-0007"
+    new = client_33.get("/api/ui/memories/aaaaaaaa-0007").json()
+    assert [o["id"] for o in new["lineage"]["replaces"]] == ["aaaaaaaa-0006"]
+
+
+def test_memory_page_links_a_disputed_memory_to_its_correction(client_33):
+    html = client_33.get("/ui/memory/aaaaaaaa-0004").text
+    assert 'class="standing s-disputed"' in html
+    assert "Corrected by" in html and 'href="/ui/memory/aaaaaaaa-0005"' in html
+    html = client_33.get("/ui/memory/aaaaaaaa-0006").text
+    assert "Replaced by" in html and 'href="/ui/memory/aaaaaaaa-0007"' in html
+    assert 'class="standing s-superseded"' in html
+
+
+def test_related_rows_carry_standing(ui_client):
+    rel = ui_client.get("/api/ui/memories/a1/related", params={"min_weight": 0}).json()
+    assert rel["related"] and all("standing" in r for r in rel["related"])
+
+
+def test_project_brief_json(client_33):
+    b = client_33.get("/api/ui/brief", params={"project": "proj-s"}).json()
+    assert [m["id"] for m in b["where_we_left_off"]] == ["aaaaaaaa-0009"]
+    kinds = {c["kind"]: c for c in b["changes"]}
+    assert kinds["replaced"]["id"] == "aaaaaaaa-0007"
+    assert kinds["replaced"]["replaced"]["id"] == "aaaaaaaa-0006"
+    assert kinds["corrected"]["disputes"]["id"] == "aaaaaaaa-0004"
+    loops = b["open_loops"]
+    # fresh loops first, stale ones last and marked
+    assert [m["id"] for m in loops] == ["aaaaaaaa-0003", "aaaaaaaa-0002"]
+    assert loops[1]["stale"] is True and loops[1]["standing"] == "stale"
+    assert b["open_loop_count"] == 2
+    assert [m["id"] for m in b["howtos"]] == ["aaaaaaaa-0008"]
+    assert b["waiting_on_you"] == {"rules": 0, "beliefs": 0, "conflicts": 0, "stale_loops": 1}
+    assert b["dormant"] is False and b["last_activity"]["days_ago"] == 0
+
+
+def test_project_brief_unknown_project_is_404(client_33):
+    assert client_33.get("/api/ui/brief", params={"project": "nope"}).status_code == 404
+
+
+def test_project_page_opens_with_the_brief(client_33):
+    html = client_33.get("/ui", params={"project": "proj-s"}).text
+    assert "Where Proj S stands" in html
+    for heading in ("Where we left off", "What changed", "Open loops", "Facts and decisions",
+                    "How-tos", "Waiting on you"):
+        assert heading in html
+    assert "1 stale loop" in html
+    assert "session: fixed the timeout" in html
+    # the loop gone stale is marked; the correction is named with what it disputes
+    assert "corrects part of:" in html and "replaced:" in html
+
+
+def test_all_memories_page_has_no_brief(client_33):
+    html = client_33.get("/ui").text
+    assert 'class="brief"' not in html
+
+
+def test_brief_is_left_out_of_older_pages_of_the_stream(client_33):
+    html = client_33.get("/ui", params={"project": "proj-s", "before": "2999-01-01"}).text
+    assert 'class="brief"' not in html
+
+
+def test_empty_project_brief_says_so(_patched):
+    upsert_project(Project(slug="bare", name="Bare"), db_path=_patched)
+    c = TestClient(app)
+    html = c.get("/ui", params={"project": "bare"}).text
+    assert "Where Bare stands" in html
+    assert "No session log yet." in html and "No open loops." in html
+    assert "Waiting on you" not in html
+
+
+def test_a_summary_the_brain_made_is_marked(_patched):
+    from app.storage import _connect
+    upsert_project(Project(slug="proj-m", name="Proj M"), db_path=_patched)
+    add_memory(MemoryEntry(id="bbbbbbbb-0001", content="text one", summary="made by the brain",
+                           type="note", project="proj-m", summary_source="extract"),
+               db_path=_patched)
+    add_memory(MemoryEntry(id="bbbbbbbb-0002", content="text two", summary="written by its author",
+                           type="note", project="proj-m", summary_source="writer"),
+               db_path=_patched)
+    c = TestClient(app)
+    rows = {m["id"]: m for d in c.get("/api/ui/stream").json()["days"] for m in d["items"]}
+    assert rows["bbbbbbbb-0001"]["summary_source"] == "extract"
+    html = c.get("/ui", params={"project": "proj-m"}).text
+    assert html.count('class="auto-sum"') == 1
+    assert "not written by the author" in c.get("/ui/memory/bbbbbbbb-0001").text
+    assert "not written by the author" not in c.get("/ui/memory/bbbbbbbb-0002").text
+
+
+def test_search_results_carry_standing(client_33):
+    with patch("app.ui.routes.hybrid_search", side_effect=Exception("provider down")):
+        data = client_33.get("/api/ui/search", params={"q": "timeout"}).json()
+    by_id = {m["id"]: m for m in data["results"]}
+    assert by_id["aaaaaaaa-0004"]["standing"] == "disputed"

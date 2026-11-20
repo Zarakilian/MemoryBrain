@@ -552,7 +552,9 @@
           B.x += dx * push * wb; B.y += dy * push * wb; B.z += dz * push * wb;
         }
       }
-      cl.forEach(function (c) { c.x *= 0.985; c.y *= 0.975; c.z *= 0.95; });
+      /* gravity keeps the field together. Depth is squeezed hardest, so
+         the galaxies part across the view and none hides behind another */
+      cl.forEach(function (c) { c.x *= 0.985; c.y *= 0.975; c.z *= 0.72; });
     }
     var bounds = [];
     cl.forEach(function (c) {

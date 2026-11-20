@@ -115,6 +115,36 @@ The default budget is 6,000 characters (about 1,500 tokens; a project's policy c
 
 When you correct how an agent works, the agent calls `record_correction(rule, evidence, project)`. The rule is stored as a proposed procedure, with the agent as writer. Only you can confirm it, in Atlas (✓ review) or with `brain procedures --confirm <id>`; no tool can. Confirmed rules lead every brief for that project, or for every project when they have none.
 
+## Atlas, the person's door
+
+Atlas (`/ui`) is where you read and judge what the agents wrote. Its pages are plain server-rendered HTML that work without JavaScript; the lenses, the inspector and the Constellation are added on top.
+
+| Where | What it shows |
+|---|---|
+| Stream | Memories newest first, by day. On a project it opens with the project's handover: where we left off, what changed, open loops, facts and decisions, how-tos, and what waits on you |
+| Constellation | The memories as stars in one of seven shapes (below) |
+| Chronicle | Sessions per project along a time axis |
+| Files | The workspace index: folders, files, and the memories that name them |
+| Inspector, memory page | One memory in full, its standing, who replaced or corrected it, what it links to |
+| Agents, Doctor, Search | Who wrote what, a check of every subsystem, hybrid search |
+
+Standing is shown wherever a memory is listed: a badge, and the importance as it stands today next to the stored one. A summary the brain made itself (`summary_source` of `extract` or `model`) carries a mark so it is not taken for the author's.
+
+In the inspector you give your verdict on a memory: still true, done, replaced by another, corrected by another. These call the same lifecycle the agents' `brain_admin` actions call and are audited as `ui`. Because Atlas is your own door, they may retire or dispute what you wrote, which no agent may.
+
+**The Constellation.** Every layout but the 3D Brain is plain geometry worked out in the browser (`static/js/layouts.js`): each node gets a track, a position that is a function of time. The 3D world and the 2D canvas read the same shape, so they show the same picture and move the same way.
+
+| Layout | What you see |
+|---|---|
+| Brain | Two hemispheres of folded glass, each project a lobe (3D keeps its physics; 2D is the brain seen from above) |
+| Organic | A galaxy per project, turning and drifting, with one bright thread to its closest neighbour |
+| Orb | A globe: a region per project, files along its coast, folders as moons |
+| Flow down, Flow right | A river in time order: a channel per project, sessions in the current, a date axis |
+| Web | A spider's web: the most connected memory at the hub, a spoke per project, rings by age |
+| Tree | A tree: a limb per project, twigs and leaves, folders as fruit |
+
+It never stops moving, but calmly. The system's reduced-motion setting, or `?motion=still` on the address, places everything at once and stops all of it; the ambience switch in the rail does the same while the page is open. A hidden tab does not animate. To keep a large view smooth, a star is shaded by how large it is on screen, and only the strongest links are drawn until you touch a star.
+
 ## The agent surface
 
 - **Transports.** MCP over SSE (`/sse`, Claude Code), streamable HTTP (`/mcp`, Grok) and stdio through `docker exec` (Codex, Gemini), plus REST for anything else. They all reach the same tools.

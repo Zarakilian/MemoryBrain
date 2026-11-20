@@ -255,6 +255,90 @@
     }
   }
 
+  /* ------------------------- 3.3: the user's verdicts -------------------
+     Replaced by / corrected by: pick the other memory (search this project,
+     or paste an id), then one POST. The server runs the same lifecycle the
+     agents use, as the user. */
+  function openPick(mem, kind) {
+    var replace = kind === "supersede", picked = null, timer = null;
+    var m = modal(replace ? "Replaced by another memory" : "Corrected by another memory",
+      '<p class="explain">' + (replace
+        ? "The memory you pick takes this one's place. This one is archived and points at it; "
+          + "it leaves the brief and search. You can restore it later."
+        : "The memory you pick corrects part of this one. This one stays, marked disputed, "
+          + "and every reader is sent to the correction. You can take that back later.")
+      + "</p>"
+      + '<label class="field">Find the other memory<input id="f-pick-q" type="search" autocomplete="off" '
+      + 'placeholder="search this project, or paste an id"></label>'
+      + '<div class="pick-list" id="f-pick-list"><p class="quiet pick-none">Loading…</p></div>'
+      + '<label class="field">Why (optional, kept in the audit trail)<input id="f-pick-why" maxlength="300" autocomplete="off"></label>',
+      [{ label: replace ? "Replace this memory" : "Mark as corrected", primary: true, run: save }]);
+    var listEl = m.q("#f-pick-list"), input = m.q("#f-pick-q");
+
+    function show(rows, note) {
+      rows = rows.filter(function (r) { return r.id !== mem.id; });
+      listEl.innerHTML = rows.length ? rows.map(function (r) {
+        return '<div class="pick-item' + (picked === r.id ? " on" : "") + '" data-id="' + esc(r.id) + '">'
+          + '<span class="badge t-' + esc(r.type) + '">' + esc(Atlas.typeLabel(r.type)) + "</span>"
+          + '<span class="sum">' + esc(Atlas.cleanSummary(r.summary) || r.id) + "</span>"
+          + "<time>" + esc(String(r.timestamp || "").slice(0, 10)) + "</time></div>";
+      }).join("") : '<p class="quiet pick-none">' + esc(note || "Nothing found.") + "</p>";
+    }
+    async function load() {
+      var text = input.value.trim();
+      try {
+        if (/^[0-9a-f]{8}[0-9a-f-]*$/i.test(text)) {       // an id, or its first 8 characters
+          picked = text.toLowerCase();
+          listEl.innerHTML = '<p class="quiet pick-none">Using the memory whose id starts with <code>'
+            + esc(text.slice(0, 8)) + "</code>.</p>";
+          return;
+        }
+        if (!text) {                                          // start from what is already linked
+          var rel = await Atlas.getJSON("/api/ui/memories/" + encodeURIComponent(mem.id)
+                                        + "/related?min_weight=0.2&limit=12");
+          show((rel.related || []).filter(function (r) { return r.project === mem.project; }),
+               "Nothing linked yet: search above.");
+          return;
+        }
+        var data = await Atlas.getJSON("/api/ui/search?q=" + encodeURIComponent(text) + "&limit=12"
+          + (mem.project ? "&project=" + encodeURIComponent(mem.project) : ""));
+        show(data.results || [], "No memory in this project matches.");
+      } catch (e) { listEl.innerHTML = '<p class="quiet pick-none">' + esc(e.message) + "</p>"; }
+    }
+    input.addEventListener("input", function () { clearTimeout(timer); timer = setTimeout(load, 200); });
+    listEl.addEventListener("click", function (ev) {
+      var it = ev.target.closest(".pick-item");
+      if (!it) return;
+      picked = it.dataset.id;
+      listEl.querySelectorAll(".pick-item").forEach(function (el) { el.classList.toggle("on", el === it); });
+    });
+    load();
+    input.focus();
+
+    async function save() {
+      if (!picked) { m.err("Pick the other memory first."); return; }
+      var out = await submit(m, "POST",
+        "/api/ui/edit/memories/" + encodeURIComponent(mem.id) + "/" + kind,
+        { by: picked, reason: m.q("#f-pick-why").value.trim() });
+      if (out) { m.close(); location.reload(); }
+    }
+  }
+
+  /* one button, one POST, then the page shows the new standing */
+  async function verdict(btn, mem, path, body) {
+    btn.disabled = true;
+    var res = await writeFetch("/api/ui/edit/memories/" + encodeURIComponent(mem.id) + "/" + path, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    if (res.ok) { location.reload(); return; }
+    var data = null;
+    try { data = await res.json(); } catch (e) {}
+    btn.disabled = false;
+    modal("That did not go through", '<p class="explain">'
+      + esc(data && data.detail ? String(data.detail) : "HTTP " + res.status) + "</p>", []);
+  }
+
   /* --------------------------- inspector actions ------------------------- */
   document.addEventListener("atlas:inspected", function (ev) {
     var mem = ev.detail;
@@ -270,16 +354,45 @@
       fetch("/api/ui/edit/memories/" + encodeURIComponent(mem.id) + "/recall",
             { method: "POST", headers: hdrs }).catch(function () {});
     } catch (e) {}
+    var proposal = mem.type === "belief" && mem.status === "proposed";
+    /* 3.3: your verdict on what this memory says. Only an active memory
+       can be judged; a proposal is settled by its own Approve or Reject. */
+    if (mem.status === "active") {
+      var loop = mem.type === "open_loop";
+      var slot = document.getElementById("insp-verdict") || host;
+      var vrow = document.createElement("div");
+      vrow.className = "insp-actions verdicts";
+      vrow.innerHTML = (loop
+          ? '<button type="button" class="primary" data-verdict="close" title="This loop is finished: it becomes done and leaves the open list">✓ Done</button>'
+          : '<button type="button" class="primary" data-verdict="verify" title="You checked it and it is still true: it stands as verified">✓ Still true</button>')
+        + '<button type="button" data-verdict="supersede" title="Another memory takes its place: this one is archived and points at it">⇢ Replaced by…</button>'
+        + '<button type="button" data-verdict="correct" title="Another memory corrects part of it: this one stays, marked disputed">≠ Corrected by…</button>'
+        + (mem.corrected_by
+          ? '<button type="button" data-verdict="uncorrect" title="The correction was marked by mistake">↺ Take the correction back</button>'
+          : "");
+      slot.appendChild(vrow);
+      vrow.addEventListener("click", function (e) {
+        var b = e.target.closest("button");
+        if (!b) return;
+        var v = b.dataset.verdict;
+        if (v === "supersede" || v === "correct") openPick(mem, v);
+        else verdict(b, mem, v);
+      });
+    }
+    var label2 = document.createElement("p");
+    label2.className = "insp-actions-label";
+    label2.textContent = "Edit";
+    host.appendChild(label2);
     var row = document.createElement("div");
     row.className = "insp-actions";
-    var proposal = mem.type === "belief" && mem.status === "proposed";
+    var gone = mem.status === "archived" || mem.status === "done";
     row.innerHTML = (proposal
         ? '<button type="button" class="primary" data-act="approve">✓ Approve belief</button>'
           + '<button type="button" data-act="reject">✕ Reject belief</button>'
         : "")
       + '<button type="button" data-act="edit">✎ Edit</button>'
-      + '<button type="button" data-act="' + (mem.status === "archived" ? "restore" : "archive")
-      + '">' + (mem.status === "archived" ? "↑ Restore" : "⬇ Archive") + "</button>"
+      + '<button type="button" data-act="' + (gone ? "restore" : "archive")
+      + '">' + (mem.status === "done" ? "↑ Reopen" : gone ? "↑ Restore" : "⬇ Archive") + "</button>"
       + '<button type="button" class="danger" data-act="delete">✕ Delete</button>';
     host.appendChild(row);
     row.addEventListener("click", async function (e) {

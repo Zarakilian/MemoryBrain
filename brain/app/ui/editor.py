@@ -398,6 +398,78 @@ async def _reindex_after_edit(memory_id: str, content_changed: bool,
         return False
 
 
+# ----------------------------------------------- 3.3 truth maintenance
+# The user's own moves on a stored memory: it is still true (verify), this
+# loop is finished (close), another memory replaces it (supersede) or
+# corrects part of it (correct). The same lifecycle functions the agents'
+# brain_admin actions call, so the rules and the audit rows are the same;
+# Atlas acts as the user, so it may retire or dispute what the user wrote.
+
+class LifecycleBody(BaseModel):
+    by: str = Field(min_length=8, max_length=64)   # the other memory: its id, or the first 8 characters
+    reason: str = Field(default="", max_length=300)
+
+
+class NoteBody3(BaseModel):
+    note: str = Field(default="", max_length=300)
+    by: str = Field(default="", max_length=64)
+
+
+def _lifecycle(call):
+    """Run one lifecycle move; a refusal is the user's to read, not a 500."""
+    from ..lifecycle import LifecycleError
+    try:
+        return call()
+    except LifecycleError as exc:
+        text = str(exc)
+        missing = "not found" in text or "no memory id starts" in text
+        raise HTTPException(404 if missing else 422, text)
+
+
+@router.post("/api/ui/edit/memories/{memory_id}/verify")
+def verify_memory(memory_id: str, body: NoteBody3 | None = None):
+    """I checked this and it is still true: it stands as verified."""
+    from .. import lifecycle
+    body = body or NoteBody3()
+    return _lifecycle(lambda: lifecycle.verify(memory_id, actor="ui", note=scrub(body.note),
+                                               db_path=DB_PATH))
+
+
+@router.post("/api/ui/edit/memories/{memory_id}/close")
+def close_loop(memory_id: str, body: NoteBody3 | None = None):
+    """This open loop is finished. `by` may name the memory that reports it."""
+    from .. import lifecycle
+    body = body or NoteBody3()
+    return _lifecycle(lambda: lifecycle.close_loop(memory_id, actor="ui",
+                                                   reason=scrub(body.note),
+                                                   by_ref=body.by or None, db_path=DB_PATH))
+
+
+@router.post("/api/ui/edit/memories/{memory_id}/supersede")
+def supersede_memory(memory_id: str, body: LifecycleBody):
+    """`by` replaces this memory: this one is archived and points at it."""
+    from .. import lifecycle
+    return _lifecycle(lambda: lifecycle.supersede(memory_id, body.by, actor="ui",
+                                                  reason=scrub(body.reason), db_path=DB_PATH,
+                                                  trust="user"))
+
+
+@router.post("/api/ui/edit/memories/{memory_id}/correct")
+def correct_memory(memory_id: str, body: LifecycleBody):
+    """`by` corrects part of this memory: this one stays, marked disputed."""
+    from .. import lifecycle
+    return _lifecycle(lambda: lifecycle.correct(memory_id, body.by, actor="ui",
+                                                reason=scrub(body.reason), db_path=DB_PATH,
+                                                trust="user"))
+
+
+@router.post("/api/ui/edit/memories/{memory_id}/uncorrect")
+def clear_correction(memory_id: str):
+    """Take a correction back (it was marked by mistake)."""
+    from .. import lifecycle
+    return _lifecycle(lambda: lifecycle.clear_correction(memory_id, actor="ui", db_path=DB_PATH))
+
+
 @router.post("/api/ui/edit/memories/{memory_id}/archive")
 def archive(memory_id: str):
     if not archive_memory_audited(memory_id, actor="ui", db_path=DB_PATH):

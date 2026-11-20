@@ -1515,8 +1515,9 @@ if (renderer) {
         n._r = radiusOf(n) * (n._head === n ? 1.85
           : [1, 1.0, 0.84, 0.72][Math.min(n._level, 3)] || 0.72);
         seeds[i] = (i * 0.61803) % 1;
+        /* how hot the heart burns: importance as it stands today (3.3) */
         heats[i] = Math.max(0, Math.min(1,
-          ((n.importance || 3) - 1) / 4 + (n._head === n ? 0.3 : 0)));
+          ((n.importance_now || n.importance || 3) - 1) / 4 + (n._head === n ? 0.3 : 0)));
         churns[i] = churnOf(n);
         /* standing (3.3) shows in the star itself: see the shader */
         states[i] = STANDING_STATE[n.standing] || 0;
@@ -2509,9 +2510,9 @@ if (renderer) {
           + '<p class="quiet">'
           + (n.standing && n.standing !== "current" && n.standing !== "open"
              ? '<span class="standing s-' + esc(n.standing) + '">' + esc(n.standing) + "</span> · " : "")
-          + "importance " + (n.importance || "?")
-          + (n.base_importance != null && n.base_importance !== n.importance
-             ? " (stored " + esc(n.base_importance) + ")" : "")
+          + "importance " + (n.importance_now || n.importance || "?")
+          + (n.importance_now != null && n.importance_now !== n.importance
+             ? " today (stored " + esc(n.importance) + ")" : "")
           + " · gravity " + (n.degree != null ? Number(n.degree).toFixed(1) : "?")
           + " · ring " + (n._level != null ? n._level : "?")
           + "</p>";

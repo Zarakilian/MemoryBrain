@@ -170,30 +170,32 @@ def apply(new_id: str, targets: dict, actor: str, db_path: Optional[Path] = None
 # ── the same moves for memories that are already stored (brain_admin) ─────
 
 def supersede(old_ref: str, new_ref: str, actor: str, reason: str = "",
-              db_path: Optional[Path] = None) -> dict:
-    """An existing memory replaces another existing one."""
+              db_path: Optional[Path] = None, trust: str = "agent") -> dict:
+    """An existing memory replaces another existing one. trust="user" (Atlas,
+    the person's own door) may retire what the user wrote; an agent may not."""
     path = db_path or _storage.DB_PATH
     new_id = resolve_id(new_ref, path)
     new = _row(new_id, path)
     if new["status"] != "active":
         raise LifecycleError(f"{_short(new_id)} is {new['status']}: only an active memory "
                              "can replace another")
-    targets = plan(new["project"], supersedes=[old_ref], db_path=path)
+    targets = plan(new["project"], supersedes=[old_ref], trust=trust, db_path=path)
     if targets["supersedes"] == [new_id]:
         raise LifecycleError("a memory cannot replace itself")
     return {"new_id": new_id, **apply(new_id, targets, actor, path, reason)}
 
 
 def correct(old_ref: str, new_ref: str, actor: str, reason: str = "",
-            db_path: Optional[Path] = None) -> dict:
-    """An existing memory says part of another one is wrong."""
+            db_path: Optional[Path] = None, trust: str = "agent") -> dict:
+    """An existing memory says part of another one is wrong. trust="user"
+    (Atlas) may dispute what the user wrote; an agent may not."""
     path = db_path or _storage.DB_PATH
     new_id = resolve_id(new_ref, path)
     new = _row(new_id, path)
     if new["status"] != "active":
         raise LifecycleError(f"{_short(new_id)} is {new['status']}: only an active memory "
                              "can correct another")
-    targets = plan(new["project"], corrects=[old_ref], db_path=path)
+    targets = plan(new["project"], corrects=[old_ref], trust=trust, db_path=path)
     if targets["corrects"] == [new_id]:
         raise LifecycleError("a memory cannot correct itself")
     return {"new_id": new_id, **apply(new_id, targets, actor, path, reason)}
@@ -227,6 +229,23 @@ def verify(ref: str, actor: str, note: str = "", db_path: Optional[Path] = None)
         _storage._audit(conn, memory_id, "verify", actor, note)
         conn.commit()
     return {"id": memory_id, "verified_at": at, "verified_by": actor}
+
+
+def clear_correction(ref: str, actor: str, reason: str = "",
+                     db_path: Optional[Path] = None) -> dict:
+    """Take a correction back: the memory is no longer marked as corrected by
+    another. For the person who marked it by mistake (Atlas); audited."""
+    path = db_path or _storage.DB_PATH
+    memory_id = resolve_id(ref, path)
+    with _storage._connect(path) as conn:
+        row = conn.execute("SELECT corrected_by FROM memories WHERE id = ?",
+                           (memory_id,)).fetchone()
+        was = row["corrected_by"] if row else None
+        if was:
+            conn.execute("UPDATE memories SET corrected_by = NULL WHERE id = ?", (memory_id,))
+            _storage._audit(conn, memory_id, "uncorrect", actor, reason, {"was": was})
+            conn.commit()
+    return {"id": memory_id, "cleared": bool(was), "was": was or ""}
 
 
 # ── corrections that were only ever stated in prose ───────────────────────
