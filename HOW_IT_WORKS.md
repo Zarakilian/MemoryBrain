@@ -66,12 +66,12 @@ The stored `importance` is what the writer gave a memory. The importance an agen
 | `proven` | An active fact, decision or reference over 30 days old with no correction | None. Age never lowers a truth that held |
 | `verified` | `verify_memory` recorded that someone checked it | +1 |
 | `changed` | It replaced an older memory in the last 30 days | +1 |
-| `disputed` | An active memory corrects part of it, or it sits in an open contradiction | -2, and `corrected_by` names the correction |
+| `disputed` | An active memory corrects part of it, or it sits in an open contradiction | -1, and `corrected_by` names the correction. Only a step: the rest of the note usually still holds |
 | `stale` | An open loop over 30 days old | -1 |
 | `superseded`, `archived` | No longer current | Counts 1 |
 | `done` | A finished loop | Counts at most 2 |
 
-A memory that is pinned, written by you, verified, or recalled often (strength 1.5 or more) gets +1. The result stays between 1 and 5. The brief orders facts by it, search results and `get_memory` carry it, and search moves a disputed memory down so its correction comes first.
+A memory that is pinned, written by you, verified, or recalled often (strength 1.5 or more) gets +1. The result stays between 1 and 5. The brief orders facts by it, search results and `get_memory` carry it, and search lets a disputed memory give way to its correction on a near tie.
 
 ## Names
 
@@ -126,7 +126,7 @@ When you correct how an agent works, the agent calls `record_correction(rule, ev
 ## The hooks
 
 - **Session start** (`session-start-memory.sh`): finds the project from a `.brainproject` file in the folder or up to four parents, binds the folder to it, then prints this project's brief, rendered as data, and its next-session note labelled with who wrote it and when. It warns when the running version differs from the repo's, and says what still works when a subsystem is down. A project with no notes gets one line, never other projects' notes.
-- **Keeping the file index fresh.** A file reference only resolves against files the brain has seen. When the last scan is over a day old, the session-start hook starts `brain scan` in the background. It sends only what changed and never delays the session. It needs the roots that `brain scan --root` set up once on that machine. `MEMORYBRAIN_AUTO_SCAN=off` in the hook's environment turns it off.
+- **Keeping the file index fresh.** A file reference only resolves against files the brain has seen. When the last scan is over a day old, the session-start hook starts `brain scan` in the background. It sends only what changed, never delays the session, and only reads: unlike a scan you run yourself, it writes no `.brainproject` markers into your folders (`brain scan --no-markers`), and it sends nothing when more than 2,000 files are new (`--max-new 2000`), because reading that many is a job for a scan you start yourself. It needs the roots that `brain scan --root` set up once on that machine. `MEMORYBRAIN_AUTO_SCAN=off` in the hook's environment turns it off.
 - **Pre-compact** (`pre-compact-auto-handover.py`): stores a `HANDOVER-*.md` written in the last 12 hours, or else the last 40 messages of the transcript (at most 20,000 characters, 4,000 per message, injected context skipped). Never the hook's own JSON.
 - **Session end** (the same script, wired to `SessionEnd`): the safety net for a session that ends without a log. It stores the transcript tail, tagged `auto-capture`, with a summary that says what it is. It skips a session under 6 messages, and the brain skips it when a session log was stored for that project in the last 3 hours, so a session that ran `log-everything` is never stored twice.
 

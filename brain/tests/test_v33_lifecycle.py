@@ -252,5 +252,7 @@ async def test_stated_corrections_lists_pairs_still_active(db):
     assert got[(status, loop)]["old_type"] == "open_loop"
 
     await _call("brain_admin", {"action": "supersede", "args": {"old_id": wrong, "new_id": fix}})
+    await _call("brain_admin", {"action": "correct_memory", "args": {"old_id": fix, "new_id": partly}})
     after = await _call("brain_admin", {"action": "list_stated_corrections", "args": {}})
-    assert (fix, wrong) not in {(p["new_id"], p["old_id"]) for p in after["pairs"]}
+    # settled pairs leave the list: one superseded, one marked as partly corrected
+    assert {(p["new_id"], p["old_id"]) for p in after["pairs"]} == {(status, loop)}

@@ -84,7 +84,8 @@ def _run_session_hook(tmp_path, workspace: dict, extra_env=None):
 @needs_bash
 def test_a_stale_file_index_starts_a_scan_in_the_background(tmp_path):
     marker = _run_session_hook(tmp_path, {"roots": 1, "scan_age_hours": 30.5})
-    assert marker.exists() and marker.read_text() == "scan"
+    # read only: a scan nobody asked for never writes markers into the user's folders
+    assert marker.exists() and marker.read_text() == "scan --no-markers --max-new 2000"
 
 
 @needs_bash

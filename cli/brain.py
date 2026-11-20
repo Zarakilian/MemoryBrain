@@ -980,6 +980,13 @@ def main():
     p_scan.add_argument("--label", help="Root id for --root (default: git)")
     p_scan.add_argument("--full", action="store_true", help="Send every file, not just changes")
     p_scan.add_argument("--dry-run", action="store_true", help="Show what would be sent, send nothing")
+    p_scan.add_argument("--max-new", type=int, default=0,
+                        help="Send nothing when more than this many files are new or changed "
+                             "(0 = no limit). The session hook's background scan uses it, so a "
+                             "scan nobody asked for never reads tens of thousands of files")
+    p_scan.add_argument("--no-markers", action="store_true",
+                        help="Only read: do not write .brainproject markers into bound folders "
+                             "(what the session hook's background scan uses)")
     p_scan.add_argument("--init", action="store_true", help="Write workspace-map.proposed.json for review")
     p_scan.add_argument("--apply", help="Apply an edited workspace-map.proposed.json")
 

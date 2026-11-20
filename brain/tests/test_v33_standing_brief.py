@@ -71,7 +71,7 @@ def test_a_corrected_memory_is_disputed_until_the_correction_goes_away(tmp_db):
     fix = _mem(tmp_db, "The cache clear failed on one site")
     lifecycle.correct(old, fix, "test", db_path=tmp_db)
     info = _one(tmp_db, old)
-    assert (info["standing"], info["importance"], info["corrected_by"]) == ("disputed", 2, fix)
+    assert (info["standing"], info["importance"], info["corrected_by"]) == ("disputed", 3, fix)
     conn = connect(tmp_db)
     conn.execute("UPDATE memories SET status = 'archived' WHERE id = ?", (fix,))
     conn.commit()
@@ -140,7 +140,7 @@ async def test_search_ranks_the_correction_above_the_memory_it_corrects(tmp_db, 
     by_id = {h["id"]: h for h in after}
     assert [h["id"] for h in after][0] == right
     assert by_id[wrong]["standing"] == "disputed" and by_id[wrong]["corrected_by"] == right
-    assert by_id[wrong]["importance"] == 2 and by_id[right]["importance"] == 4
+    assert by_id[wrong]["importance"] == 3 and by_id[right]["importance"] == 4
     assert {h["id"] for h in hits} == {wrong, right}
 
 
@@ -150,7 +150,7 @@ async def test_get_memory_reports_standing(tmp_db, monkeypatch):
     fix = _mem(tmp_db, "It failed")
     lifecycle.correct(old, fix, "test", db_path=tmp_db)
     got = json.loads(await T.handle_get_memory(old))
-    assert (got["standing"], got["importance"], got["base_importance"]) == ("disputed", 2, 4)
+    assert (got["standing"], got["importance"], got["base_importance"]) == ("disputed", 3, 4)
     assert got["corrected_by"] == fix
 
 

@@ -8,7 +8,9 @@ The importance an agent sees moves with what has happened to the memory since:
   verified   someone checked it and it was still true (verify_memory).
   changed    it replaced an older memory in the last 30 days: the fresh fix.
   disputed   an active memory corrects part of it, or it sits in an open
-             contradiction. It drops until that is settled.
+             contradiction. It drops a step until that is settled, and names
+             its correction. Only a step: the rest of it usually still holds,
+             and a note that is wrong as a whole is superseded, not disputed.
   stale      an open loop nobody has touched for 30 days.
   superseded, archived, done, proposed: its lifecycle state.
   current, open: nothing special yet.
@@ -16,7 +18,7 @@ The importance an agent sees moves with what has happened to the memory since:
 Effective importance = stored importance
   +1 when reinforced (pinned, written by the user, verified, or recalled often)
   +1 when changed
-  -2 when disputed, -1 when stale
+  -1 when disputed, -1 when stale
 kept within 1 to 5. A superseded or archived memory counts 1, a finished loop 2.
 
 Like strength, nothing here is stored: reading twice changes nothing.
@@ -34,7 +36,10 @@ CHANGED_DAYS = 30
 STALE_LOOP_DAYS = 30
 REINFORCED_STRENGTH = 1.5
 STABLE_TYPES = frozenset({"fact", "decision", "reference", "procedure", "belief", "file"})
-DISPUTED_RANK = 0.8   # search: a disputed memory gives way to its correction
+# search: a disputed memory gives way to its correction on a near tie, and
+# no more. Fused scores sit close together, so a bigger cut buried a note
+# that was right in everything but one point.
+DISPUTED_RANK = 0.93
 
 
 def _age_days(timestamp: str, now: datetime) -> float:
@@ -91,7 +96,7 @@ def standing_of(row: dict, pinned: bool = False, corrector_active: bool = False,
         label = "current"
 
     adjust = (1 if reinforced else 0) + (1 if label == "changed" else 0) \
-        - (2 if label == "disputed" else 0) - (1 if label == "stale" else 0)
+        - (1 if label in ("disputed", "stale") else 0)
     return {**out, "standing": label, "importance": max(1, min(5, base + adjust)),
             "reinforced": reinforced}
 

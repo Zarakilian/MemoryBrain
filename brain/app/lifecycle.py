@@ -62,7 +62,8 @@ def resolve_id(ref: str, db_path: Optional[Path] = None) -> str:
 
 def _row(memory_id: str, db_path: Path) -> dict:
     with _storage._connect(db_path) as conn:
-        row = conn.execute("""SELECT id, type, status, project, trust, summary, supersedes
+        row = conn.execute("""SELECT id, type, status, project, trust, summary, supersedes,
+                                     corrected_by
                               FROM memories WHERE id = ?""", (memory_id,)).fetchone()
     if row is None:
         raise LifecycleError(f"memory {memory_id} not found")
@@ -243,7 +244,8 @@ STATED_SCAN_CHARS = 600
 def stated_corrections(project: Optional[str] = None, limit: int = 50,
                        db_path: Optional[Path] = None) -> dict:
     """Active memories whose opening says they supersede, correct or close
-    another memory by id, where that other memory is still active. Read-only:
+    another memory by id, where that other memory is still active and not yet
+    marked as corrected by them. Read-only:
     the caller decides each pair (supersede, correct or close_loop). `partial`
     is a hint that the text speaks of a part or of a summary, not the whole."""
     path = db_path or _storage.DB_PATH
@@ -270,7 +272,8 @@ def stated_corrections(project: Optional[str] = None, limit: int = 50,
                     continue
                 key = (row["id"], old_id)
                 if (old_id == row["id"] or key in seen or old["status"] != "active"
-                        or old["project"] != row["project"]):
+                        or old["project"] != row["project"]
+                        or old.get("corrected_by") == row["id"]):   # settled with correct
                     continue
                 seen.add(key)
                 pairs.append({

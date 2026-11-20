@@ -256,3 +256,62 @@ def test_title_survives_a_bom_and_long_lines(tmp_path):
     q = tmp_path / "long.md"
     q.write_text("x" * 10000 + "\n# After a long line\n", encoding="utf-8")
     assert bs._title(q) == "After a long line"
+
+
+def test_max_new_sends_nothing_when_too_many_files_are_waiting(tmp_path, monkeypatch, capsys):
+    """The session hook's background scan gives up on a big backlog instead of
+    reading it: that is a job for a scan the user starts."""
+    root = _tree(tmp_path)
+    monkeypatch.setattr(bs, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(bs, "MACHINE", "TESTBOX")
+    calls = []
+
+    def post(path, body):
+        calls.append((path, body))
+        return {"added": len(body.get("files", [])), "updated": 0, "deleted": 0, "moved": 0,
+                "markers_bound": 0}
+
+    def get(path):
+        return {"folders": [], "projects": []}
+
+    def args(**kw):
+        base = dict(root=None, label=None, full=False, dry_run=False, init=False, apply=None,
+                    no_markers=True, max_new=0)
+        return SimpleNamespace(**{**base, **kw})
+
+    assert bs.cmd_scan(args(root=str(root), label="git"), post, get) == 0     # the first scan
+    known = bs.load_state()["roots"]["git"]["files"]
+    assert bs.count_changed(root, [], known) == 0
+    for n in range(3):
+        (root / "Other" / f"new-{n}.md").write_text(f"# New {n}", encoding="utf-8")
+    (root / "MemoryBrain" / "node_modules" / "x" / "more.js").write_text("ignored", encoding="utf-8")
+    assert bs.count_changed(root, [], known) == 3
+    calls.clear()
+    assert bs.cmd_scan(args(max_new=2), post, get) == 0
+    assert calls == [] and "3 new or changed files, more than --max-new 2" in capsys.readouterr().out
+    assert bs.cmd_scan(args(max_new=3), post, get) == 0
+    assert len(calls) == 1 and len(calls[0][1]["files"]) == 3
+
+
+def test_no_markers_scan_writes_nothing_into_the_scanned_folders(tmp_path, monkeypatch):
+    """The session hook's background scan only reads: a confirmed binding
+    becomes a marker on disk only when the user runs the scan themself."""
+    root = _tree(tmp_path)
+    monkeypatch.setattr(bs, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(bs, "MACHINE", "TESTBOX")
+
+    def post(path, body):
+        return {"added": 0, "updated": 0, "deleted": 0, "moved": 0, "markers_bound": 0}
+
+    def get(path):
+        return {"projects": [], "folders": [{"root_id": "git", "rel_path": "Other",
+                                             "project": "other", "confirmed": 1, "how": "tool"}]}
+
+    quiet = SimpleNamespace(root=str(root), label="git", full=False, dry_run=False, init=False,
+                            apply=None, no_markers=True)
+    assert bs.cmd_scan(quiet, post, get) == 0
+    assert not (root / "Other" / ".brainproject").exists()
+    asked = SimpleNamespace(root=None, label=None, full=False, dry_run=False, init=False,
+                            apply=None, no_markers=False)
+    assert bs.cmd_scan(asked, post, get) == 0
+    assert (root / "Other" / ".brainproject").read_text(encoding="utf-8").strip() == "other"

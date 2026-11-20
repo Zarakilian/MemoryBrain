@@ -204,6 +204,42 @@ def walk_root(abs_path: Path, extra_globs: list[str], prev: dict | None = None) 
     return files, markers
 
 
+def count_changed(abs_path: Path, extra_globs: list[str], prev: dict | None = None) -> int:
+    """How many files a scan would have to read: the new ones, and the ones
+    whose size or time changed. It only lists and stats, so it is quick on a
+    tree where reading and hashing everything new would take many minutes."""
+    prev = prev or {}
+    isjunction = getattr(os.path, "isjunction", None)
+    abs_path = Path(abs_path)
+    waiting = 0
+    for dirpath, dirnames, filenames in os.walk(abs_path):
+        rel_dir = Path(dirpath).relative_to(abs_path).parts
+        kept = []
+        for d in dirnames:
+            child = os.path.join(dirpath, d)
+            if (d in IGNORE_DIRS or os.path.islink(child) or (isjunction and isjunction(child))
+                    or _dir_ignored(rel_dir + (d,), extra_globs)):
+                continue
+            kept.append(d)
+        dirnames[:] = kept
+        for name in filenames:
+            if name == ".brainproject":
+                continue
+            p = Path(dirpath) / name
+            try:
+                if p.is_symlink():
+                    continue
+                st = p.stat()
+            except OSError:
+                continue
+            if is_ignored(rel_dir, name, st.st_size, extra_globs):
+                continue
+            old = prev.get("/".join(rel_dir + (name,)))
+            if not old or old.get("size") != st.st_size or old.get("mtime") != _iso(st.st_mtime):
+                waiting += 1
+    return waiting
+
+
 def diff_files(prev: dict[str, dict], files: list[dict]) -> list[dict]:
     out = []
     for f in files:
@@ -351,6 +387,14 @@ def cmd_scan(args, post, get) -> int:
             print("Edit the `project` values, then: brain scan --apply workspace-map.proposed.json")
             continue
         prev = info.get("files", {})
+        limit = getattr(args, "max_new", None)
+        if limit and limit > 0:
+            waiting = count_changed(abs_path, extra, prev)
+            if waiting > limit:
+                print(f"[{root_id}] {waiting} new or changed files, more than --max-new {limit}: "
+                      f"nothing was read or sent. Run `brain scan` yourself when you want them "
+                      f"indexed; list bulk folders in {IGNORE_FILE} first to leave them out.")
+                continue
         files, markers = walk_root(abs_path, extra, prev=prev)
         full = bool(getattr(args, "full", False)) or not prev
         send = files if full else diff_files(prev, files)
@@ -367,6 +411,8 @@ def cmd_scan(args, post, get) -> int:
               f"moved {rep.get('moved', 0)}, markers {rep.get('markers_bound', 0)}")
         info["files"] = {f["rel_path"]: {"size": f["size"], "mtime": f["mtime"],
                                          "sha256": f["sha256"], "title": f["title"]} for f in files}
+        if getattr(args, "no_markers", False):
+            continue  # read only: nothing is written into the scanned folders
         try:
             wm = get(f"/workspace/map")
             n = write_back_markers(abs_path, [f for f in wm.get("folders", []) if f.get("root_id") == root_id])

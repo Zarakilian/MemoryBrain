@@ -63,7 +63,7 @@ MemoryBrain is a **memory** (the log of what was done, fixed and changed) and a 
 | You learned | Pass on `add_memory` | What happens to the old memory |
 |---|---|---|
 | An older memory is wrong or out of date | `supersedes: [id]` | Archived, points at yours, leaves the brief and search |
-| Part of an older memory is wrong | `corrects: [id]` | Stays, marked disputed, sinks, points at yours |
+| Part of an older memory is wrong | `corrects: [id]` | Stays, marked disputed, drops a step, points at yours |
 | An open loop is finished | `closes: [id]` | Marked done |
 
 An id can be the full id or its first 8 characters. A bad id fails the whole write, so nothing is half stored. For two memories that are already stored, use `brain_admin` with `supersede`, `correct_memory` or `close_loop`. A session log that says a loop is done ("the post-check is done") closes it too.
@@ -75,7 +75,7 @@ An id can be the full id or its first 8 characters. A bad id fails the whole wri
 | `proven` | A fact or decision over 30 days old that nobody corrected | Keeps its importance. Age never lowers it |
 | `verified` | Someone checked it and it was still true | +1 |
 | `changed` | It replaced an older memory in the last 30 days | +1: the fresh fix leads |
-| `disputed` | An active memory corrects part of it, or it sits in an open contradiction | -2, and `corrected_by` names the fix |
+| `disputed` | An active memory corrects part of it, or it sits in an open contradiction | -1, and `corrected_by` names the fix |
 | `stale` | An open loop untouched for 30 days | -1, listed last |
 
 Pinned, user-written and often-recalled memories get +1. When you re-check a fact and it still holds, call `brain_admin(action="verify_memory", args={"memory_id": …})`.

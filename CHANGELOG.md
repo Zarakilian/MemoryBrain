@@ -41,11 +41,11 @@ Upgrade with `brain upgrade`, then read "After upgrading" below.
   rule the sleep cycle already used. The write report lists what closed.
 - **Standing.** Every memory has one, worked out when it is read: `proven`
   (old and uncorrected, importance kept), `verified`, `changed` (replaced an
-  older memory in the last 30 days, +1), `disputed` (-2, with
+  older memory in the last 30 days, +1), `disputed` (-1, with
   `corrected_by`), `stale` (an open loop over 30 days, -1). Pinned,
   user-written, verified and often-recalled memories get +1.
-  `brain_admin(action="verify_memory")` records a re-check. Search moves a
-  disputed memory below its correction.
+  `brain_admin(action="verify_memory")` records a re-check. In search a
+  disputed memory gives way to its correction on a near tie.
 - **The brief is a handover.** New sections `where_we_left_off` (the last
   session log and its writer), `changes` (what replaced, corrected or
   finished something) and `howtos` (memories tagged `howto` or `runbook`).
@@ -56,7 +56,11 @@ Upgrade with `brain upgrade`, then read "After upgrading" below.
   text. A bare file name that fits several files takes the one beside
   another file or folder the memory names. A ref can carry `line` and
   `commit`. `/status` reports how old the file index is, and the session
-  hook starts `brain scan` in the background when it is over a day old.
+  hook starts `brain scan --no-markers` in the background when it is over a
+  day old. That scan only reads: it writes no `.brainproject` markers into
+  your folders, which a scan you run yourself still does. With more than
+  2,000 new files waiting (`--max-new`) it sends nothing, so a big backlog
+  waits for a scan you start.
 - **Names.** Ticket ids without a hyphen (`INC0012345`) and pull requests
   (`owner/repo#12`) are indexed. `brain_admin(action="entity_patterns")`
   adds patterns for the names one install uses, stored in its database.
@@ -94,9 +98,14 @@ Nothing is changed for you by the upgrade itself: migration `012` only adds
 columns. To bring an existing brain up to the new standard, ask your
 assistant to run these, in order. Each lists before it changes.
 
-1. `brain_admin(action="resummarise")` shows the model-written summaries it
-   would replace with the opening of the text. Run it again with
-   `{"dry_run": false}` to apply. The old summary is kept in the audit row.
+1. `brain_admin(action="resummarise")` shows the summaries it would replace
+   with the opening of the text: only the ones that read like the small
+   model wrote them (two or three narrative sentences, or a "Here is a
+   summary" opening). A line with a writer's marks (an id up front,
+   semicolons, backticks, a word in capitals) is left alone, however long,
+   so it misses some model summaries rather than replace a good one. Read
+   the list, then run it again with `{"dry_run": false}`. The old summary is
+   kept in the audit row.
 2. `brain_admin(action="list_stated_corrections")` lists memories that say
    in words that they supersede or correct another one that is still
    active. Settle each pair with `supersede`, `correct_memory` or

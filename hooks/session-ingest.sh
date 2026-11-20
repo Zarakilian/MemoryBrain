@@ -199,8 +199,13 @@ fi
 # ── Keep the file index fresh ─────────────────────────────────────────────────
 # A file reference only resolves against files the brain has seen. When the last
 # scan is over a day old, start one in the background: it sends only what
-# changed and never delays the session. It needs the roots `brain scan --root`
-# set up once on this machine. MEMORYBRAIN_AUTO_SCAN=off turns it off.
+# changed and never delays the session. It only reads (--no-markers): a scan
+# nobody asked for must not write files into the user's folders. And it gives
+# up when more than 2,000 files are new (--max-new): reading that many is a
+# job for a scan the user starts, after choosing what to leave out. The brief
+# keeps saying the index is old until one runs. It needs the roots
+# `brain scan --root` set up once on this machine.
+# MEMORYBRAIN_AUTO_SCAN=off turns it off.
 
 if [ "${MEMORYBRAIN_AUTO_SCAN:-on}" != "off" ] && [ -n "$MEMORYBRAIN_DIR" ] \
         && [ -f "${MEMORYBRAIN_DIR}/cli/brain.py" ]; then
@@ -214,7 +219,7 @@ age = ws.get('scan_age_hours')
 print('yes' if ws.get('roots') and (age is None or age >= 24) else 'no')
 " 2>/dev/null || echo "no")
     if [ "$SCAN_DUE" = "yes" ]; then
-        ( "$PY" "${MEMORYBRAIN_DIR}/cli/brain.py" scan > /dev/null 2>&1 & ) > /dev/null 2>&1 || true
+        ( "$PY" "${MEMORYBRAIN_DIR}/cli/brain.py" scan --no-markers --max-new 2000 > /dev/null 2>&1 & ) > /dev/null 2>&1 || true
     fi
 fi
 

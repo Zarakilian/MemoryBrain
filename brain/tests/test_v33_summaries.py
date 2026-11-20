@@ -153,25 +153,75 @@ async def test_add_memory_importance_out_of_range_is_clamped(ing_db):
 
 # ---------------------------------------------------------------- resummarise
 
+MODEL_STYLE = ("The export job was moved by the team to the reporting server on March 2, 2026, and "
+               "it now runs every night at two in the morning. The job writes its output to the "
+               "archive share, which is then checked by the morning report for missing rows.")
+# as long as the model's, but plainly a writer's: an id up front, semicolons, a tag in capitals
+WRITER_STYLE = ("INC0012345 export job: moved to the reporting server on 2026-03-02; runs at 02:00; "
+                "writes to the archive share; MEASURED on both sites, 0 missing rows in the "
+                "morning report; the old job is disabled, not deleted; rollback is one config line")
+
+
+@pytest.mark.parametrize("summary", [
+    MODEL_STYLE,
+    "Here is a summary of the session in three sentences: the job moved.",
+    "Dana updated the export job and then checked the morning report for missing rows. "
+    "The team later confirmed that the archive share held every file from the night run.",
+])
+def test_the_small_models_narrative_style_is_recognised(summary):
+    from app.resummarise import looks_model_written
+    assert looks_model_written(summary) is True
+
+
+@pytest.mark.parametrize("summary", [
+    WRITER_STYLE,
+    "DEPLOYED 2026-03-02: export job on the reporting server. Verified on both sites. Nothing "
+    "else changed, and the rollback is one config line.",
+    "F8, new: deleting both resources in one apply deadlocks the delete forever. The first one "
+    "takes the operator with it, so nothing is left to finish the second.",
+    "Export tuning: the settings live in the build, not in the table. Two sites that differ "
+    "must differ in the build, and nowhere else in the system.",
+    "The export job runs at two in the morning on the reporting server every single night",
+    "The unknown topic was the client pointed at both sites, not a missing topic — the "
+    "findings file had picked the wrong cause. The second site needs the same fix as the first.",
+    "Stopping the workloads does NOT return memory to the host. The process went from 6.6 to "
+    "9.2 GB after the sandbox was torn down, so the only fix that works is a full shutdown.",
+    "Achievement 36 cleanup moved from on hold to delivered (infrastructure) after the change "
+    "completed 28 Sep, and the page was closed at version six. The rest was applied the day after.",
+    "tb_export_log on the archive looks like the jackpot log, not the full one. The modules in "
+    "it match the ticket exactly, and no other provider writes to it at all.",
+    "",
+])
+def test_a_writers_line_is_never_taken_for_the_models(summary):
+    from app.resummarise import looks_model_written
+    assert looks_model_written(summary) is False
+
+
 async def test_resummarise_replaces_model_summaries_and_keeps_the_writers(ing_db):
     conn = connect(ing_db)
     model = await ingest(MemoryEntry(content=LONG, type="note", project="acme",
-                                     summary="A " + "wrong model summary that is long " * 8))
+                                     summary=MODEL_STYLE))
     mine = await ingest(MemoryEntry(content=LONG + " second", type="fact", project="acme",
                                     summary="Short writer line"))
-    conn.execute("UPDATE memories SET summary_source = '' WHERE id = ?", (model.id,))
-    conn.execute("UPDATE memories SET summary_source = '' WHERE id = ?", (mine.id,))
+    long_mine = await ingest(MemoryEntry(content=LONG + " third", type="fact", project="acme",
+                                         summary=WRITER_STYLE))
+    labelled = await ingest(MemoryEntry(content=LONG + " fourth", type="note", project="acme",
+                                        summary=WRITER_STYLE.replace("INC0012345", "INC0099999")))
+    for memory_id, source in ((model.id, ""), (mine.id, ""), (long_mine.id, ""),
+                              (labelled.id, "model")):
+        conn.execute("UPDATE memories SET summary_source = ? WHERE id = ?", (source, memory_id))
     conn.commit()
     conn.close()
 
     dry = await _call("brain_admin", {"action": "resummarise", "args": {"project": "acme"}})
-    assert dry["dry_run"] is True and dry["would_change"] == 1
-    assert dry["examples"][0]["id"] == model.id
+    # the unlabelled model-style one, and the one the brain itself labelled "model"
+    assert dry["dry_run"] is True and dry["would_change"] == 2
+    assert {e["id"] for e in dry["examples"]} == {model.id, labelled.id}
     assert _source(ing_db, model.id) == ""
 
     done = await _call("brain_admin", {"action": "resummarise",
                                        "args": {"project": "acme", "dry_run": False}})
-    assert done["changed"] == 1
+    assert done["changed"] == 2
     conn = connect(ing_db)
     rows = dict(conn.execute("SELECT id, summary FROM memories").fetchall())
     audit = conn.execute("SELECT action, detail FROM memory_audit WHERE memory_id = ?",
@@ -179,5 +229,6 @@ async def test_resummarise_replaces_model_summaries_and_keeps_the_writers(ing_db
     conn.close()
     assert rows[model.id] == s.opening_summary(LONG)
     assert rows[mine.id] == "Short writer line"
-    assert audit and audit[0][0] == "resummarise" and "wrong model summary" in audit[0][1]
+    assert rows[long_mine.id] == WRITER_STYLE          # long, but a writer's: left alone
+    assert audit and audit[0][0] == "resummarise" and "moved by the team" in audit[0][1]
     assert _source(ing_db, model.id) == "extract"
