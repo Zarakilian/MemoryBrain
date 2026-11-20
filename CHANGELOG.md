@@ -3,12 +3,12 @@
 All notable changes to MemoryBrain. Versions follow `VERSION`; the running
 brain reports its version at `GET /status`.
 
-## Unreleased (Atlas)
+## 3.4.0 (2026-11-20)
 
-Atlas catches up with 3.3, and the Constellation comes alive. The version
-number for this is not chosen yet. Nothing here changes the agents' tools,
-the storage or the database: it is the web UI, the read endpoints behind it,
-and five write endpoints for the user.
+Atlas catches up with 3.3, and the Constellation comes alive. Nothing here
+changes the agents' tools, the storage or the database: it is the web UI,
+the read endpoints behind it, and five write endpoints for the user. Upgrade
+with `brain upgrade`. There is no migration.
 
 ### The Constellation
 
