@@ -510,3 +510,224 @@ def test_search_results_carry_standing(client_33):
         data = client_33.get("/api/ui/search", params={"q": "timeout"}).json()
     by_id = {m["id"]: m for m in data["results"]}
     assert by_id["aaaaaaaa-0004"]["standing"] == "disputed"
+
+
+# ------------------------------- 3.3 in Atlas: cleanup lists, names, the Doctor
+
+LONG_BODY = ("Moved the nightly export to the new queue. " * 12).strip()        # over 400 characters
+MODEL_SUMMARY = ("The team moved the export to another queue on March 2, 2026, with several "
+                 "follow-up steps that were completed afterwards by everyone involved. " * 2).strip()
+
+
+def _seed_cleanup(db):
+    """What the three cleanup lists read: a summary the model wrote, a note
+    that says in prose it supersedes another, and a loop gone stale. Each id
+    has its own first 8 characters, the way prose quotes an id."""
+    from datetime import datetime, timedelta, timezone
+    upsert_project(Project(slug="proj-c", name="Proj C"), db_path=db)
+    old = datetime.now(timezone.utc) - timedelta(days=45)
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("e1e1e1e1-0001", "session", LONG_BODY, MODEL_SUMMARY, "model", old),
+        ("e2e2e2e2-0001", "session", LONG_BODY + " Second run.", "Export moved; queue renamed",
+         "writer", old),
+        ("e3e3e3e3-0001", "fact", "the port is 7741", "the port is 7741", "writer", old),
+        ("e4e4e4e4-0001", "fact", "Supersedes e3e3e3e3: the port is 7742 now", "the port is 7742",
+         "writer", now),
+        ("e5e5e5e5-0001", "open_loop", "rotate the key", "rotate the key", "writer", old),
+        ("e6e6e6e6-0001", "open_loop", "write the runbook", "write the runbook", "writer", now),
+    ]
+    for id_, type_, content, summary, source, ts in rows:
+        add_memory(MemoryEntry(id=id_, content=content, summary=summary, type=type_,
+                               project="proj-c", summary_source=source, timestamp=ts), db_path=db)
+
+
+@pytest.fixture
+def cleanup_client(_patched, monkeypatch):
+    monkeypatch.setattr("app.mcp.tools.DB_PATH", _patched)     # the open-loops list reads it
+    _seed_cleanup(_patched)
+    return TestClient(app)
+
+
+def test_cleanup_summaries_is_a_dry_run_that_changes_nothing(cleanup_client, _patched):
+    from app.storage import get_memory
+    data = cleanup_client.get("/api/ui/cleanup/summaries").json()
+    assert data["dry_run"] is True and data["would_change"] == 1
+    example = data["examples"][0]
+    assert example["id"] == "e1e1e1e1-0001" and example["old"] == MODEL_SUMMARY
+    assert example["new"].startswith("Moved the nightly export")
+    # the writer's own line is left alone, and nothing was written
+    assert get_memory("e1e1e1e1-0001", db_path=_patched).summary == MODEL_SUMMARY
+    # one project only
+    assert cleanup_client.get("/api/ui/cleanup/summaries",
+                              params={"project": "proj-a"}).json()["would_change"] == 0
+    assert cleanup_client.get("/api/ui/cleanup/summaries",
+                              params={"project": "proj-c"}).json()["would_change"] == 1
+
+
+def test_cleanup_corrections_lists_the_pairs_stated_in_prose(cleanup_client):
+    data = cleanup_client.get("/api/ui/cleanup/corrections").json()
+    assert data["total"] == 1
+    pair = data["pairs"][0]
+    assert (pair["new_id"], pair["old_id"]) == ("e4e4e4e4-0001", "e3e3e3e3-0001")
+    assert pair["says"] == "supersedes" and pair["old_type"] == "fact"
+    assert pair["project"] == "proj-c" and pair["partial"] is False
+    assert cleanup_client.get("/api/ui/cleanup/corrections",
+                              params={"project": "proj-a"}).json()["total"] == 0
+    assert cleanup_client.get("/api/ui/cleanup/corrections",
+                              params={"limit": 0}).status_code == 422
+
+
+def test_cleanup_loops_lists_stale_loops_oldest_first(cleanup_client):
+    data = cleanup_client.get("/api/ui/cleanup/loops").json()
+    assert data["total"] == 1 and "close_with" not in data
+    loop = data["open_loops"][0]
+    assert loop["id"] == "e5e5e5e5-0001" and loop["stale"] is True and loop["age_days"] >= 44
+    every = cleanup_client.get("/api/ui/cleanup/loops", params={"stale_only": "false"}).json()
+    assert [item["id"] for item in every["open_loops"]] == ["e5e5e5e5-0001", "e6e6e6e6-0001"]
+    assert cleanup_client.get("/api/ui/cleanup/loops",
+                              params={"project": "proj-a"}).json()["total"] == 0
+    assert cleanup_client.get("/api/ui/cleanup/loops", params={"limit": 500}).status_code == 422
+
+
+def test_cleanup_dry_runs_stay_open_when_a_key_is_set(cleanup_client, monkeypatch):
+    monkeypatch.setenv("BRAIN_API_KEY", "sekrit")
+    for path in ("summaries", "corrections", "loops"):
+        assert cleanup_client.get(f"/api/ui/cleanup/{path}").status_code == 200
+
+
+def test_cleanup_lists_are_empty_on_an_empty_brain(empty_client, _patched, monkeypatch):
+    monkeypatch.setattr("app.mcp.tools.DB_PATH", _patched)
+    assert empty_client.get("/api/ui/cleanup/summaries").json()["would_change"] == 0
+    assert empty_client.get("/api/ui/cleanup/corrections").json() == {"total": 0, "pairs": []}
+    assert empty_client.get("/api/ui/cleanup/loops").json() == {"total": 0, "open_loops": []}
+
+
+def test_doctor_shows_the_file_index_age_and_the_cleanup_lists(ui_client):
+    html = ui_client.get("/ui/doctor").text
+    # the age of the file index comes from /status, and says what to run
+    assert '"/status"' in html and "scan_age_hours" in html and "brain scan" in html
+    # three dry runs that read, one apply that writes, the verdicts for the rest
+    for url in ("/api/ui/cleanup/summaries", "/api/ui/cleanup/corrections",
+                "/api/ui/cleanup/loops", "/api/ui/edit/cleanup/resummarise"):
+        assert url in html
+    assert '"supersede"' in html and '"correct"' in html and '"close"' in html
+    assert "Nothing changes until you" in html
+    # the name pages are linked from here
+    assert 'href="/ui/names"' in html and 'action="/ui/names"' in html
+    assert "/static/" not in html and "<link" not in html          # still no external assets
+
+
+def _seed_names(db):
+    """A made-up ticket three memories mention: a fact that has held, an open
+    loop, and a note that was replaced. They are in the name index; a fourth
+    memory holds a word the index does not know."""
+    from datetime import datetime, timedelta, timezone
+    from app import lifecycle
+    from app.entities import index_entities
+    upsert_project(Project(slug="proj-n", name="Proj N"), db_path=db)
+    old = datetime.now(timezone.utc) - timedelta(days=45)
+    now = datetime.now(timezone.utc)
+    rows = [
+        ("f1f1f1f1-0001", "fact", "INC0012345 was caused by a full disk", old),
+        ("f2f2f2f2-0001", "open_loop", "close INC0012345 with the vendor", now),
+        ("f3f3f3f3-0001", "note", "INC0012345 looked like a network fault", old),
+        ("f4f4f4f4-0001", "note", "the widget frobnicator needs oil", now),
+    ]
+    for id_, type_, text, ts in rows:
+        add_memory(MemoryEntry(id=id_, content=text, summary=text, type=type_,
+                               project="proj-n", timestamp=ts), db_path=db)
+        if "INC" in text:
+            index_entities(id_, text, db_path=db)
+    lifecycle.supersede("f3f3f3f3-0001", "f1f1f1f1-0001", actor="test", db_path=db)
+
+
+@pytest.fixture
+def names_client(_patched):
+    _seed(_patched)
+    _seed_names(_patched)
+    return TestClient(app)
+
+
+def test_name_page_shows_everything_about_one_name(names_client):
+    r = names_client.get("/ui/name/INC0012345")
+    assert r.status_code == 200 and "no-store" in r.headers["cache-control"]
+    html = r.text
+    assert "INC0012345 was caused by a full disk" in html           # a current memory
+    assert "close INC0012345 with the vendor" in html                # an open loop
+    assert "looked like a network fault" not in html                 # replaced: it is history
+    assert "1 older" in html and "memory sits" in html
+    assert "the name index" in html and ">ticket<" in html
+    # the rows are the shared ones, so standing shows
+    assert 'class="standing s-proven"' in html
+    assert 'href="/ui/memory/f1f1f1f1-0001"' in html
+    assert 'href="/ui/names"' in html
+
+
+def test_name_page_can_be_kept_to_one_project(names_client):
+    html = names_client.get("/ui/name/INC0012345", params={"project": "proj-n"}).text
+    assert "in proj-n only" in html and "INC0012345 was caused by a full disk" in html
+    other = names_client.get("/ui/name/INC0012345", params={"project": "proj-a"}).text
+    assert "Nothing stored mentions" in other and "in proj-a" in other
+    assert names_client.get("/ui/name/INC0012345", params={"project": "nope"}).status_code == 404
+
+
+def test_name_page_falls_back_to_the_text_and_says_when_nothing_is_stored(names_client):
+    html = names_client.get("/ui/name/frobnicator").text
+    assert "the widget frobnicator needs oil" in html
+    assert "a search of the text" in html
+    r = names_client.get("/ui/name/never-written-anywhere")
+    assert r.status_code == 200 and "Nothing stored mentions" in r.text
+
+
+def test_name_page_takes_names_with_slashes_and_odd_characters(names_client):
+    r = names_client.get("/ui/name/owner%2Frepo%2312")
+    assert r.status_code == 200 and "owner/repo#12" in r.text
+    assert names_client.get("/ui/name/src/app/run.py").status_code == 200
+    for odd in ("a%22b", "(", "*", "x%20AND%20y", "NEAR(", "%3Cb%3Ebold"):
+        assert names_client.get("/ui/name/" + odd).status_code == 200
+    # a name is text on the page, never markup
+    html = names_client.get("/ui/name/%3Cb%3Ebold").text
+    assert "<b>bold" not in html and "&lt;b&gt;bold" in html
+    assert names_client.get("/ui/name/" + "x" * 201).status_code == 422
+    r = names_client.get("/ui/name/", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/ui/names"
+
+
+def test_names_page_lists_patterns_and_the_most_mentioned_names(names_client, _patched):
+    from app.entities import add_pattern
+    html = names_client.get("/ui/names").text
+    assert "No pattern yet." in html
+    assert 'href="/ui/name/INC0012345"' in html          # a card from the entity cards
+    assert "/static/js/names.js" in html
+    add_pattern("server", r"\bsrv-[a-z]+-\d{2}\b", db_path=_patched)
+    html = names_client.get("/ui/names").text
+    assert r"<code>\bsrv-[a-z]+-\d{2}\b</code>" in html and "No pattern yet." not in html
+    assert 'data-kind="server"' in html
+    # one project's names, and an unknown project
+    html = names_client.get("/ui/names", params={"project": "proj-n"}).text
+    assert 'href="/ui/name/INC0012345?project=proj-n"' in html
+    assert names_client.get("/ui/names", params={"project": "nope"}).status_code == 404
+
+
+def test_names_look_up_box_goes_to_the_name_page(names_client):
+    r = names_client.get("/ui/names", params={"name": "owner/repo#12"}, follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/ui/name/owner%2Frepo%2312"
+    r = names_client.get("/ui/names", params={"name": " INC0012345 ", "project": "proj-n"},
+                         follow_redirects=False)
+    assert r.headers["location"] == "/ui/name/INC0012345?project=proj-n"
+    assert "INC0012345 was caused" in names_client.get("/ui/names",
+                                                       params={"name": "INC0012345"}).text
+
+
+def test_names_pages_render_on_an_empty_brain(empty_client):
+    r = empty_client.get("/ui/names")
+    assert r.status_code == 200 and "No name is indexed yet." in r.text
+    r = empty_client.get("/ui/name/anything")
+    assert r.status_code == 200 and "Nothing stored mentions" in r.text
+
+
+def test_palette_and_footer_know_the_name_pages(ui_client):
+    js = ui_client.get("/static/js/atlas.js").text
+    assert '"/ui/names"' in js and '"/ui/name/"' in js
+    assert 'href="/ui/names"' in ui_client.get("/ui").text

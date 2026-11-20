@@ -18,6 +18,7 @@ import json
 import logging
 import sqlite3
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -196,6 +197,67 @@ def file_page(request: Request, file_id: str,
     }, headers=_NO_STORE)
 
 
+# ------------------------------------------------- 3.3 names (read-only pages)
+
+MAX_NAME_CHARS = 200
+NAME_PAGE_LIMIT = 100       # the most entity_context returns per list
+
+
+@router.get("/ui/names", response_class=HTMLResponse)
+def names_page(request: Request, name: str | None = None, project: str | None = None,
+               conn: sqlite3.Connection = Depends(db)):
+    """This install's own name patterns, and the names the notes mention most.
+    With ?name=, it is the look-up box: on to that name's page."""
+    if name and name.strip():
+        dest = "/ui/name/" + quote(name.strip(), safe="")
+        if project:
+            dest += "?project=" + quote(project, safe="")
+        return RedirectResponse(dest, status_code=303)
+    from .. import entities
+    from ..timeline import get_entities
+    projects = q.all_projects(conn)
+    proj = next((p for p in projects if p["slug"] == project), None)
+    if project and proj is None:
+        raise HTTPException(404, f"Unknown project: {project}")
+    return templates.TemplateResponse(request, "names.html", {
+        "patterns": entities.list_patterns(q.DB_PATH),
+        "built_in_kinds": entities.BUILT_IN_KINDS,
+        "max_patterns": entities.MAX_PATTERNS,
+        # the same cards /api/ui/entities serves: nothing is extracted here
+        "top": get_entities(project=project or None, limit=60, db_path=q.DB_PATH)["entities"],
+        "projects": projects, "stats": q.stats(conn), "current": proj,
+        "names_page": True,
+    }, headers=_NO_STORE)
+
+
+@router.get("/ui/name/{name:path}", response_class=HTMLResponse)
+def name_page(request: Request, name: str, project: str | None = None,
+              conn: sqlite3.Connection = Depends(db)):
+    """Everything stored about one ticket, server, file or product: the
+    current memories that mention it, the open loops among them, the files
+    they point at, and how much history sits behind it. The path converter
+    lets a name hold slashes (a file path, owner/repo#12)."""
+    from ..entities import entity_context
+    if not name.strip():
+        return RedirectResponse("/ui/names", status_code=303)
+    if len(name) > MAX_NAME_CHARS:
+        raise HTTPException(422, f"A name holds at most {MAX_NAME_CHARS} characters")
+    projects = q.all_projects(conn)
+    proj = next((p for p in projects if p["slug"] == project), None)
+    if project and proj is None:
+        raise HTTPException(404, f"Unknown project: {project}")
+    ctx = entity_context(name, project or None, limit=NAME_PAGE_LIMIT, db_path=q.DB_PATH)
+    # entity_context marks the standing; this adds the importance as it
+    # stands today beside the stored one, the way every other list shows it
+    q.with_standing(ctx["memories"])
+    q.with_standing(ctx["open_loops"])
+    return templates.TemplateResponse(request, "name.html", {
+        "ctx": ctx, "scope": project or "", "limit": NAME_PAGE_LIMIT,
+        "projects": projects, "stats": q.stats(conn), "current": proj,
+        "names_page": True,
+    }, headers=_NO_STORE)
+
+
 @router.get("/ui/search", response_class=HTMLResponse)
 async def search_page(request: Request, q_: str = Query("", alias="q"),
                       project: str | None = None, type: str | None = None,
@@ -355,6 +417,39 @@ def api_entities(project: str | None = None,
     """Entity cards: tags, names, services (v2.3)."""
     from ..timeline import get_entities
     return get_entities(project=project, limit=limit)
+
+
+# ------------------------------------------- 3.3 cleanup lists (read-only)
+# The dry runs behind the Doctor page. Each one calls what the agents'
+# brain_admin action calls and changes nothing. Applying is the user's move:
+# the write endpoints are under /api/ui/edit/* (editor.py).
+
+@router.get("/api/ui/cleanup/summaries")
+def api_cleanup_summaries(project: str | None = None):
+    """Summaries the old model wrote, each with the opening of its own text
+    that would replace it (brain_admin resummarise, as a dry run)."""
+    from ..resummarise import resummarise
+    return resummarise(project or None, dry_run=True, db_path=q.DB_PATH)
+
+
+@router.get("/api/ui/cleanup/corrections")
+def api_cleanup_corrections(project: str | None = None,
+                            limit: int = Query(50, ge=1, le=200)):
+    """Pairs where a note says in prose that it supersedes, corrects or closes
+    another that is still active (brain_admin list_stated_corrections)."""
+    from ..lifecycle import stated_corrections
+    return stated_corrections(project or None, limit, db_path=q.DB_PATH)
+
+
+@router.get("/api/ui/cleanup/loops")
+async def api_cleanup_loops(project: str | None = None, stale_only: bool = True,
+                            limit: int = Query(100, ge=1, le=200)):
+    """Open loops, oldest first, each with its age (brain_admin
+    list_open_loops). stale_only keeps the ones untouched for 30 days."""
+    from ..mcp.tools import handle_list_open_loops
+    found = json.loads(await handle_list_open_loops(project or None, stale_only, limit))
+    found.pop("close_with", None)       # a hint for agents; Atlas has a button
+    return found
 
 
 # ----------------------------------------------- v2.5 workspace layer (read-only)

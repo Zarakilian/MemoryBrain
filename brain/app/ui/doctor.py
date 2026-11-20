@@ -21,6 +21,16 @@ Checks (per the rebuild protocol):
     swallow pointer events
   * window.onerror / unhandledrejection capture, dumped on the page
 Plus a "Copy report" button that produces a plain-text block to paste back.
+
+3.3 adds, still with no database at render time and no static asset:
+  * the age of the file index, from the workspace block of GET /status, with
+    what to run when it is over a day old
+  * three cleanup lists (summaries the old model wrote, corrections stated
+    only in prose, stale open loops). Each is a dry run that only reads
+    (/api/ui/cleanup/*); nothing changes until the user presses an apply
+    button, which calls /api/ui/edit/* with the key Atlas stores
+  * links to the name pages (/ui/names, /ui/name/<name>)
+The report carries the counts of the cleanup lists, never their text.
 """
 
 DOCTOR_HTML = r"""<!doctype html>
@@ -63,6 +73,26 @@ DOCTOR_HTML = r"""<!doctype html>
   }
   button:hover { border-color: #c9a961; }
   #copystate { color: #8fbf8f; }
+  a { color: #c9a961; }
+  h3 { font-size: 13px; margin: 14px 0 2px; color: #e8e2d6; }
+  .hint { color: #98917f; margin: 0 0 8px; max-width: 820px; }
+  .cl { border-top: 1px solid #3a3227; padding: 2px 0 12px; max-width: 980px; }
+  .state { margin-left: 4px; color: #b8b0a0; }
+  .item { border: 1px solid #3a3227; border-radius: 6px; padding: 8px 10px;
+          margin: 6px 0; background: #2a241d; }
+  .item .line { white-space: pre-wrap; word-break: break-word; }
+  .item .lab { color: #98917f; }
+  .item .old { color: #c7a59b; }
+  .item .new { color: #a9c7a0; }
+  .item .acts { margin-top: 8px; }
+  .item button { padding: 4px 10px; margin: 0 8px 0 0; }
+  .item.settled { opacity: .55; }
+  button:disabled { opacity: .5; cursor: progress; }
+  button.armed { border-color: #e0705f; color: #f0a093; }
+  input { background: #2a241d; color: #e8e2d6; border: 1px solid #6b6355;
+          border-radius: 6px; padding: 7px 10px; font: inherit; }
+  #keybox { border: 1px solid #d9a441; border-radius: 6px; padding: 10px;
+            margin: 10px 0; max-width: 820px; }
 </style>
 </head>
 <body>
@@ -88,6 +118,60 @@ DOCTOR_HTML = r"""<!doctype html>
   <button id="rerun">Re-run checks</button>
   <button id="copy">Copy report</button>
   <span id="copystate"></span>
+</section>
+
+<section data-doctor-ok>
+  <h2>Names</h2>
+  <div><a href="/ui/names">Name patterns, and the names your notes mention most</a></div>
+  <form action="/ui/names" method="get" style="margin-top: 8px">
+    <input name="name" size="34" placeholder="a ticket, server, file or product"
+           aria-label="A name to look up">
+    <button type="submit">Everything about this name</button>
+  </form>
+</section>
+
+<section data-doctor-ok id="cleanup">
+  <h2>Cleanup</h2>
+  <p class="hint">Each list starts with a dry run that only reads. Nothing changes until you
+    press an apply button. Every change is audited as "ui" and can be undone from the memory's page.</p>
+  <div><label>project <input id="cl-project" size="22" placeholder="all projects"></label></div>
+  <div id="keybox" hidden>
+    This brain has an API key, and a change needs it. Paste it once: it stays in this browser only.
+    <div style="margin-top: 8px">
+      <input type="password" id="cl-key" autocomplete="off" aria-label="API key">
+      <button id="cl-key-save" type="button">Save key</button>
+    </div>
+  </div>
+
+  <div class="cl">
+    <h3>Summaries the old model wrote</h3>
+    <p class="hint">Before 3.3 a small model summarised long notes, and it got details wrong.
+      Apply replaces each of those summaries with the opening of its own text. A summary the
+      writer gave is never touched, and the old one is kept in the audit row.</p>
+    <button id="sum-dry" type="button">Dry run</button>
+    <button id="sum-apply" type="button" hidden>Apply</button>
+    <span id="sum-state" class="state"></span>
+    <div id="sum-list"></div>
+  </div>
+
+  <div class="cl">
+    <h3>Corrections stated only in prose</h3>
+    <p class="hint">A newer note says it supersedes, corrects or closes an older one, but the
+      older one is still active. Decide each pair: Supersede archives the older note, Correct
+      keeps it and marks it disputed, Close finishes an open loop.</p>
+    <button id="cor-dry" type="button">Dry run</button>
+    <span id="cor-state" class="state"></span>
+    <div id="cor-list"></div>
+  </div>
+
+  <div class="cl">
+    <h3>Stale open loops</h3>
+    <p class="hint">Open loops nobody has touched for 30 days, oldest first. Close the ones
+      that are finished and leave the ones that still stand.</p>
+    <button id="loop-dry" type="button">Dry run</button>
+    <span id="loop-state" class="state"></span>
+    <div id="loop-list"></div>
+  </div>
 </section>
 
 <script>
@@ -132,6 +216,14 @@ function setLine(name, status, detail) {
 }
 
 /* ---- helpers ---- */
+/* the key Atlas stores in this browser: sent on changes, and on /status,
+   which needs it on a brain that has one */
+function brainKey() { try { return localStorage.getItem("atlas-key") || ""; } catch (e) { return ""; } }
+function keyHeaders(extra) {
+  var h = extra || {}, k = brainKey();
+  if (k) h["X-Brain-Key"] = k;
+  return h;
+}
 function hasKeys(obj, keys) {
   return keys.every(function (k) { return obj != null && (k in obj); });
 }
@@ -147,6 +239,51 @@ async function checkJson(name, url, keys) {
     return j;
   } catch (e) {
     setLine(name, "FAIL", url + " — " + (e && e.message || e)); return null;
+  }
+}
+
+/* ---- the file index: how old it is, and what to run ----
+   GET /status reports it (the figure the session hook reads). On a brain with
+   an API key and no key in this browser, /status is closed: the same answer
+   is then worked out from the workspace map. */
+async function fileIndex(wm) {
+  try {
+    var res = await fetch("/status", { cache: "no-store", headers: keyHeaders() });
+    if (res.ok) {
+      var st = await res.json();
+      if (st && st.workspace) return st.workspace;
+    }
+  } catch (e) {}
+  if (!wm) return null;
+  var scans = Object.keys(wm.last_scan || {}).map(function (k) { return wm.last_scan[k]; })
+    .filter(Boolean).sort();
+  var last = scans.length ? scans[scans.length - 1] : "";
+  var hours = last ? (Date.now() - Date.parse(last)) / 36e5 : NaN;
+  return { roots: (wm.roots || []).length, last_scan: last,
+           scan_age_hours: isNaN(hours) ? null : Math.max(0, Math.round(hours * 10) / 10) };
+}
+function reportFileIndex(ws) {
+  var name = "workspace: last scan";
+  var run = "On the host run: brain scan (python cli/brain.py scan, from the install folder)";
+  if (!ws) { setLine(name, "WARN", "the age of the file index could not be read"); return; }
+  var roots = ws.roots + " root" + (ws.roots === 1 ? "" : "s");
+  if (!ws.roots) {
+    setLine(name, "WARN", "no folder has been scanned yet, so file references cannot resolve. "
+      + "On the host run: brain scan --root <folder> --init");
+    return;
+  }
+  var h = ws.scan_age_hours;
+  if (h == null) {
+    setLine(name, "WARN", roots + " set up, but no scan time is recorded. " + run);
+    return;
+  }
+  var age = h < 48 ? h.toFixed(1) + " hours" : Math.round(h / 24) + " days";
+  var when = String(ws.last_scan || "").slice(0, 16).replace("T", " ") + " UTC";
+  if (h > 24) {
+    setLine(name, "WARN", "the file index is " + age + " old (last scan " + when + ", " + roots
+      + "). That is over a day, so files added since then do not resolve. " + run);
+  } else {
+    setLine(name, "PASS", "the file index was scanned " + age + " ago (" + when + ", " + roots + ")");
   }
 }
 
@@ -187,22 +324,8 @@ async function runChecks() {
   // 2b. workspace layer (v2.5): the file index the Files lens and the crystals read
   var wm = await checkJson("api: workspace map", "/api/ui/workspace/map",
                            ["roots", "projects", "unmapped_folders"]);
+  reportFileIndex(await fileIndex(wm));
   if (wm) {
-    var scans = Object.keys(wm.last_scan || {}).map(function (k) { return wm.last_scan[k]; }).sort();
-    var newest = scans.length ? scans[scans.length - 1] : null;
-    if (!newest) {
-      setLine("workspace: last scan", "WARN",
-        "no scan on any machine yet — run: python cli/brain.py scan --root <path> --label git --init");
-    } else {
-      var ageDays = (Date.now() - Date.parse(newest)) / 864e5;
-      if (isNaN(ageDays)) {
-        setLine("workspace: last scan", "WARN", "could not parse the scan timestamp: " + newest);
-      } else {
-        setLine("workspace: last scan", ageDays > 7 ? "WARN" : "PASS",
-          String(newest).slice(0, 19).replace("T", " ") + " (" + ageDays.toFixed(1) + " days ago)"
-          + (ageDays > 7 ? " — run: python cli/brain.py scan --full" : ""));
-      }
-    }
     var un = wm.unmapped_folders || [];
     setLine("workspace: unmapped folders", un.length ? "WARN" : "PASS",
       un.length ? un.length + " — " + un.slice(0, 5).map(function (f) { return f.rel_path; }).join(", ")
@@ -298,6 +421,262 @@ setLine("click event", "WAIT", "click/tap inside the box below");
     setLine("click event", "PASS", "click fired on target");
   });
 })();
+
+/* ---- cleanup: three lists, each a dry run first ----
+   A dry run is a GET that only reads. The apply buttons POST to
+   /api/ui/edit/*, the same doors Atlas uses. Everything a note says is put
+   on the page as text, never as HTML. */
+function byId(id) { return document.getElementById(id); }
+function el(tag, cls, text) {
+  var e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function memLink(id, text) {
+  var a = el("a", "", text);
+  a.href = "/ui/memory/" + encodeURIComponent(id);
+  a.target = "_blank"; a.rel = "noopener";
+  a.title = "Open this memory in a new tab";
+  return a;
+}
+function scope() { return byId("cl-project").value.trim(); }
+function scopeText() { return scope() ? " in " + scope() : ""; }
+function withScope(url) {
+  if (!scope()) return url;
+  return url + (url.indexOf("?") < 0 ? "?" : "&") + "project=" + encodeURIComponent(scope());
+}
+function plural(n, one, many) { return n + " " + (n === 1 ? one : many || one + "s"); }
+function detailText(data, status) {
+  var d = data && data.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d.map(function (x) { return x && x.msg || ""; }).filter(Boolean).join("; ")
+      || "HTTP " + status;
+  }
+  return "HTTP " + status;
+}
+async function readJson(url) {
+  var res = await fetch(url, { cache: "no-store" });
+  var data = null;
+  try { data = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(detailText(data, res.status));
+  return data || {};
+}
+async function writeJson(url, payload) {
+  var res = await fetch(url, {
+    method: "POST",
+    headers: keyHeaders({ "Content-Type": "application/json", "X-Brain-Client": "atlas" }),
+    body: JSON.stringify(payload || {}),
+  });
+  var data = null;
+  try { data = await res.json(); } catch (e) {}
+  if (res.status === 401) {
+    byId("keybox").hidden = false;
+    byId("cl-key").focus();
+    throw new Error("this brain has an API key. Paste it in the box above, then press the button again");
+  }
+  if (!res.ok) throw new Error(detailText(data, res.status));
+  return data || {};
+}
+byId("cl-key-save").addEventListener("click", function () {
+  try { localStorage.setItem("atlas-key", byId("cl-key").value.trim()); } catch (e) {}
+  byId("cl-key").value = "";
+  byId("keybox").hidden = true;
+});
+
+function say(state, cls, text) {
+  state.className = "state" + (cls ? " " + cls : "");
+  state.textContent = text;
+}
+/* run one button's work; a failure is said next to the button, not thrown */
+async function guarded(btn, state, work) {
+  btn.disabled = true;
+  try { await work(); }
+  catch (e) { say(state, "FAIL", "failed: " + (e && e.message || e)); }
+  btn.disabled = false;
+}
+
+/* 1. summaries the old model wrote */
+var SUM = { count: 0, project: "", armed: 0 };
+function disarm() {
+  var b = byId("sum-apply");
+  clearTimeout(SUM.armed);
+  SUM.armed = 0;
+  b.classList.remove("armed");
+  b.textContent = "Apply: replace " + plural(SUM.count, "summary", "summaries");
+}
+byId("sum-dry").addEventListener("click", function () {
+  var state = byId("sum-state");
+  guarded(byId("sum-dry"), state, async function () {
+    say(state, "", "reading…");
+    var d = await readJson(withScope("/api/ui/cleanup/summaries"));
+    var box = byId("sum-list"), shown = d.examples || [];
+    box.innerHTML = "";
+    SUM.count = d.would_change;
+    SUM.project = scope();
+    shown.forEach(function (x) {
+      var it = el("div", "item");
+      var head = el("div", "line lab", "memory ");
+      head.appendChild(memLink(x.id, x.id.slice(0, 8)));
+      var was = el("div", "line old"), will = el("div", "line new");
+      was.appendChild(el("span", "lab", "now:   "));
+      was.appendChild(document.createTextNode(x.old));
+      will.appendChild(el("span", "lab", "after: "));
+      will.appendChild(document.createTextNode(x["new"]));
+      it.appendChild(head); it.appendChild(was); it.appendChild(will);
+      box.appendChild(it);
+    });
+    byId("sum-apply").hidden = !d.would_change;
+    disarm();
+    say(state, "", d.would_change
+      ? plural(d.would_change, "summary", "summaries") + " would change" + scopeText()
+        + ". Nothing has changed yet. Showing the first " + shown.length + "."
+      : "nothing to replace" + scopeText() + ".");
+    setLine("cleanup: model summaries", d.would_change ? "WARN" : "PASS",
+      d.would_change + " would change" + scopeText() + " (dry run)");
+  });
+});
+byId("sum-apply").addEventListener("click", function () {
+  var btn = byId("sum-apply"), state = byId("sum-state");
+  if (!SUM.armed) {                       // the first press asks, the second does it
+    btn.classList.add("armed");
+    btn.textContent = "Press again to replace " + SUM.count + " (this writes to the brain)";
+    SUM.armed = setTimeout(disarm, 8000);
+    return;
+  }
+  disarm();
+  guarded(btn, state, async function () {
+    say(state, "", "replacing…");
+    var d = await writeJson("/api/ui/edit/cleanup/resummarise",
+                            { project: SUM.project, expect: SUM.count });
+    btn.hidden = true;
+    byId("sum-list").innerHTML = "";
+    say(state, "PASS", plural(d.changed, "summary", "summaries")
+      + " replaced. Run the dry run again to see what is left.");
+    setLine("cleanup: model summaries", "PASS", d.changed + " replaced");
+  });
+});
+
+/* a row's button: one press settles the row, and the row says what happened */
+function settleButton(item, state, label, title, work) {
+  var b = el("button", "", label);
+  b.type = "button";
+  b.title = title;
+  b.addEventListener("click", async function () {
+    var all = item.querySelectorAll("button");
+    all.forEach(function (x) { x.disabled = true; });
+    say(state, "", "working…");
+    try {
+      var done = await work();
+      item.classList.add("settled");
+      say(state, "PASS", done);
+    } catch (e) {
+      all.forEach(function (x) { x.disabled = false; });
+      say(state, "FAIL", "failed: " + (e && e.message || e));
+    }
+  });
+  return b;
+}
+
+/* 2. corrections stated only in prose */
+function pairItem(p) {
+  var it = el("div", "item"), state = el("span", "state");
+  var newer = el("div", "line new"), older = el("div", "line old");
+  newer.appendChild(el("span", "lab", "newer: "));
+  newer.appendChild(memLink(p.new_id, p.new_id.slice(0, 8)));
+  newer.appendChild(document.createTextNode("  " + (p.new_summary || "(no summary)")));
+  older.appendChild(el("span", "lab", "older: "));
+  older.appendChild(memLink(p.old_id, p.old_id.slice(0, 8)));
+  older.appendChild(document.createTextNode("  [" + String(p.old_type).replace(/_/g, " ") + "]  "
+    + (p.old_summary || "(no summary)")));
+  it.appendChild(newer);
+  it.appendChild(older);
+  it.appendChild(el("div", "line lab", p.project + " · the newer note says: “" + p.text + "”"));
+  if (p.partial) {
+    it.appendChild(el("div", "line WARN",
+      "It speaks of a part or of a summary, so Correct may fit better than Supersede."));
+  }
+  var url = "/api/ui/edit/memories/" + encodeURIComponent(p.old_id) + "/";
+  var why = "stated in the newer note";
+  var acts = el("div", "acts");
+  acts.appendChild(settleButton(it, state, "Supersede",
+    "Archive the older note: it points at the newer one", async function () {
+      var d = await writeJson(url + "supersede", { by: p.new_id, reason: why });
+      return (d.superseded || []).length
+        ? "done: the older note is archived and points at the newer one"
+        : "nothing changed: the older note is no longer active";
+    }));
+  acts.appendChild(settleButton(it, state, "Correct",
+    "Keep the older note, marked disputed", async function () {
+      var d = await writeJson(url + "correct", { by: p.new_id, reason: why });
+      return (d.corrected || []).length
+        ? "done: the older note stays, marked as corrected by the newer one"
+        : "nothing changed: the older note is no longer active";
+    }));
+  if (p.old_type === "open_loop") {
+    acts.appendChild(settleButton(it, state, "Close",
+      "The older note is an open loop: mark it done", async function () {
+        var d = await writeJson(url + "close", { by: p.new_id, note: why });
+        return d.closed ? "done: the loop is closed" : "nothing changed: the loop was " + d.status;
+      }));
+  }
+  acts.appendChild(state);
+  it.appendChild(acts);
+  return it;
+}
+byId("cor-dry").addEventListener("click", function () {
+  var state = byId("cor-state");
+  guarded(byId("cor-dry"), state, async function () {
+    say(state, "", "reading…");
+    var d = await readJson(withScope("/api/ui/cleanup/corrections?limit=200"));
+    var box = byId("cor-list"), shown = d.pairs || [];
+    box.innerHTML = "";
+    shown.forEach(function (p) { box.appendChild(pairItem(p)); });
+    say(state, "", d.total
+      ? plural(d.total, "pair") + scopeText() + ". Nothing has changed yet."
+        + (shown.length < d.total ? " Showing the first " + shown.length + "." : "")
+      : "no pair found" + scopeText() + ".");
+    setLine("cleanup: corrections stated in prose", d.total ? "WARN" : "PASS",
+      plural(d.total, "pair") + scopeText() + " (dry run)");
+  });
+});
+
+/* 3. stale open loops */
+function loopItem(l) {
+  var it = el("div", "item"), state = el("span", "state");
+  var line = el("div", "line");
+  line.appendChild(el("span", "lab", plural(l.age_days, "day") + " · " + l.project + " · "));
+  line.appendChild(memLink(l.id, l.id.slice(0, 8)));
+  line.appendChild(document.createTextNode("  " + (l.summary || "(no summary)")));
+  it.appendChild(line);
+  var acts = el("div", "acts");
+  acts.appendChild(settleButton(it, state, "Close",
+    "This loop is finished: mark it done", async function () {
+      var d = await writeJson("/api/ui/edit/memories/" + encodeURIComponent(l.id) + "/close",
+                              { note: "closed from the Doctor page" });
+      return d.closed ? "done: the loop is closed" : "nothing changed: the loop was " + d.status;
+    }));
+  acts.appendChild(state);
+  it.appendChild(acts);
+  return it;
+}
+byId("loop-dry").addEventListener("click", function () {
+  var state = byId("loop-state");
+  guarded(byId("loop-dry"), state, async function () {
+    say(state, "", "reading…");
+    var d = await readJson(withScope("/api/ui/cleanup/loops?stale_only=true&limit=200"));
+    var box = byId("loop-list"), shown = d.open_loops || [];
+    box.innerHTML = "";
+    shown.forEach(function (l) { box.appendChild(loopItem(l)); });
+    say(state, "", d.total
+      ? plural(d.total, "stale open loop") + scopeText() + ". Nothing has changed yet."
+        + (shown.length < d.total ? " Showing the oldest " + shown.length + "." : "")
+      : "no stale open loop" + scopeText() + ".");
+    setLine("cleanup: stale open loops", d.total ? "WARN" : "PASS",
+      plural(d.total, "stale open loop") + scopeText() + " (dry run)");
+  });
+});
 
 /* ---- report ---- */
 function buildReport() {

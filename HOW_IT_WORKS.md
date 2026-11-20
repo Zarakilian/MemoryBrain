@@ -81,6 +81,8 @@ Each install adds patterns for the names only it uses, with `brain_admin(action=
 
 `brain_admin(action="get_entity_context", args={"name": …})` returns everything about one name: the current memories that mention it, the open loops among them, the files they point at, and how much history is behind it.
 
+A person does the same in Atlas: `/ui/name/<name>` is that answer as a page, and `/ui/names` lists, adds and removes the patterns and reindexes (see "Atlas, the person's door").
+
 ## Search
 
 1. The query loses its stopwords, so a question like "where does the export run?" searches for its content words. The words are ORed with prefix matching; FTS syntax in a query cannot break it.
@@ -126,11 +128,28 @@ Atlas (`/ui`) is where you read and judge what the agents wrote. Its pages are p
 | Chronicle | Sessions per project along a time axis |
 | Files | The workspace index: folders, files, and the memories that name them |
 | Inspector, memory page | One memory in full, its standing, who replaced or corrected it, what it links to |
-| Agents, Doctor, Search | Who wrote what, a check of every subsystem, hybrid search |
+| Agents, Search | Who wrote what, hybrid search |
+| Doctor (`/ui/doctor`) | A check of every subsystem, the age of the file index, and the three cleanup lists (below) |
+| Names (`/ui/names`) | This install's name patterns, a look-up box, and the most mentioned names |
+| One name (`/ui/name/<name>`) | Everything stored about one ticket, server, file or product |
 
 Standing is shown wherever a memory is listed: a badge, and the importance as it stands today next to the stored one. A summary the brain made itself (`summary_source` of `extract` or `model`) carries a mark so it is not taken for the author's.
 
 In the inspector you give your verdict on a memory: still true, done, replaced by another, corrected by another. These call the same lifecycle the agents' `brain_admin` actions call and are audited as `ui`. Because Atlas is your own door, they may retire or dispute what you wrote, which no agent may.
+
+**The Doctor.** The page has no template, no static file and no database connection when it renders, so it loads whenever the server is up. Everything on it is fetched by its own script. It reads the age of the file index from the `workspace` block of `GET /status` and, when the last scan is over a day old, says to run `brain scan` on the host. A file reference only resolves against files the brain has seen.
+
+**Cleanup.** The Doctor holds three lists. Each starts with a dry run that only reads, and nothing changes until you press an apply button.
+
+| List | Dry run (read) | Apply (write, audited as `ui`) |
+|---|---|---|
+| Summaries the old model wrote | `GET /api/ui/cleanup/summaries` | `POST /api/ui/edit/cleanup/resummarise` replaces each with the opening of its own text. It sends the count the dry run showed and is refused if the list has changed |
+| Corrections stated only in prose | `GET /api/ui/cleanup/corrections` | Per pair: the verdict endpoints `supersede`, `correct` or `close` |
+| Stale open loops | `GET /api/ui/cleanup/loops` | Per loop: the verdict endpoint `close` |
+
+These call the functions behind the `brain_admin` actions `resummarise`, `list_stated_corrections` and `list_open_loops`, so an agent and a person see the same lists.
+
+**Names.** `/ui/name/<name>` shows what `get_entity_context` returns: the current memories and open loops that mention the name (with their standing), the files they point at, and how many older memories sit behind it. A name the index does not hold is searched for in the text, and the page says so. `/ui/names` lists this install's patterns and adds or removes one. A pattern the brain refuses comes back as a sentence (422). A new pattern applies to notes written from then on; the screen offers to reindex the stored ones and shows how many notes it read and how many names the index holds.
 
 **The Constellation.** Every layout but the 3D Brain is plain geometry worked out in the browser (`static/js/layouts.js`): each node gets a track, a position that is a function of time. The 3D world and the 2D canvas read the same shape, so they show the same picture and move the same way.
 

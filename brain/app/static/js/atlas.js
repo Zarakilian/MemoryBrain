@@ -547,7 +547,8 @@ function commandsFor(qtext) {
     { kind: "lens", label: "Lens: Constellation", run: function () { showLens("constellation", true); } },
     { kind: "lens", label: "Lens: Chronicle", run: function () { showLens("chronicle", true); } },
     { kind: "go", label: "All memories", run: function () { location.href = "/ui"; } },
-    { kind: "go", label: "Doctor (diagnostics)", run: function () { location.href = "/ui/doctor"; } },
+    { kind: "go", label: "Doctor (diagnostics and cleanup)", run: function () { location.href = "/ui/doctor"; } },
+    { kind: "go", label: "Names (patterns and most mentioned)", run: function () { location.href = "/ui/names"; } },
   ];
   (Atlas.extraCommands || []).forEach(function (c) { cmds.push(c); });
   document.querySelectorAll(".rail-projects a").forEach(function (a) {
@@ -586,21 +587,29 @@ palInput && palInput.addEventListener("input", function () {
       return { kind: c.kind, html: Atlas.esc(c.label), run: c.run };
     });
     if (!q.trim()) { showCommands(""); return; }
+    /* 3.3: whatever is typed can also be read as a name (a ticket, a server,
+       a file): the last row opens everything stored about it */
+    var asName = {
+      kind: "name", html: "Everything about “" + Atlas.esc(q.trim()) + "”",
+      run: function () { location.href = "/ui/name/" + encodeURIComponent(q.trim()); },
+    };
     try {
       var proj = currentProject();
       var url = "/api/ui/search?q=" + encodeURIComponent(q) + "&limit=8"
         + (proj ? "&project=" + encodeURIComponent(proj) : "");
       var data = await Atlas.getJSON(url);
+      if (palInput.value !== q) return;   // an answer to what was typed before: the newer one follows
       var hits = (data.results || []).map(function (m) {
         return {
           kind: m.type, html: Atlas.esc(Atlas.cleanSummary(m.summary) || m.id),
           run: function () { closePalette(); Atlas.inspect(m.id, null); },
         };
       });
-      renderPalette(base.concat(hits),
+      renderPalette(base.concat(hits, [asName]),
         hits.length ? null : "No memory matches — " + data.mode + " mode");
     } catch (e) {
-      renderPalette(base, "Search failed: " + e.message);
+      if (palInput.value !== q) return;
+      renderPalette(base.concat([asName]), "Search failed: " + e.message);
     }
   }, 160);
 });

@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Names · MemoryBrain{% endblock %}
+{% block stage %}
+{# The names the notes mention, and this install's own patterns for the names
+   only this place uses. The lists are server-rendered and read-only; adding,
+   removing and reindexing need the script (names.js) because a write carries
+   a header a plain form cannot send. #}
+<article class="memory-page names-page">
+  <header class="mem-head">
+    <nav class="crumbs"><a href="/ui">Nebula</a> / <span class="crumb-id">Names</span></nav>
+    <h1 class="mem-title">Names</h1>
+    <p class="names-lead">The brain indexes the names your notes mention, so you can ask what it
+      holds about one ticket, server, file or product. It knows these kinds by itself:
+      {% for k in built_in_kinds %}<span class="tag">{{ k|replace('_', ' ') }}</span> {% endfor %}</p>
+  </header>
+
+  <form class="searchform" method="get" action="/ui/names">
+    <input name="name" type="search" placeholder="A ticket, server, file or product"
+           aria-label="A name to look up" autocomplete="off">
+    {% if current %}<input type="hidden" name="project" value="{{ current.slug }}">{% endif %}
+    <button type="submit">Everything about it</button>
+  </form>
+
+  <section class="mem-related">
+    <h2>This install's patterns</h2>
+    <p class="quiet">A pattern teaches the brain a name only this place uses: its servers, its
+      ticket prefixes, its page ids. Patterns live in this brain's database and nowhere else.
+      <span id="pat-count">{{ patterns|length }}</span> of {{ max_patterns }} used.</p>
+    <div id="pat-list" class="pat-list">
+      {% for p in patterns %}
+      <div class="pat-row" data-kind="{{ p.kind }}" data-pattern="{{ p.pattern }}">
+        <span class="badge t-name">{{ p.kind|replace('_', ' ') }}</span>
+        <code>{{ p.pattern }}</code>
+        <time>{{ (p.created_at or '')[:10] }}</time>
+        <button type="button" class="pat-remove" hidden data-js
+                title="Remove this pattern">Remove</button>
+      </div>
+      {% else %}
+      <p class="quiet pat-none">No pattern yet.</p>
+      {% endfor %}
+    </div>
+
+    <form id="pat-form" class="pat-form" hidden data-js autocomplete="off">
+      <label class="field">kind
+        <input id="pat-kind" placeholder="server" maxlength="20" spellcheck="false"></label>
+      <label class="field pat-wide">pattern (a regular expression)
+        <input id="pat-pattern" placeholder="\bsrv-[a-z]+-\d{2}\b" maxlength="200" spellcheck="false"></label>
+      <button type="submit" class="pat-add">Add pattern</button>
+    </form>
+    <p id="pat-msg" class="pat-msg" aria-live="polite"></p>
+    <p class="quiet" hidden data-js>The kind is your own word for it, in lower case
+      (server, ticket, page). With one pair of brackets in the pattern, the name is what the
+      brackets catch. For example, kind <code>server</code> with pattern
+      <code>\bsrv-[a-z]+-\d{2}\b</code> finds <code>srv-web-01</code>.</p>
+    <noscript><p class="quiet">Adding and removing patterns needs JavaScript. An agent can do
+      it too, with brain_admin entity_patterns.</p></noscript>
+
+    <div id="pat-reindex" class="pat-reindex" hidden data-js>
+      <span id="pat-reindex-why">A note's names are indexed when it is written. After you change
+        a pattern, reindex so the notes already stored follow it.</span>
+      <button type="button" id="pat-reindex-btn"
+              title="Index every memory's names again with today's patterns">Reindex the names</button>
+    </div>
+    <p id="pat-reindex-out" class="pat-msg" aria-live="polite"></p>
+  </section>
+
+  <section class="mem-related">
+    <h2>Most mentioned{% if current %} in {{ current.name or current.slug }}{% endif %}</h2>
+    {% if current %}<p class="quiet"><a class="name-link" href="/ui/names">Show every project</a></p>{% endif %}
+    <div class="name-cards">
+      {% for e in top %}
+      <a class="name-card" href="/ui/name/{{ e.name|urlencode }}{% if current %}?project={{ current.slug }}{% endif %}"
+         title="Everything stored about {{ e.name }}">
+        <span class="name-card-name">{{ e.name }}</span>
+        <span class="name-card-meta"><span class="name-kind">{{ e.kind|replace('_', ' ') }}</span>
+          {{ e.mentions }} {{ 'mention' if e.mentions == 1 else 'mentions' }}</span>
+      </a>
+      {% else %}
+      <p class="quiet">No name is indexed yet. Names are indexed as notes are written.</p>
+      {% endfor %}
+    </div>
+  </section>
+</article>
+{% endblock %}
+{% block scripts %}
+<script src="/static/js/names.js?b={{ build_stamp }}" defer></script>
+{% endblock %}
