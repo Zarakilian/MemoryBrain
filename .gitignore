@@ -30,3 +30,24 @@ workspace-map.proposed.json
 *.bundle
 brain-backup*
 exports/
+
+# Logs, eval dumps, extra env files, private keys, per-tool agent folders.
+*.log
+logs/
+*.jsonl
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.ppk
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+.claude/
+.grok/
+.codex/
+.gemini/
+.cursor/

@@ -1,0 +1,25 @@
+# Private hygiene patterns: copy to .local/hygiene-patterns.txt (git-ignored)
+# and replace these generic examples with your own words. One Python regular
+# expression per line; lines starting with # are comments. Matching is
+# case-sensitive unless the line starts with (?i).
+#
+# Never commit your real list. This example file holds placeholders only.
+
+# Your real name and email (the GitHub handle can stay)
+(?i)\bjane\s+doe\b
+(?i)jane\.doe@
+
+# Machine names and user folders
+\bMY-PC\b
+(?i)\b[d-z]:[\\/]projects\b
+
+# Employer, clients and internal hosts
+(?i)\bacme ?corp\b
+(?i)\.corp\.internal\b
+
+# Private projects you do not want named in public
+(?i)\bsecret-side-project\b
+
+# Home town, street, phone
+(?i)\bsmallville\b
+\+1[ -]?555[ -]?\d{3}[ -]?\d{4}

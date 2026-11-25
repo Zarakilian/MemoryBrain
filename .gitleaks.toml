@@ -1,0 +1,35 @@
+# gitleaks config for CI. Starts from the default rules and allows only the
+# deliberately fake values in the redaction and URL tests, which are built to
+# look like secrets so the redactor can be tested.
+#
+# condition = "AND" is required. The default is "OR", and an OR of these paths
+# would ignore every secret in the test files, including a real key added
+# later. A finding is ignored only when its path is one of these files and the
+# match is one of the fake values below.
+#
+# The generic-api-key hit in test_redact.py is the literal assignment whose
+# value is abcdefghij123. abc123def456ghi is the other fake env value in that
+# file. The URL shape is the fake git.example.com credential used by the
+# URL-stripping tests.
+title = "MemoryBrain gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Fake secrets used by the redaction and URL-stripping tests"
+condition = "AND"
+regexTarget = "match"
+paths = [
+  '''^brain/tests/test_redact\.py$''',
+  '''^brain/tests/test_redact_sinks\.py$''',
+  '''^brain/tests/test_redact_store\.py$''',
+  '''^brain/tests/test_repo_hygiene\.py$''',
+  '''^brain/tests/test_http_security\.py$''',
+  '''^brain/tests/test_scan_v3\.py$''',
+]
+regexes = [
+  '''https://user:[^@\s]+@git\.example\.com''',
+  '''abc123def456ghi''',
+  '''abcdefghij123''',
+]

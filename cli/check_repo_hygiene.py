@@ -12,6 +12,9 @@ tracked or staged file contains:
     project names. Keep that list in .local/hygiene-patterns.txt, which is
     git-ignored, one regular expression per line. Lines starting with # are
     comments. MEMORYBRAIN_HYGIENE_PATTERNS or --patterns can point elsewhere.
+    .githooks/hygiene-patterns.example.txt is a placeholder list to copy.
+  - on a full scan (not --staged or --push), a README version badge or
+    "(current: …)" line that does not match the VERSION file
 
 A line containing "hygiene: allow" is skipped.
 
@@ -188,6 +191,58 @@ def scan_files(items: Iterable, private: Sequence = ()) -> list:
     for path, text in items:
         findings.extend(scan_path_name(path))
         findings.extend(scan_text(path, text, private))
+    return findings
+
+
+_BADGE_VERSION = re.compile(r"badge/version-(\d+\.\d+\.\d+)-")
+_CURRENT_VERSION = re.compile(r"\(current:\s*(\d+\.\d+\.\d+)\)")
+
+
+def _line_of(text: str, needle: str) -> int:
+    for n, line in enumerate(text.splitlines(), 1):
+        if needle in line:
+            return n
+    return 0
+
+
+def _version_shown(found: list) -> str:
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        return "missing"
+    return " ".join(found)
+
+
+def version_drift(readme: str, version: str) -> list:
+    """Findings when the README badge or '(current: …)' line disagrees with VERSION.
+
+    Other version numbers in the README (older releases, changelog prose) are
+    ignored. A missing or repeated badge or current-line is drift. The full
+    scan passes the indexed README and VERSION text; callers strip nothing
+    themselves, trailing whitespace on VERSION is ignored.
+    """
+    version = version.strip()
+    want = version or "missing"
+    findings = []
+    badges = _BADGE_VERSION.findall(readme)
+    if badges != [version]:
+        findings.append(Finding(
+            "README.md", _line_of(readme, "badge/version-"), "version-drift",
+            f"badge {_version_shown(badges)}, VERSION {want}"))
+    currents = _CURRENT_VERSION.findall(readme)
+    if currents != [version]:
+        findings.append(Finding(
+            "README.md", _line_of(readme, "(current:"), "version-drift",
+            f"current {_version_shown(currents)}, VERSION {want}"))
+    return findings
+
+
+def full_scan_findings(items: Iterable, private: Sequence = ()) -> list:
+    """Content rules plus the README/VERSION agreement check. Full scan only."""
+    findings = scan_files(items, private)
+    readme = next((text for path, text in items if path == "README.md"), "")
+    version = next((text for path, text in items if path == "VERSION"), "")
+    findings.extend(version_drift(readme, version))
     return findings
 
 
@@ -374,7 +429,8 @@ def main(argv: Sequence | None = None) -> int:
             findings, scanned = scan_push(repo, sys.stdin.read(), private)
         else:
             items = list(iter_index_files(repo, staged_only=args.staged))
-            findings, scanned = scan_files(items, private), len(items)
+            scan = scan_files if args.staged else full_scan_findings
+            findings, scanned = scan(items, private), len(items)
     except (subprocess.CalledProcessError, FileNotFoundError, ValueError) as exc:
         print(f"hygiene: {exc}", file=sys.stderr)
         return 2

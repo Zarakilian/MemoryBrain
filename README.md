@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/Zarakilian/MemoryBrain"><img alt="GitHub" src="https://img.shields.io/badge/github-Zarakilian%2FMemoryBrain-8fb8e8?style=flat-square" /></a>
-  <img alt="Version" src="https://img.shields.io/badge/version-3.2.1-ffd98a?style=flat-square" />
+  <img alt="Version" src="https://img.shields.io/badge/version-3.4.0-ffd98a?style=flat-square" />
   <img alt="MCP tools" src="https://img.shields.io/badge/MCP%20tools-15%20core%20%C2%B7%2035-7c9cff?style=flat-square" />
   <img alt="Local first" src="https://img.shields.io/badge/local--first-loopback%20only-5ad67d?style=flat-square" />
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-brightgreen?style=flat-square" /></a>
@@ -282,7 +282,7 @@ See [`.env.example`](.env.example). Highlights:
 
 | Ref | Meaning |
 |-----|---------|
-| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.2.1) |
+| **`master`** (default) | **Only active branch** — MemoryBrain **3.x** (current: 3.4.0) |
 | Tags `v3.x.x` | Releases |
 | Old feature branches | Fully merged and removed; do not checkout `feature/memorybrain-2.0` |
 
@@ -290,6 +290,33 @@ See [`.env.example`](.env.example). Highlights:
 git clone https://github.com/Zarakilian/MemoryBrain.git
 git checkout master    # this is MemoryBrain 3
 ```
+
+## Keeping the repo clean
+
+This git history is public. It holds the application only: no machine names,
+legal names, email addresses, client work, keys, or brain data. The GitHub
+handle can stay.
+
+Enable the guards once per clone:
+
+```bash
+git config core.hooksPath .githooks
+cp .githooks/hygiene-patterns.example.txt .local/hygiene-patterns.txt
+```
+
+`.local/` is git-ignored. Edit `.local/hygiene-patterns.txt` and replace the
+placeholders with the names, machines, and hosts that must never be committed.
+One Python regular expression per line; `#` starts a comment. The pre-commit
+and pre-push hooks run `python3 cli/check_repo_hygiene.py` with that list.
+CI runs the same scan with the generic rules only, because the private list
+never leaves your machine.
+
+CI also runs [gitleaks](https://github.com/gitleaks/gitleaks) over the full
+git history. `.gitleaks.toml` allowlists only the fake values the redaction
+tests are built from.
+
+`python3 cli/check_repo_hygiene.py` (the full scan) fails when the version
+badge or the `current:` line in this README disagrees with `VERSION`.
 
 ## License & philosophy
 

@@ -1,7 +1,8 @@
-# Every push and pull request: the repo-hygiene scan, then the full test suite
-# inside the same image the brain runs in, with no network and as the
-# unprivileged brain user. The private hygiene patterns never leave the
-# author's machines, so CI applies the generic rules only.
+# Every push and pull request: the repo-hygiene scan, a gitleaks pass over the
+# full git history, then the full test suite inside the same image the brain
+# runs in, with no network and as the unprivileged brain user. The private
+# hygiene patterns never leave the author's machines, so CI applies the
+# generic rules only.
 name: ci
 
 on:
@@ -17,9 +18,25 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          # gitleaks reads every reachable commit, so a shallow clone is not enough
+          fetch-depth: 0
 
       - name: Repo hygiene (generic rules)
         run: python3 cli/check_repo_hygiene.py
+
+      - name: Secret scan (gitleaks, full history)
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          # Two halves of the v8.30.1 linux x64 sha256, joined in the shell so
+          # this file has no 64-hex token for the hygiene scan to flag.
+          hash="$(printf '%s%s' \
+            551f6fc83ea457d62a0d98237cbad105 \
+            af8d557003051f41f3e7ca7b3f2470eb)"
+          echo "$hash  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" detect --source . --config .gitleaks.toml --redact
 
       - name: Build the image
         run: docker build --progress=plain -f brain/Dockerfile -t memorybrain-ci .

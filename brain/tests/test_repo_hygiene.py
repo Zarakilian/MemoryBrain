@@ -216,3 +216,55 @@ def test_a_push_with_no_private_patterns_says_so(tmp_path):
     note = hy.private_patterns_note(missing, [])
     assert note and "no private patterns" in note and "MEMORYBRAIN_HYGIENE_PATTERNS" in note
     assert hy.private_patterns_note(missing, [object()]) is None
+
+
+# --------------------------------------------------------------- version drift
+
+_README_OK = (
+    '<img alt="Version" src="https://img.shields.io/badge/version-3.4.0-ffd98a?style=flat-square" />\n'
+    "Releases: **3.2.0** (older) and **3.1.0**.\n"
+    "| **`master`** (default) | MemoryBrain **3.x** (current: 3.4.0) |\n"
+)
+
+
+def test_version_drift_accepts_a_readme_that_matches_version():
+    assert hy.version_drift(_README_OK, "3.4.0\n") == []
+
+
+def test_version_drift_ignores_older_releases_named_in_prose():
+    assert hy.version_drift(_README_OK, "  3.4.0  ") == []
+
+
+def test_version_drift_flags_a_stale_badge_and_current_line():
+    text = _README_OK.replace("3.4.0", "3.2.1")
+    findings = hy.version_drift(text, "3.4.0")
+    assert [f.rule for f in findings] == ["version-drift", "version-drift"]
+    assert findings[0].line == 1 and findings[0].excerpt == "badge 3.2.1, VERSION 3.4.0"
+    assert findings[1].line == 3 and findings[1].excerpt == "current 3.2.1, VERSION 3.4.0"
+
+
+def test_version_drift_flags_a_missing_badge():
+    findings = hy.version_drift("no badge here\n(current: 3.4.0)\n", "3.4.0")
+    assert len(findings) == 1
+    assert findings[0].line == 0
+    assert findings[0].excerpt == "badge missing, VERSION 3.4.0"
+
+
+def test_version_drift_flags_a_repeated_current_line():
+    text = _README_OK + "(current: 3.4.0)\n"
+    findings = hy.version_drift(text, "3.4.0")
+    assert len(findings) == 1
+    assert findings[0].excerpt.startswith("current 3.4.0 3.4.0")
+
+
+def test_full_scan_includes_version_drift_and_content_findings():
+    token = "ghp_" + "A1b2" * 9
+    stale = [
+        ("docs/a.md", f"t {token}\n"),
+        ("README.md", _README_OK.replace("3.4.0", "3.2.1")),
+        ("VERSION", "3.4.0\n"),
+    ]
+    assert [f.rule for f in hy.full_scan_findings(stale)] == [
+        "secret:github-token", "version-drift", "version-drift"]
+    clean = [("README.md", _README_OK), ("VERSION", "3.4.0\n"), ("docs/ok.md", "fine\n")]
+    assert hy.full_scan_findings(clean) == []
